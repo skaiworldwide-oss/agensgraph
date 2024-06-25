@@ -10103,12 +10103,13 @@ get_const_expr(Const *constval, deparse_context *context, int showtype)
 							break;
 						default:
 							elog(ERROR, "unknown jsonb iterator token type");
+							break;
 					}
 				}
 
 				break;
 			}
-
+			/* fall through */
 		default:
 			simple_quote_literal(buf, extval);
 			break;
