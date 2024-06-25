@@ -5260,7 +5260,7 @@ extractVerticesExpr(ParseState *pstate, List *exprlist, ParseExprKind exprKind)
 
 			case GRAPHPATHOID:
 				elem = getExprField((Expr *) elem, AG_PATH_VERTICES);
-				/* no break */
+				/* fall through */
 			case VERTEXOID:
 			{
 				GraphDelElem *gde = makeNode(GraphDelElem);
@@ -5300,7 +5300,7 @@ extractEdgesExpr(ParseState *pstate, List *exprlist, ParseExprKind exprKind)
 
 			case GRAPHPATHOID:
 				elem = getExprField((Expr *) elem, AG_PATH_EDGES);
-				/* no break */
+				/* fall through */
 			case EDGEOID:
 			{
 				GraphDelElem *gde = makeNode(GraphDelElem);

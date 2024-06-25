@@ -698,9 +698,10 @@ createPath(ModifyGraphState *mgstate, GraphPath *path, TupleTableSlot *slot)
 	Graphid		prevvid = 0;
 	GraphEdge  *gedge = NULL;
 
+	pathlen = list_length(path->chain);
+
 	if (out)
 	{
-		pathlen = list_length(path->chain);
 		Assert(pathlen % 2 == 1);
 
 		vertices = makeDatumArray(econtext, (pathlen / 2) + 1);
@@ -1507,9 +1508,10 @@ createMergePath(ModifyGraphState *mgstate, GraphPath *path,
 	Graphid		prevvid = 0;
 	GraphEdge  *gedge = NULL;
 
+	pathlen = list_length(path->chain);
+
 	if (out)
 	{
-		pathlen = list_length(path->chain);
 		Assert(pathlen % 2 == 1);
 
 		vertices = makeDatumArray(econtext, (pathlen / 2) + 1);
