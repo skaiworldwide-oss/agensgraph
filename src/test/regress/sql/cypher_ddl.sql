@@ -362,6 +362,33 @@ CREATE CONSTRAINT ON regv8 ASSERT (1).c IS NOT NULL;
 CREATE CONSTRAINT ON regv8 ASSERT ($1).c IS NOT NULL;
 
 --
+-- CREATE TABLE .. AS (cypher query)
+--
+DO $$
+DECLARE
+    i INT := 1;
+BEGIN
+    WHILE i <= 5 LOOP
+        EXECUTE 'CREATE (:person)-[:knows]->(:person)';
+        i := i + 1;
+    END LOOP;
+END $$;
+
+MATCH ()-[e:knows]->() RETURN e;
+
+CREATE TABLE my_vertices AS (MATCH (u:person) RETURN u as nodes);
+CREATE TABLE my_edges AS (MATCH ()-[e:knows]->() RETURN e as edges);
+CREATE TABLE my_detailed_paths AS (MATCH p=(u)-[e:knows]->(v) RETURN u as node1,e as edge,v as node2,p as path);
+
+SELECT * FROM my_vertices;
+SELECT * FROM my_edges;
+SELECT * FROM my_detailed_paths;
+
+DROP TABLE my_vertices;
+DROP TABLE my_edges;
+DROP TABLE my_detailed_paths;
+
+--
 -- DROP GRAPH
 --
 DROP GRAPH ddl;
