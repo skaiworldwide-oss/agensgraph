@@ -295,6 +295,7 @@ static Node *wrapCypherWithSelect(Node *stmt);
 		CreateMatViewStmt RefreshMatViewStmt CreateAmStmt
 		CreatePublicationStmt AlterPublicationStmt
 		CreateSubscriptionStmt AlterSubscriptionStmt DropSubscriptionStmt
+		CtasStmt
 
 %type <node>	select_no_parens select_with_parens select_clause
 				simple_select values_clause
@@ -4157,7 +4158,7 @@ AlterStatsStmt:
  *****************************************************************************/
 
 CreateAsStmt:
-		CREATE OptTemp TABLE create_as_target AS SelectStmt opt_with_data
+		CREATE OptTemp TABLE create_as_target AS CtasStmt opt_with_data
 				{
 					CreateTableAsStmt *ctas = makeNode(CreateTableAsStmt);
 					ctas->query = $6;
@@ -4170,7 +4171,7 @@ CreateAsStmt:
 					$4->skipData = !($7);
 					$$ = (Node *) ctas;
 				}
-		| CREATE OptTemp TABLE IF_P NOT EXISTS create_as_target AS SelectStmt opt_with_data
+		| CREATE OptTemp TABLE IF_P NOT EXISTS create_as_target AS CtasStmt opt_with_data
 				{
 					CreateTableAsStmt *ctas = makeNode(CreateTableAsStmt);
 					ctas->query = $9;
@@ -4205,6 +4206,11 @@ opt_with_data:
 			WITH DATA_P								{ $$ = true; }
 			| WITH NO DATA_P						{ $$ = false; }
 			| /*EMPTY*/								{ $$ = true; }
+		;
+
+CtasStmt:
+		SelectStmt |
+		cypher_with_parens
 		;
 
 

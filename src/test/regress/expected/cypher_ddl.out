@@ -853,6 +853,69 @@ ERROR:  map or list is expected but integer
 CREATE CONSTRAINT ON regv8 ASSERT ($1).c IS NOT NULL;
 ERROR:  there is no parameter $1
 --
+-- CREATE TABLE .. AS (cypher query)
+--
+DO $$
+DECLARE
+    i INT := 1;
+BEGIN
+    WHILE i <= 5 LOOP
+        EXECUTE 'CREATE (:person)-[:knows]->(:person)';
+        i := i + 1;
+    END LOOP;
+END $$;
+MATCH ()-[e:knows]->() RETURN e;
+             e             
+---------------------------
+ knows[30.1][29.1,29.2]{}
+ knows[30.2][29.3,29.4]{}
+ knows[30.3][29.5,29.6]{}
+ knows[30.4][29.7,29.8]{}
+ knows[30.5][29.9,29.10]{}
+(5 rows)
+
+CREATE TABLE my_vertices AS (MATCH (u:person) RETURN u as nodes);
+CREATE TABLE my_edges AS (MATCH ()-[e:knows]->() RETURN e as edges);
+CREATE TABLE my_detailed_paths AS (MATCH p=(u)-[e:knows]->(v) RETURN u as node1,e as edge,v as node2,p as path);
+SELECT * FROM my_vertices;
+      nodes      
+-----------------
+ person[29.1]{}
+ person[29.2]{}
+ person[29.3]{}
+ person[29.4]{}
+ person[29.5]{}
+ person[29.6]{}
+ person[29.7]{}
+ person[29.8]{}
+ person[29.9]{}
+ person[29.10]{}
+(10 rows)
+
+SELECT * FROM my_edges;
+           edges           
+---------------------------
+ knows[30.1][29.1,29.2]{}
+ knows[30.2][29.3,29.4]{}
+ knows[30.3][29.5,29.6]{}
+ knows[30.4][29.7,29.8]{}
+ knows[30.5][29.9,29.10]{}
+(5 rows)
+
+SELECT * FROM my_detailed_paths;
+     node1      |           edge            |      node2      |                            path                            
+----------------+---------------------------+-----------------+------------------------------------------------------------
+ person[29.1]{} | knows[30.1][29.1,29.2]{}  | person[29.2]{}  | [person[29.1]{},knows[30.1][29.1,29.2]{},person[29.2]{}]
+ person[29.3]{} | knows[30.2][29.3,29.4]{}  | person[29.4]{}  | [person[29.3]{},knows[30.2][29.3,29.4]{},person[29.4]{}]
+ person[29.5]{} | knows[30.3][29.5,29.6]{}  | person[29.6]{}  | [person[29.5]{},knows[30.3][29.5,29.6]{},person[29.6]{}]
+ person[29.7]{} | knows[30.4][29.7,29.8]{}  | person[29.8]{}  | [person[29.7]{},knows[30.4][29.7,29.8]{},person[29.8]{}]
+ person[29.9]{} | knows[30.5][29.9,29.10]{} | person[29.10]{} | [person[29.9]{},knows[30.5][29.9,29.10]{},person[29.10]{}]
+(5 rows)
+
+DROP TABLE my_vertices;
+DROP TABLE my_edges;
+DROP TABLE my_detailed_paths;
+--
 -- DROP GRAPH
 --
 DROP GRAPH ddl;
