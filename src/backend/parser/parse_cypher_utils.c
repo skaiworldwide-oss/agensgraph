@@ -360,6 +360,9 @@ makeVertexExpr(ParseState *pstate, ParseNamespaceItem *nsitem, int location)
 	Node	   *prop_map;
 	Node	   *tid;
 
+	if (!pstate->p_valid_labels)
+		return (Node *) makeNullConst(VERTEXOID, -1, InvalidOid);
+
 	id = getColumnVar(pstate, nsitem, AG_ELEM_LOCAL_ID);
 	prop_map = getColumnVar(pstate, nsitem, AG_ELEM_PROP_MAP);
 	tid = getSysColumnVar(pstate, nsitem, SelfItemPointerAttributeNumber);
@@ -376,6 +379,9 @@ makeEdgeExpr(ParseState *pstate, CypherRel *crel, ParseNamespaceItem *nsitem,
 	Node	   *end;
 	Node	   *prop_map;
 	Node	   *tid;
+
+	if (!pstate->p_valid_labels)
+		return (Node *) makeNullConst(EDGEOID, -1, InvalidOid);
 
 	id = getColumnVar(pstate, nsitem, AG_ELEM_LOCAL_ID);
 	start = getColumnVar(pstate, nsitem, AG_START_ID);
