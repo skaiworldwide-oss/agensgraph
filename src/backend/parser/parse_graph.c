@@ -159,7 +159,7 @@ static NodeInfo *findNodeInfo(ParseState *pstate, char *varname);
 static List *makeComponents(List *pattern);
 static bool isPathConnectedTo(CypherPath *path, List *component);
 static bool arePathsConnected(CypherPath *path1, CypherPath *path2);
-static void createNonExistentLabels(ParseState *pstate, List *pattern);
+static bool validate_pattern_labels(ParseState *pstate, List *pattern);
 
 /* MATCH - transform */
 static Node *transformComponents(ParseState *pstate, List *components,
@@ -363,6 +363,8 @@ static Node *getExprField(Expr *expr, char *fname);
 static Node *qualAndExpr(Node *qual, Node *expr);
 
 /* parse node */
+static Node *makeTypeCast(Node *arg, TypeName *typename, int location);
+static Node *makeBoolAConst(bool state, int location);
 static A_Const *makeNullAConst(void);
 static bool IsNullAConst(Node *arg);
 
@@ -625,6 +627,50 @@ repairTargetListCollations(List *targetList)
 	return targetList;
 }
 
+static bool validate_pattern_labels(ParseState *pstate, List *pattern)
+{
+	ListCell   *lp = NULL;
+
+	foreach(lp, pattern)
+	{
+		CypherPath *path = lfirst(lp);
+		ListCell   *le = NULL;
+
+		foreach(le, path->chain)
+		{
+			Node	   *elem = lfirst(le);
+
+			if (IsA(elem, CypherNode))
+			{
+				CypherNode *cnode = (CypherNode *) elem;
+				char 	   *labname = getCypherName(cnode->label);
+				int			labloc = getCypherNameLoc(cnode->label);
+				
+				if (labname == NULL)
+					continue;
+
+				if (!labelExist(pstate, labname, labloc, LABEL_KIND_VERTEX, false))
+					return false;
+			}
+			else
+			{
+				CypherRel  *crel = (CypherRel *) elem;
+				Node 	   *type = crel->types ? linitial(crel->types) : NULL;
+				char 	   *typname = getCypherName(type);
+				int			typloc = getCypherNameLoc(type);
+
+				if (typname == NULL)
+					continue;
+
+				if (!labelExist(pstate, typname, typloc, LABEL_KIND_EDGE, false))
+					return false;
+			}
+		}
+	}
+
+	return true;
+}
+
 Query *
 transformCypherMatchClause(ParseState *pstate, CypherClause *clause)
 {
@@ -635,6 +681,11 @@ transformCypherMatchClause(ParseState *pstate, CypherClause *clause)
 
 	qry = makeNode(Query);
 	qry->commandType = CMD_SELECT;
+
+	pstate->p_valid_labels = validate_pattern_labels(pstate, detail->pattern);
+
+    if (!pstate->p_valid_labels)
+		detail->where = (Node *) makeBoolAConst(false, -1);
 
 	/*
 	 * since WHERE clause is part of MATCH, transform OPTIONAL MATCH with its
@@ -968,12 +1019,6 @@ transformCypherMergeClause(ParseState *pstate, CypherClause *clause)
 	qry->commandType = CMD_GRAPHWRITE;
 	qry->graph.writeOp = GWROP_MERGE;
 	qry->graph.last = (pstate->parentParseState == NULL);
-
-	/*
-	 * If there are any new labels involved in MERGE pattern,
-	 * create them before transforming MATCH for MERGE.
-	 */
-	createNonExistentLabels(pstate, detail->pattern);
 
 	nsitem = transformClauseBy(pstate, (Node *) clause, transformMergeMatch);
 	Assert(nsitem->p_rte->rtekind == RTE_SUBQUERY);
@@ -1910,10 +1955,8 @@ transformMatchNode(ParseState *pstate, CypherNode *cnode, List **targetList,
 		prop_constr = ni->prop_constr;
 	}
 
-	if (labname == NULL)
+	if (labname == NULL || !pstate->p_valid_labels)
 		labname = AG_VERTEX;
-	else
-		vertexLabelExist(pstate, labname, labloc);
 
 	r = makeRangeVar(get_graph_path(true),
 					 labname,
@@ -1972,8 +2015,6 @@ transformMatchRel(ParseState *pstate, CypherRel *crel, List **targetList,
 {
 	char	   *varname = getCypherName(crel->variable);
 	int			varloc = getCypherNameLoc(crel->variable);
-	char	   *typname;
-	int			typloc;
 	TargetEntry *te;
 
 	/* all relationships must be unique */
@@ -1993,10 +2034,6 @@ transformMatchRel(ParseState *pstate, CypherRel *crel, List **targetList,
 					 parser_errposition(pstate, varloc)));
 	}
 
-	getCypherRelType(crel, &typname, &typloc);
-	if (strcmp(typname, AG_EDGE) != 0)
-		edgeLabelExist(pstate, typname, typloc);
-
 	if (crel->varlen == NULL)
 		return transformMatchSR(pstate, crel, targetList, eqoList);
 	else
@@ -2010,11 +2047,14 @@ transformMatchSR(ParseState *pstate, CypherRel *crel, List **targetList,
 	char	   *varname = getCypherName(crel->variable);
 	int			varloc = getCypherNameLoc(crel->variable);
 	char	   *typname;
-	int			typloc;
+	int			typloc = -1;
 	Alias	   *alias;
 	ParseNamespaceItem *nsitem;
 
-	getCypherRelType(crel, &typname, &typloc);
+	if (!pstate->p_valid_labels)
+		typname = AG_EDGE;
+	else
+		getCypherRelType(crel, &typname, &typloc);
 
 	alias = makeAliasOptUnique(varname);
 
@@ -2246,7 +2286,11 @@ transformMatchVLE(ParseState *pstate, CypherRel *crel, List **targetList,
 		resjunk = (varname == NULL);
 		resno = (resjunk ? InvalidAttrNumber : pstate->p_next_resno++);
 
-		var = getColumnVar(pstate, nsitem, VLE_COLNAME_EDGES);
+		if (pstate->p_valid_labels)
+			var = getColumnVar(pstate, nsitem, VLE_COLNAME_EDGES);
+		else
+			var = (Node *) makeNullConst(EDGEARRAYOID, -1, InvalidOid);
+
 		te = makeTargetEntry((Expr *) var,
 							 (AttrNumber) resno,
 							 alias->aliasname,
@@ -2260,7 +2304,11 @@ transformMatchVLE(ParseState *pstate, CypherRel *crel, List **targetList,
 		TargetEntry *te;
 		Node	   *var;
 
-		var = getColumnVar(pstate, nsitem, VLE_COLNAME_VERTICES);
+		if (pstate->p_valid_labels)
+			var = getColumnVar(pstate, nsitem, VLE_COLNAME_VERTICES);
+		else
+			var = (Node *) makeNullConst(VERTEXARRAYOID, -1, InvalidOid);
+
 		te = makeTargetEntry((Expr *) var,
 							 InvalidAttrNumber,
 							 genUniqueName(),
@@ -2547,10 +2595,15 @@ static Node *
 genVLEEdgeSubselect(ParseState *pstate, CypherRel *crel, char *aliasname)
 {
 	char	   *typname;
+	int			typloc = -1;
 	Alias	   *alias;
 	Node	   *edge;
 
-	getCypherRelType(crel, &typname, NULL);
+	if (!pstate->p_valid_labels)
+		typname = AG_EDGE;
+	else
+		getCypherRelType(crel, &typname, &typloc);
+
 	alias = makeAliasNoDup(aliasname, NIL);
 
 	if (crel->direction == CYPHER_REL_DIR_NONE)
@@ -2559,7 +2612,7 @@ genVLEEdgeSubselect(ParseState *pstate, CypherRel *crel, char *aliasname)
 
 		/* id, start, "end", properties, ctid, _start, _end */
 		sub = makeNode(RangeSubselect);
-		sub->subquery = genEdgeUnion(typname, crel->only, -1);
+		sub->subquery = genEdgeUnion(typname, crel->only, typloc);
 		sub->alias = alias;
 		edge = (Node *) sub;
 	}
@@ -2569,7 +2622,7 @@ genVLEEdgeSubselect(ParseState *pstate, CypherRel *crel, char *aliasname)
 		LOCKMODE	lockmode;
 		Relation	rel;
 
-		r = makeRangeVar(get_graph_path(true), typname, -1);
+		r = makeRangeVar(get_graph_path(true), typname, typloc);
 		r->inh = !crel->only;
 
 		if (isLockedRefname(pstate, aliasname))
@@ -4646,6 +4699,18 @@ transformMergeNode(ParseState *pstate, CypherNode *cnode, bool singlenode,
 	{
 		labname = AG_VERTEX;
 	}
+	else
+	{
+		int			labloc = getCypherNameLoc(cnode->label);
+
+		if (strcmp(labname, AG_VERTEX) == 0)
+			ereport(ERROR,
+					(errcode(ERRCODE_SYNTAX_ERROR),
+					 errmsg("specifying default label is not allowed"),
+					 parser_errposition(pstate, labloc)));
+
+		createVertexLabelIfNotExist(pstate, labname, labloc);
+	}
 
 	relation = openTargetLabel(pstate, labname);
 
@@ -4683,6 +4748,8 @@ transformMergeRel(ParseState *pstate, CypherRel *crel, List **targetList,
 				  List *resultList)
 {
 	char	   *varname;
+	Node	   *type;
+	char	   *typname;
 	Relation	relation;
 	Node	   *edge;
 	Oid			relid = InvalidOid;
@@ -4707,6 +4774,17 @@ transformMergeRel(ParseState *pstate, CypherRel *crel, List **targetList,
 				(errcode(ERRCODE_DUPLICATE_ALIAS),
 				 errmsg("duplicate variable \"%s\"", varname),
 				 parser_errposition(pstate, getCypherNameLoc(crel->variable))));
+
+	type = linitial(crel->types);
+	typname = getCypherName(type);
+
+	if (strcmp(typname, AG_EDGE) == 0)
+		ereport(ERROR,
+				(errcode(ERRCODE_SYNTAX_ERROR),
+				 errmsg("cannot create edge on default label"),
+				 parser_errposition(pstate, getCypherNameLoc(type))));
+
+	createEdgeLabelIfNotExist(pstate, typname, getCypherNameLoc(type));
 
 	relation = openTargetLabel(pstate, getCypherName(linitial(crel->types)));
 
@@ -6078,6 +6156,28 @@ qualAndExpr(Node *qual, Node *expr)
 	return (Node *) makeBoolExpr(AND_EXPR, list_make2(qual, expr), -1);
 }
 
+static Node *
+makeTypeCast(Node *arg, TypeName *typename, int location)
+{
+	TypeCast *n = makeNode(TypeCast);
+	n->arg = arg;
+	n->typeName = typename;
+	n->location = location;
+	return (Node *) n;
+}
+
+static Node *
+makeBoolAConst(bool state, int location)
+{
+	A_Const *n = makeNode(A_Const);
+
+	n->val.type = T_String;
+	n->val.val.str = (state ? "t" : "f");
+	n->location = location;
+
+	return makeTypeCast((Node *)n, SystemTypeName("bool"), -1);
+}
+
 static A_Const *
 makeNullAConst(void)
 {
@@ -6103,56 +6203,4 @@ IsNullAConst(Node *arg)
 			return true;
 	}
 	return false;
-}
-
-/*
- * Helper function used in transformCypherMergeClause to
- * create non existent labels.
- */
-static void
-createNonExistentLabels(ParseState *pstate, List *pattern)
-{
-	CypherPath *path;
-	ListCell   *le;
-
-	path = linitial(pattern);
-	foreach(le, path->chain)
-	{
-		Node	   *elem = lfirst(le);
-
-		if (IsA(elem, CypherNode))
-		{
-			CypherNode *cnode = (CypherNode *) elem;
-			char 	   *labname = getCypherName(cnode->label);
-			int 		labloc = getCypherNameLoc(cnode->label);
-			
-			if (labname == NULL)
-				continue;
-
-			if (strcmp(labname, AG_VERTEX) == 0)
-				ereport(ERROR,
-						(errcode(ERRCODE_SYNTAX_ERROR),
-						errmsg("specifying default label is not allowed"),
-						parser_errposition(pstate, labloc)));
-
-			createVertexLabelIfNotExist(pstate, labname, labloc);
-		}
-		else
-		{
-			CypherRel  *crel = (CypherRel *) elem;
-			Node 	   *type = crel->types ? linitial(crel->types) : NULL;
-			char 	   *typname = getCypherName(type);
-
-			if (typname == NULL)
-				continue;
-
-			if (strcmp(typname, AG_EDGE) == 0)
-				ereport(ERROR,
-						(errcode(ERRCODE_SYNTAX_ERROR),
-						errmsg("cannot create edge on default label"),
-						parser_errposition(pstate, getCypherNameLoc(type))));
-
-			createEdgeLabelIfNotExist(pstate, typname, getCypherNameLoc(type));
-		}
-	}
 }
