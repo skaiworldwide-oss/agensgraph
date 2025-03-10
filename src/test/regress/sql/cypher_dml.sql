@@ -236,6 +236,20 @@ MATCH (A:vl1) DETACH DELETE A;
 MATCH (B:vl2) DETACH DELETE B;
 MATCH (C:vl3) DETACH DELETE C;
 
+-- Non-existent vertex/edge labels. Should return NULL instead of erroring out
+MATCH (n)-[:v]-() RETURN n;
+MATCH (n)-[:emissing]-() RETURN n;
+MATCH (n:e1)-[]-() RETURN n;
+MATCH (n:vmissing)-[]-() RETURN n;
+MATCH (:e1)-[r]-() RETURN r;
+MATCH (:vmissing)-[r]-() RETURN r;
+MATCH (n),(:e1) RETURN n;
+MATCH (n),()-[:v]-() RETURN n;
+MATCH (n)-[:v *]->() RETURN n;
+
+EXPLAIN VERBOSE MATCH (n:e)-[v:v]-() RETURN n,v;
+EXPLAIN VERBOSE MATCH (n:e)-[v:v *]-() RETURN n,v;
+
 -- OPTIONAL MATCH
 
 CREATE GRAPH o;
