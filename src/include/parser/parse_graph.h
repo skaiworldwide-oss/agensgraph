@@ -13,6 +13,12 @@
 
 #include "parser/parse_node.h"
 
+#define AGENS_DEFAULT_PREFIX	"_agens_default_"
+#define CYPHER_SUBQUERY_ALIAS	AGENS_DEFAULT_PREFIX"s"
+#define CYPHER_OPTMATCH_ALIAS	AGENS_DEFAULT_PREFIX"o"
+#define CYPHER_MERGEMATCH_ALIAS	AGENS_DEFAULT_PREFIX"m"
+#define CYPHER_DELETEJOIN_ALIAS	AGENS_DEFAULT_PREFIX"d"
+
 extern bool enable_eager;
 
 extern Query *transformCypherSubPattern(ParseState *pstate,
