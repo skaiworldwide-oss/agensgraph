@@ -836,6 +836,66 @@ MATCH (n:ts) WHERE n.v::tsvector @@ 'cat & rat'::tsquery RETURN n;
  ts[8.1]{"v": "'a' 'and' 'ate' 'cat' 'fat' 'mat' 'on' 'rat' 'sat'"}
 (1 row)
 
+--
+-- Default alias check
+--
+MATCH (_{i:0}) RETURN _;
+        _        
+-----------------
+ v1[4.2]{"i": 0}
+ v2[5.1]{"i": 0}
+(2 rows)
+
+MATCH ({i:0}) MATCH (_{i:0}) RETURN 0;
+ ?column? 
+----------
+ 0
+ 0
+ 0
+ 0
+(4 rows)
+
+MATCH ({i:0}) MATCH (_{i:0}) RETURN _;
+        _        
+-----------------
+ v1[4.2]{"i": 0}
+ v2[5.1]{"i": 0}
+ v1[4.2]{"i": 0}
+ v2[5.1]{"i": 0}
+(4 rows)
+
+MATCH (my_agens_default_{i:0}) RETURN my_agens_default_;
+ my_agens_default_ 
+-------------------
+ v1[4.2]{"i": 0}
+ v2[5.1]{"i": 0}
+(2 rows)
+
+MATCH ({i:0}) MATCH (my_agens_default_{i:0}) RETURN my_agens_default_;
+ my_agens_default_ 
+-------------------
+ v1[4.2]{"i": 0}
+ v2[5.1]{"i": 0}
+ v1[4.2]{"i": 0}
+ v2[5.1]{"i": 0}
+(4 rows)
+
+-- these should fail as they are prefixed with _agens_default_ which is only for internal use
+MATCH (_agens_default_) RETURN _agens_default_;
+ERROR:  Variable name "_agens_default_" is not allowed
+LINE 1: MATCH (_agens_default_) RETURN _agens_default_;
+               ^
+DETAIL:  Variables named "_agens_default_" or starting with "_agens_default_" are reserved for internal use
+MATCH (_agens_default_a) RETURN _agens_default_a;
+ERROR:  Variable name "_agens_default_a" is not allowed
+LINE 1: MATCH (_agens_default_a) RETURN _agens_default_a;
+               ^
+DETAIL:  Variables named "_agens_default_" or starting with "_agens_default_" are reserved for internal use
+MATCH (_agens_default_whatever) RETURN 0;
+ERROR:  Variable name "_agens_default_whatever" is not allowed
+LINE 1: MATCH (_agens_default_whatever) RETURN 0;
+               ^
+DETAIL:  Variables named "_agens_default_" or starting with "_agens_default_" are reserved for internal use
 -- Tear down
 DROP TABLE t1;
 DROP GRAPH test_cypher_expr CASCADE;
