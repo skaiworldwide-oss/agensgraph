@@ -1373,8 +1373,8 @@ MATCH (a:person {id: 1})-[x:knows*1..2]->(b:person)
 WITH x[0] AS x1, x[1] AS x2 ORDER BY x2 RETURN x1;
                                                                                                                                              QUERY PLAN                                                                                                                                              
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Subquery Scan on _
-   Output: _.x1
+ Subquery Scan on _agens_default_s
+   Output: _agens_default_s.x1
    ->  Sort
          Output: (x.edges[1]), (x.edges[2])
          Sort Key: (x.edges[2])
@@ -1425,8 +1425,8 @@ MATCH (a:person {id: 1})-[x:knows*1..2]->(b:person)
 WITH max(b.id::"numeric") AS id, x[0] AS x RETURN *;
                                                                                                                                                 QUERY PLAN                                                                                                                                                 
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Subquery Scan on _
-   Output: cypher_to_jsonb(_.id), _.x
+ Subquery Scan on _agens_default_s
+   Output: cypher_to_jsonb(_agens_default_s.id), _agens_default_s.x
    ->  GroupAggregate
          Output: max((b.properties.'id'::text)::numeric), (x.edges[1])
          Group Key: (x.edges[1])
@@ -1532,8 +1532,8 @@ MATCH (a:person {id: 1})-[x:knows*1..2]->(b:person)
 WITH max(b.id::"numeric") AS id, x AS x RETURN *;
                                                                                                                                                 QUERY PLAN                                                                                                                                                 
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Subquery Scan on _
-   Output: cypher_to_jsonb(_.id), _.x
+ Subquery Scan on _agens_default_s
+   Output: cypher_to_jsonb(_agens_default_s.id), _agens_default_s.x
    ->  GroupAggregate
          Output: max((b.properties.'id'::text)::numeric), x.edges
          Group Key: x.edges
@@ -1587,8 +1587,8 @@ MATCH (a:person {id: 1})-[x:knows*1..2]->(b:person)
 WITH max(length(x)::"numeric") AS x, b.id AS id RETURN *;
                                                                                                                                              QUERY PLAN                                                                                                                                              
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Subquery Scan on _
-   Output: cypher_to_jsonb(_.x), _.id
+ Subquery Scan on _agens_default_s
+   Output: cypher_to_jsonb(_agens_default_s.x), _agens_default_s.id
    ->  HashAggregate
          Output: max((length(x.edges))::numeric), (b.properties.'id'::text)
          Group Key: b.properties.'id'::text
