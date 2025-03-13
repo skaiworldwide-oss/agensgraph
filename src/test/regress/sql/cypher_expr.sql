@@ -328,6 +328,20 @@ MATCH (n:coll) RETURN n;
 CREATE (:ts {v: 'a fat cat sat on a mat and ate a fat rat'::tsvector});
 MATCH (n:ts) WHERE n.v::tsvector @@ 'cat & rat'::tsquery RETURN n;
 
+--
+-- Default alias check
+--
+MATCH (_{i:0}) RETURN _;
+MATCH ({i:0}) MATCH (_{i:0}) RETURN 0;
+MATCH ({i:0}) MATCH (_{i:0}) RETURN _;
+MATCH (my_agens_default_{i:0}) RETURN my_agens_default_;
+MATCH ({i:0}) MATCH (my_agens_default_{i:0}) RETURN my_agens_default_;
+
+-- these should fail as they are prefixed with _agens_default_ which is only for internal use
+MATCH (_agens_default_) RETURN _agens_default_;
+MATCH (_agens_default_a) RETURN _agens_default_a;
+MATCH (_agens_default_whatever) RETURN 0;
+
 -- Tear down
 DROP TABLE t1;
 DROP GRAPH test_cypher_expr CASCADE;
