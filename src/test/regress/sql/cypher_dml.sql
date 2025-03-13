@@ -1104,6 +1104,9 @@ MATCH (a) RETURN a;
 
 MERGE p=(a:v4)-[:e4]->(b:v5) RETURN p;
 
+-- fix: unrecognized node type: 121
+MERGE (j {j: null IS NULL}) return j;
+
 DROP GRAPH gm CASCADE;
 
 --

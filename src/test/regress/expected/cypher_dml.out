@@ -2890,6 +2890,13 @@ MERGE p=(a:v4)-[:e4]->(b:v5) RETURN p;
  [v4[12.2]{},e4[13.1][12.2,11.2]{},v5[11.2]{}]
 (1 row)
 
+-- fix: unrecognized node type: 121
+MERGE (j {j: null IS NULL}) return j;
+             j              
+----------------------------
+ ag_vertex[1.11]{"j": true}
+(1 row)
+
 DROP GRAPH gm CASCADE;
 NOTICE:  drop cascades to 14 other objects
 DETAIL:  drop cascades to sequence gm.ag_label_seq
