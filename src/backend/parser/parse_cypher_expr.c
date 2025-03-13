@@ -205,6 +205,9 @@ transformCypherExprRecurse(ParseState *pstate, Node *expr)
 			}
 		case T_BoolExpr:
 			return transformBoolExpr(pstate, (BoolExpr *) expr);
+		case T_Const:
+			/* Already transformed */
+			return expr;
 		default:
 			elog(ERROR, "unrecognized node type: %d", (int) nodeTag(expr));
 			return NULL;
