@@ -49,11 +49,6 @@
 #include "catalog/ag_vertex_d.h"
 #include "catalog/ag_edge_d.h"
 
-#define CYPHER_SUBQUERY_ALIAS	"_"
-#define CYPHER_OPTMATCH_ALIAS	"_o"
-#define CYPHER_MERGEMATCH_ALIAS	"_m"
-#define CYPHER_DELETEJOIN_ALIAS	"_d"
-
 #define EDGE_UNION_START_ID		"_start"
 #define EDGE_UNION_END_ID		"_end"
 
