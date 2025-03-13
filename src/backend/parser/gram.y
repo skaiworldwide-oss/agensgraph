@@ -60,6 +60,7 @@
 #include "parser/gramparse.h"
 #include "parser/parser.h"
 #include "parser/parse_expr.h"
+#include "parser/parse_graph.h"
 #include "storage/lmgr.h"
 #include "utils/date.h"
 #include "utils/datetime.h"
@@ -199,6 +200,7 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 
 static Node *makeCypherSetOp(SetOperation op, bool all, Node *larg, Node *rarg);
 static Node *wrapCypherWithSelect(Node *stmt);
+static bool has_internal_default_prefix(char *str);
 
 %}
 
@@ -17701,6 +17703,17 @@ cypher_expr_var:
 
 cypher_expr_varname:
 			ColId
+			{
+				if (has_internal_default_prefix($1))
+				{
+					ereport(ERROR,
+							(errcode(ERRCODE_SYNTAX_ERROR),
+							 errmsg("Variable name \"%s\" is not allowed", $1),
+							 errdetail("Variables named \"%s\" or starting with \"%s\" are reserved for internal use",
+										AGENS_DEFAULT_PREFIX, AGENS_DEFAULT_PREFIX),
+							 parser_errposition(@1)));
+				}
+			}
 		;
 
 cypher_expr_propref:
@@ -17793,6 +17806,16 @@ cypher_pattern_var:
 			cypher_pattern_varname
 				{
 					CypherName *n;
+
+					if (has_internal_default_prefix($1))
+					{
+						ereport(ERROR,
+								(errcode(ERRCODE_SYNTAX_ERROR),
+								 errmsg("Variable name \"%s\" is not allowed", $1),
+								 errdetail("Variables named \"%s\" or starting with \"%s\" are reserved for internal use",
+											AGENS_DEFAULT_PREFIX, AGENS_DEFAULT_PREFIX),
+								 parser_errposition(@1)));
+					}
 
 					n = makeNode(CypherName);
 					n->name = $1;
@@ -19412,13 +19435,18 @@ wrapCypherWithSelect(Node *stmt)
 	sub = makeNode(RangeSubselect);
 	sub->subquery = stmt;
 	/* CYPHER_SUBQUERY_ALIAS */
-	sub->alias = makeAlias("_", NIL);
+	sub->alias = makeAlias(CYPHER_SUBQUERY_ALIAS, NIL);
 
 	select = makeNode(SelectStmt);
 	select->targetList = list_make1(target);
 	select->fromClause = list_make1(sub);
 
 	return (Node *) select;
+}
+
+static bool has_internal_default_prefix(char *str)
+{
+    return strncmp(AGENS_DEFAULT_PREFIX, str, strlen(AGENS_DEFAULT_PREFIX)) == 0;
 }
 
 /* parser_init()
