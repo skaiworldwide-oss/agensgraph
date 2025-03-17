@@ -880,9 +880,7 @@ transformFuncCall(ParseState *pstate, FuncCall *fn)
 		 * of PG.
 		 */
 
-		if (strcmp(funcname, "collect") == 0)
-			fn->funcname = list_make1(makeString("jsonb_agg"));
-		else if (strcmp(funcname, "stdev") == 0)
+		if (strcmp(funcname, "stdev") == 0)
 			fn->funcname = list_make1(makeString("stddev_samp"));
 		else if (strcmp(funcname, "stdevp") == 0)
 			fn->funcname = list_make1(makeString("stddev_pop"));
@@ -966,7 +964,7 @@ preprocess_func_args(ParseState *pstate, FuncCall *fn)
 		Assert(!(IsA(arg, Param) && argtype == VOIDOID));
 
 		args = lappend(args, arg);
-		argtypes[nargs++] = exprType(arg);
+		argtypes[nargs++] = argtype;
 	}
 
 	/* This function does not handle named arguments. */
@@ -1016,7 +1014,7 @@ func_get_best_candidate(ParseState *pstate, FuncCall *fn, int nargs,
 
 	/* get all candidates */
 	raw_candidates = FuncnameGetCandidates(fn->funcname, nargs, NIL,
-										   false, false, false, false);
+										   true, false, false, false);
 
 	/*
 	 * Added to remove jsonb version of substring (jsonb_substr*) from the

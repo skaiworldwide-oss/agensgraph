@@ -482,6 +482,10 @@ WITH max(b.id::"numeric") AS id, x[0] AS x RETURN *;
 
 EXPLAIN (VERBOSE, COSTS OFF)
 MATCH (a:person {id: 1})-[x:knows*1..2]->(b:person)
+WITH max(b.id) AS id, x[0] AS x RETURN *;
+
+EXPLAIN (VERBOSE, COSTS OFF)
+MATCH (a:person {id: 1})-[x:knows*1..2]->(b:person)
 WITH DISTINCT x AS path RETURN *;
 
 EXPLAIN (VERBOSE, COSTS OFF)
@@ -490,7 +494,15 @@ WITH max(b.id::"numeric") AS id, x AS x RETURN *;
 
 EXPLAIN (VERBOSE, COSTS OFF)
 MATCH (a:person {id: 1})-[x:knows*1..2]->(b:person)
+WITH max(b.id) AS id, x AS x RETURN *;
+
+EXPLAIN (VERBOSE, COSTS OFF)
+MATCH (a:person {id: 1})-[x:knows*1..2]->(b:person)
 WITH max(length(x)::"numeric") AS x, b.id AS id RETURN *;
+
+EXPLAIN (VERBOSE, COSTS OFF)
+MATCH (a:person {id: 1})-[x:knows*1..2]->(b:person)
+WITH max(length(x)) AS x, b.id AS id RETURN *;
 
 EXPLAIN (VERBOSE, COSTS OFF)
 MATCH (a:person {id: 1})-[x:knows*1..2]->(b:person)
@@ -621,7 +633,57 @@ RETURN b.name;
 -- aggregates
 --
 
+--
+-- count
+--
 MATCH (a)-[]-(b) RETURN count(a) AS a, b.name AS b ORDER BY a, b;
+MATCH (u) RETURN count(u.name), count(DISTINCT u.name);
+MATCH (u) RETURN count(u.year), count(DISTINCT u.year);
+
+-- should return 0
+RETURN count(NULL);
+
+-- should fail
+RETURN count();
+
+--
+-- collect
+--
+MATCH (u) RETURN collect(u.name), collect(u.year);
+MATCH (u) RETURN collect(u.year), collect(u.year);
+RETURN collect(5);
+
+-- should return an empty array
+RETURN collect(NULL::jsonb);
+MATCH (u) WHERE u.name =~ 'does not exist' RETURN collect(u.name);
+
+-- should fail
+RETURN collect();
+
+-- test DISTINCT inside aggregate functions
+MATCH (u) RETURN (u);
+MATCH (u) RETURN collect(u.name), collect(DISTINCT u.name);
+MATCH (u) RETURN collect(u.year), collect(DISTINCT u.year);
+
+--
+-- min/max
+--
+MATCH (u) RETURN min(u.year), max(u.year), count(u.year), count(*);
+MATCH (u) RETURN min(u.name), max(u.name), count(u.name), count(*);
+
+-- should return null
+RETURN min(NULL);
+RETURN max(NULL);
+SELECT min(NULL);
+SELECT min(null::jsonb);
+SELECT max(NULL);
+SELECT max(null::jsonb);
+
+-- should fail
+RETURN min();
+RETURN max();
+SELECT min();
+SELECT max();
 
 --
 -- EXISTS
