@@ -107,4 +107,12 @@ extern Datum localdatetime(PG_FUNCTION_ARGS);
 extern Datum get_time(PG_FUNCTION_ARGS);
 extern Datum get_time_for_timezone(PG_FUNCTION_ARGS);
 
+/* compare */
+extern Datum jsonb_larger(PG_FUNCTION_ARGS);
+extern Datum jsonb_smaller(PG_FUNCTION_ARGS);
+
+/* aggregate functions */
+extern Datum collect_transfn(PG_FUNCTION_ARGS);
+extern Datum collect_finalfn(PG_FUNCTION_ARGS);
+
 #endif							/* CYPHER_FUNCS_H */

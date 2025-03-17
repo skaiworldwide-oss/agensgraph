@@ -16,7 +16,7 @@ with collect(p.name) as col
 RETURN max(col);
  max 
 -----
- 
+ []
 (1 row)
 
 CREATE ELABEL e1;
