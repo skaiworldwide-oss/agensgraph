@@ -3113,3 +3113,39 @@ percentiledisc(PG_FUNCTION_ARGS)
 
 	PG_RETURN_NULL();
 }
+
+Datum
+jsonb_larger(PG_FUNCTION_ARGS)
+{
+	if (jsonb_cmp(fcinfo) > 0)
+		PG_RETURN_DATUM(PG_GETARG_DATUM(0));
+	else
+		PG_RETURN_DATUM(PG_GETARG_DATUM(1));
+}
+
+Datum
+jsonb_smaller(PG_FUNCTION_ARGS)
+{
+	if (jsonb_cmp(fcinfo) < 0)
+		PG_RETURN_DATUM(PG_GETARG_DATUM(0));
+	else
+		PG_RETURN_DATUM(PG_GETARG_DATUM(1));
+}
+
+/*
+ * collect aggregate function
+ */
+Datum
+collect_transfn(PG_FUNCTION_ARGS)
+{
+	return jsonb_agg_strict_transfn(fcinfo);
+}
+
+Datum
+collect_finalfn(PG_FUNCTION_ARGS)
+{
+	if (PG_ARGISNULL(0))
+		PG_RETURN_POINTER(JsonbMakeEmptyArray());
+
+	return jsonb_agg_finalfn(fcinfo);
+}

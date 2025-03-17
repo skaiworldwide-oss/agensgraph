@@ -1507,6 +1507,39 @@ WITH max(b.id::"numeric") AS id, x[0] AS x RETURN *;
 
 EXPLAIN (VERBOSE, COSTS OFF)
 MATCH (a:person {id: 1})-[x:knows*1..2]->(b:person)
+WITH max(b.id) AS id, x[0] AS x RETURN *;
+                                       QUERY PLAN                                        
+-----------------------------------------------------------------------------------------
+ GroupAggregate
+   Output: max(b.properties.'id'::text), (x.edges[1])
+   Group Key: (x.edges[1])
+   ->  Sort
+         Output: (x.edges[1]), b.properties
+         Sort Key: (x.edges[1])
+         ->  Nested Loop
+               Output: x.edges[1], b.properties
+               Inner Unique: true
+               ->  Nested Loop
+                     Output: x.edges, x."end"
+                     ->  Seq Scan on t.person a
+                           Output: a.id, a.properties
+                           Filter: (a.properties.'id'::text = '1'::jsonb)
+                     ->  Subquery Scan on x
+                           Output: x.start, x."end", x.ids, x.edges
+                           ->  Graph VLE [1..2]
+                                 ->  Result
+                                       Output: a.id, a.id, '{}'::graphid[], '[]'::edge[]
+               ->  Memoize
+                     Output: b.properties, b.id
+                     Cache Key: x."end"
+                     Cache Mode: logical
+                     ->  Index Scan using person_pkey on t.person b
+                           Output: b.properties, b.id
+                           Index Cond: (b.id = x."end")
+(26 rows)
+
+EXPLAIN (VERBOSE, COSTS OFF)
+MATCH (a:person {id: 1})-[x:knows*1..2]->(b:person)
 WITH DISTINCT x AS path RETURN *;
                                        QUERY PLAN                                        
 -----------------------------------------------------------------------------------------
@@ -1574,6 +1607,39 @@ WITH max(b.id::"numeric") AS id, x AS x RETURN *;
 
 EXPLAIN (VERBOSE, COSTS OFF)
 MATCH (a:person {id: 1})-[x:knows*1..2]->(b:person)
+WITH max(b.id) AS id, x AS x RETURN *;
+                                       QUERY PLAN                                        
+-----------------------------------------------------------------------------------------
+ GroupAggregate
+   Output: max(b.properties.'id'::text), x.edges
+   Group Key: x.edges
+   ->  Sort
+         Output: x.edges, b.properties
+         Sort Key: x.edges
+         ->  Nested Loop
+               Output: x.edges, b.properties
+               Inner Unique: true
+               ->  Nested Loop
+                     Output: x.edges, x."end"
+                     ->  Seq Scan on t.person a
+                           Output: a.id, a.properties
+                           Filter: (a.properties.'id'::text = '1'::jsonb)
+                     ->  Subquery Scan on x
+                           Output: x.start, x."end", x.ids, x.edges
+                           ->  Graph VLE [1..2]
+                                 ->  Result
+                                       Output: a.id, a.id, '{}'::graphid[], '[]'::edge[]
+               ->  Memoize
+                     Output: b.properties, b.id
+                     Cache Key: x."end"
+                     Cache Mode: logical
+                     ->  Index Scan using person_pkey on t.person b
+                           Output: b.properties, b.id
+                           Index Cond: (b.id = x."end")
+(26 rows)
+
+EXPLAIN (VERBOSE, COSTS OFF)
+MATCH (a:person {id: 1})-[x:knows*1..2]->(b:person)
 WITH max(length(x)::"numeric") AS x, b.id AS id RETURN *;
                                           QUERY PLAN                                           
 -----------------------------------------------------------------------------------------------
@@ -1606,6 +1672,39 @@ WITH max(length(x)::"numeric") AS x, b.id AS id RETURN *;
                                  Output: b.properties, b.id
                                  Index Cond: (b.id = x."end")
 (28 rows)
+
+EXPLAIN (VERBOSE, COSTS OFF)
+MATCH (a:person {id: 1})-[x:knows*1..2]->(b:person)
+WITH max(length(x)) AS x, b.id AS id RETURN *;
+                                       QUERY PLAN                                        
+-----------------------------------------------------------------------------------------
+ GroupAggregate
+   Output: max(length(x.edges)), (b.properties.'id'::text)
+   Group Key: (b.properties.'id'::text)
+   ->  Sort
+         Output: (b.properties.'id'::text), x.edges
+         Sort Key: (b.properties.'id'::text)
+         ->  Nested Loop
+               Output: b.properties.'id'::text, x.edges
+               Inner Unique: true
+               ->  Nested Loop
+                     Output: x.edges, x."end"
+                     ->  Seq Scan on t.person a
+                           Output: a.id, a.properties
+                           Filter: (a.properties.'id'::text = '1'::jsonb)
+                     ->  Subquery Scan on x
+                           Output: x.start, x."end", x.ids, x.edges
+                           ->  Graph VLE [1..2]
+                                 ->  Result
+                                       Output: a.id, a.id, '{}'::graphid[], '[]'::edge[]
+               ->  Memoize
+                     Output: b.properties, b.id
+                     Cache Key: x."end"
+                     Cache Mode: logical
+                     ->  Index Scan using person_pkey on t.person b
+                           Output: b.properties, b.id
+                           Index Cond: (b.id = x."end")
+(26 rows)
 
 EXPLAIN (VERBOSE, COSTS OFF)
 MATCH (a:person {id: 1})-[x:knows*1..2]->(b:person)
@@ -1918,6 +2017,9 @@ ERROR:  UNION types vertex and jsonb cannot be matched
 --
 -- aggregates
 --
+--
+-- count
+--
 MATCH (a)-[]-(b) RETURN count(a) AS a, b.name AS b ORDER BY a, b;
  a |         b          
 ---+--------------------
@@ -1927,6 +2029,166 @@ MATCH (a)-[]-(b) RETURN count(a) AS a, b.name AS b ORDER BY a, b;
  3 | "agens-graph"
 (4 rows)
 
+MATCH (u) RETURN count(u.name), count(DISTINCT u.name);
+ count | count 
+-------+-------
+ 4     | 4
+(1 row)
+
+MATCH (u) RETURN count(u.year), count(DISTINCT u.year);
+ count | count 
+-------+-------
+ 4     | 1
+(1 row)
+
+-- should return 0
+RETURN count(NULL);
+ count 
+-------
+ 0
+(1 row)
+
+-- should fail
+RETURN count();
+ERROR:  count(*) must be used to call a parameterless aggregate function
+LINE 1: RETURN count();
+               ^
+--
+-- collect
+--
+MATCH (u) RETURN collect(u.name), collect(u.year);
+                                   collect                                   |         collect          
+-----------------------------------------------------------------------------+--------------------------
+ ["agens-graph", "agens-graph-jdbc", "agens-graph-docs", "agens-graph-odbc"] | [2016, 2016, 2016, 2016]
+(1 row)
+
+MATCH (u) RETURN collect(u.year), collect(u.year);
+         collect          |         collect          
+--------------------------+--------------------------
+ [2016, 2016, 2016, 2016] | [2016, 2016, 2016, 2016]
+(1 row)
+
+RETURN collect(5);
+ collect 
+---------
+ [5]
+(1 row)
+
+-- should return an empty array
+RETURN collect(NULL::jsonb);
+ collect 
+---------
+ []
+(1 row)
+
+MATCH (u) WHERE u.name =~ 'does not exist' RETURN collect(u.name);
+ collect 
+---------
+ []
+(1 row)
+
+-- should fail
+RETURN collect();
+ERROR:  function collect() does not exist
+LINE 1: RETURN collect();
+               ^
+HINT:  No function matches the given name and argument types. You might need to add explicit type casts.
+-- test DISTINCT inside aggregate functions
+MATCH (u) RETURN (u);
+                          u                          
+-----------------------------------------------------
+ ag_vertex[1.8]{}
+ repo[3.1]{"name": "agens-graph", "year": 2016}
+ repo[3.2]{"name": "agens-graph-jdbc", "year": 2016}
+ repo[3.3]{"name": "agens-graph-docs", "year": 2016}
+ repo[3.4]{"name": "agens-graph-odbc", "year": 2016}
+(5 rows)
+
+MATCH (u) RETURN collect(u.name), collect(DISTINCT u.name);
+                                   collect                                   |                                   collect                                   
+-----------------------------------------------------------------------------+-----------------------------------------------------------------------------
+ ["agens-graph", "agens-graph-jdbc", "agens-graph-docs", "agens-graph-odbc"] | ["agens-graph", "agens-graph-docs", "agens-graph-jdbc", "agens-graph-odbc"]
+(1 row)
+
+MATCH (u) RETURN collect(u.year), collect(DISTINCT u.year);
+         collect          | collect 
+--------------------------+---------
+ [2016, 2016, 2016, 2016] | [2016]
+(1 row)
+
+--
+-- min/max
+--
+MATCH (u) RETURN min(u.year), max(u.year), count(u.year), count(*);
+ min  | max  | count | count 
+------+------+-------+-------
+ 2016 | 2016 | 4     | 5
+(1 row)
+
+MATCH (u) RETURN min(u.name), max(u.name), count(u.name), count(*);
+        min         |      max      | count | count 
+--------------------+---------------+-------+-------
+ "agens-graph-odbc" | "agens-graph" | 4     | 5
+(1 row)
+
+-- should return null
+RETURN min(NULL);
+ min 
+-----
+ 
+(1 row)
+
+RETURN max(NULL);
+ max 
+-----
+ 
+(1 row)
+
+SELECT min(NULL);
+ min 
+-----
+ 
+(1 row)
+
+SELECT min(null::jsonb);
+ min 
+-----
+ 
+(1 row)
+
+SELECT max(NULL);
+ max 
+-----
+ 
+(1 row)
+
+SELECT max(null::jsonb);
+ max 
+-----
+ 
+(1 row)
+
+-- should fail
+RETURN min();
+ERROR:  function min() does not exist
+LINE 1: RETURN min();
+               ^
+HINT:  No function matches the given name and argument types. You might need to add explicit type casts.
+RETURN max();
+ERROR:  function max() does not exist
+LINE 1: RETURN max();
+               ^
+HINT:  No function matches the given name and argument types. You might need to add explicit type casts.
+SELECT min();
+ERROR:  function min() does not exist
+LINE 1: SELECT min();
+               ^
+HINT:  No function matches the given name and argument types. You might need to add explicit type casts.
+SELECT max();
+ERROR:  function max() does not exist
+LINE 1: SELECT max();
+               ^
+HINT:  No function matches the given name and argument types. You might need to add explicit type casts.
 --
 -- EXISTS
 --
