@@ -71,6 +71,7 @@ static void get_cstring_substr(char *c, char *res, int32 start, int32 len);
 static Timestamp dt2local(Timestamp dt, int timezone);
 static Timestamp get_timestamp_for_timezone(text *zone, TimestampTz timestamp);
 static int	float8_cmp(const void *a, const void *b);
+static Jsonb *JsonbMakeEmptyArray(void);
 
 Datum
 jsonb_head(PG_FUNCTION_ARGS)
@@ -3112,4 +3113,56 @@ percentiledisc(PG_FUNCTION_ARGS)
 	}
 
 	PG_RETURN_NULL();
+}
+
+Datum
+jsonb_larger(PG_FUNCTION_ARGS)
+{
+	if (jsonb_cmp(fcinfo) > 0)
+		PG_RETURN_DATUM(PG_GETARG_DATUM(0));
+	else
+		PG_RETURN_DATUM(PG_GETARG_DATUM(1));
+}
+
+Datum
+jsonb_smaller(PG_FUNCTION_ARGS)
+{
+	if (jsonb_cmp(fcinfo) < 0)
+		PG_RETURN_DATUM(PG_GETARG_DATUM(0));
+	else
+		PG_RETURN_DATUM(PG_GETARG_DATUM(1));
+}
+
+/*
+ * collect aggregate function
+ */
+Datum
+collect_transfn(PG_FUNCTION_ARGS)
+{
+	return jsonb_agg_strict_transfn(fcinfo);
+}
+
+Datum
+collect_finalfn(PG_FUNCTION_ARGS)
+{
+	if (PG_ARGISNULL(0))
+		PG_RETURN_POINTER(JsonbMakeEmptyArray());
+
+	return jsonb_agg_finalfn(fcinfo);
+}
+
+/*
+ * Construct an empty array jsonb.
+ */
+static Jsonb *
+JsonbMakeEmptyArray(void)
+{
+	JsonbValue	jbv;
+
+	jbv.type = jbvArray;
+	jbv.val.array.elems = NULL;
+	jbv.val.array.nElems = 0;
+	jbv.val.array.rawScalar = false;
+
+	return JsonbValueToJsonb(&jbv);
 }

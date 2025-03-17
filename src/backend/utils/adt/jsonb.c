@@ -2084,3 +2084,125 @@ jsonb_float8(PG_FUNCTION_ARGS)
 
 	PG_RETURN_DATUM(retValue);
 }
+
+/* AgensGraph */
+Datum
+jsonb_agg_strict_transfn(PG_FUNCTION_ARGS)
+{
+	MemoryContext oldcontext,
+				aggcontext;
+	JsonbAggState *state;
+	JsonbInState elem;
+	Datum		val;
+	JsonbInState *result;
+	bool		single_scalar = false;
+	JsonbIterator *it;
+	Jsonb	   *jbelem;
+	JsonbValue	v;
+	JsonbIteratorToken type;
+
+	if (!AggCheckCallContext(fcinfo, &aggcontext))
+	{
+		/* cannot be called directly because of internal-type argument */
+		elog(ERROR, "jsonb_agg_transfn called in non-aggregate context");
+	}
+
+	/* set up the accumulator on the first go round */
+
+	if (PG_ARGISNULL(0))
+	{
+		Oid			arg_type = get_fn_expr_argtype(fcinfo->flinfo, 1);
+
+		if (arg_type == InvalidOid)
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					 errmsg("could not determine input data type")));
+
+		oldcontext = MemoryContextSwitchTo(aggcontext);
+		state = palloc(sizeof(JsonbAggState));
+		result = palloc0(sizeof(JsonbInState));
+		state->res = result;
+		result->res = pushJsonbValue(&result->parseState,
+									 WJB_BEGIN_ARRAY, NULL);
+		MemoryContextSwitchTo(oldcontext);
+
+		jsonb_categorize_type(arg_type, &state->val_category,
+							  &state->val_output_func);
+	}
+	else
+	{
+		state = (JsonbAggState *) PG_GETARG_POINTER(0);
+		result = state->res;
+	}
+
+	if (PG_ARGISNULL(1))
+		PG_RETURN_POINTER(state);
+
+	/* turn the argument into jsonb in the normal function context */
+
+	val = PG_ARGISNULL(1) ? (Datum) 0 : PG_GETARG_DATUM(1);
+
+	memset(&elem, 0, sizeof(JsonbInState));
+
+	datum_to_jsonb(val, PG_ARGISNULL(1), &elem, state->val_category,
+				   state->val_output_func, false);
+
+	jbelem = JsonbValueToJsonb(elem.res);
+
+	/* switch to the aggregate context for accumulation operations */
+
+	oldcontext = MemoryContextSwitchTo(aggcontext);
+
+	it = JsonbIteratorInit(&jbelem->root);
+
+	while ((type = JsonbIteratorNext(&it, &v, false)) != WJB_DONE)
+	{
+		switch (type)
+		{
+			case WJB_BEGIN_ARRAY:
+				if (v.val.array.rawScalar)
+					single_scalar = true;
+				else
+					result->res = pushJsonbValue(&result->parseState,
+												 type, NULL);
+				break;
+			case WJB_END_ARRAY:
+				if (!single_scalar)
+					result->res = pushJsonbValue(&result->parseState,
+												 type, NULL);
+				break;
+			case WJB_BEGIN_OBJECT:
+			case WJB_END_OBJECT:
+				result->res = pushJsonbValue(&result->parseState,
+											 type, NULL);
+				break;
+			case WJB_ELEM:
+			case WJB_KEY:
+			case WJB_VALUE:
+				if (v.type == jbvString)
+				{
+					/* copy string values in the aggregate context */
+					char	   *buf = palloc(v.val.string.len + 1);
+
+					snprintf(buf, v.val.string.len + 1, "%s", v.val.string.val);
+					v.val.string.val = buf;
+				}
+				else if (v.type == jbvNumeric)
+				{
+					/* same for numeric */
+					v.val.numeric =
+						DatumGetNumeric(DirectFunctionCall1(numeric_uplus,
+															NumericGetDatum(v.val.numeric)));
+				}
+				result->res = pushJsonbValue(&result->parseState,
+											 type, &v);
+				break;
+			default:
+				elog(ERROR, "unknown jsonb iterator token type");
+		}
+	}
+
+	MemoryContextSwitchTo(oldcontext);
+
+	PG_RETURN_POINTER(state);
+}
