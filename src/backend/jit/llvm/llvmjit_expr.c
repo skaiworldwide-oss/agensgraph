@@ -2350,65 +2350,65 @@ llvm_compile_expr(ExprState *state)
 
 			case EEOP_CYPHERTYPECAST:
 				build_EvalXFunc(b, mod, "ExecEvalCypherTypeCast",
-								v_state, v_econtext, op);
-				LLVMBuildBr(b, opblocks[i + 1]);
+								v_state, op);
+				LLVMBuildBr(b, opblocks[opno + 1]);
 				break;
 
 			case EEOP_CYPHERMAPEXPR:
 				build_EvalXFunc(b, mod, "ExecEvalCypherMapExpr",
-								v_state, v_econtext, op);
-				LLVMBuildBr(b, opblocks[i + 1]);
+								v_state, op);
+				LLVMBuildBr(b, opblocks[opno + 1]);
 				break;
 
 			case EEOP_CYPHERLISTEXPR:
 				build_EvalXFunc(b, mod, "ExecEvalCypherListExpr",
-								v_state, v_econtext, op);
-				LLVMBuildBr(b, opblocks[i + 1]);
+								v_state, op);
+				LLVMBuildBr(b, opblocks[opno + 1]);
 				break;
 
 			case EEOP_CYPHERLISTCOMP_BEGIN:
 				build_EvalXFunc(b, mod, "ExecEvalCypherListCompBegin",
-								v_state, v_econtext, op);
-				LLVMBuildBr(b, opblocks[i + 1]);
+								v_state, op);
+				LLVMBuildBr(b, opblocks[opno + 1]);
 				break;
 
 			case EEOP_CYPHERLISTCOMP_ELEM:
 				build_EvalXFunc(b, mod, "ExecEvalCypherListCompElem",
-								v_state, v_econtext, op);
-				LLVMBuildBr(b, opblocks[i + 1]);
+								v_state, op);
+				LLVMBuildBr(b, opblocks[opno + 1]);
 				break;
 
 			case EEOP_CYPHERLISTCOMP_END:
 				build_EvalXFunc(b, mod, "ExecEvalCypherListCompEnd",
-								v_state, v_econtext, op);
-				LLVMBuildBr(b, opblocks[i + 1]);
+								v_state, op);
+				LLVMBuildBr(b, opblocks[opno + 1]);
 				break;
 
 			case EEOP_CYPHERLISTCOMP_ITER_INIT:
 				build_EvalXFunc(b, mod,
 								"ExecEvalCypherListCompIterInit",
-								v_state, v_econtext, op);
-				LLVMBuildBr(b, opblocks[i + 1]);
+								v_state, op);
+				LLVMBuildBr(b, opblocks[opno + 1]);
 				break;
 
 			case EEOP_CYPHERLISTCOMP_ITER_NEXT:
 				build_EvalXFunc(b, mod,
 								"ExecEvalCypherListCompIterInitNext",
-								v_state, v_econtext, op);
-				LLVMBuildBr(b, opblocks[i + 1]);
+								v_state, op);
+				LLVMBuildBr(b, opblocks[opno + 1]);
 				break;
 
 			case EEOP_CYPHERLISTCOMP_VAR:
 				build_EvalXFunc(b, mod,
 								"ExecEvalCypherListCompVar",
-								v_state, v_econtext, op);
-				LLVMBuildBr(b, opblocks[i + 1]);
+								v_state, op);
+				LLVMBuildBr(b, opblocks[opno + 1]);
 				break;
 
 			case EEOP_CYPHERACCESSEXPR:
 				build_EvalXFunc(b, mod, "ExecEvalCypherAccessExpr",
-								v_state, v_econtext, op);
-				LLVMBuildBr(b, opblocks[i + 1]);
+								v_state, op);
+				LLVMBuildBr(b, opblocks[opno + 1]);
 				break;
 
 			case EEOP_LAST:
