@@ -1258,7 +1258,7 @@ exec_simple_query(const char *query_string)
 		(void) PortalRun(portal,
 						 FETCH_ALL,
 						 true,	/* always top level */
-						 true,
+						 true,	/* ignored */
 						 receiver,
 						 receiver,
 						 &qc);
@@ -2234,7 +2234,7 @@ exec_execute_message(const char *portal_name, long max_rows)
 	completed = PortalRun(portal,
 						  max_rows,
 						  true, /* always top level */
-						  !execute_is_fetch && max_rows == FETCH_ALL,
+						  true, /* ignored */
 						  receiver,
 						  receiver,
 						  &qc);
@@ -3678,6 +3678,11 @@ check_restrict_nonsystem_relation_kind(char **newval, void **extra, GucSource so
 
 	/* Save the flags in *extra, for use by the assign function */
 	*extra = malloc(sizeof(int));
+	if (*extra == NULL)
+		ereport(ERROR,
+				(errcode(ERRCODE_OUT_OF_MEMORY),
+				 errmsg("out of memory")));
+
 	*((int *) *extra) = flags;
 
 	return true;

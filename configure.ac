@@ -17,7 +17,7 @@ dnl Read the Autoconf manual for details.
 dnl
 m4_pattern_forbid(^PGAC_)dnl to catch undefined macros
 
-AC_INIT([PostgreSQL], [15.10], [pgsql-bugs@lists.postgresql.org], [], [https://www.postgresql.org/])
+AC_INIT([PostgreSQL], [15.12], [pgsql-bugs@lists.postgresql.org], [], [https://www.postgresql.org/])
 
 m4_if(m4_defn([m4_PACKAGE_VERSION]), [2.69], [], [m4_fatal([Autoconf version 2.69 is required.
 Untested combinations of 'autoconf' and PostgreSQL versions are not
@@ -468,6 +468,26 @@ else
   BITCODE_CXXFLAGS="-O2 $BITCODE_CXXFLAGS"
 fi
 
+# We use C constructs that became invalid in C23.  Check if the compiler
+# reports a standard higher than C17, with the flags selected above (so the
+# user can control the language level explicitly to avoid the gcc/clang-only
+# fallback logic below if preferred).
+AC_MSG_CHECKING([whether $CC reports a C standard higher than ISO C17])
+AC_COMPILE_IFELSE([AC_LANG_PROGRAM([], [@%:@if __STDC_VERSION__ > 201710L
+choke me
+@%:@endif])], [POSTC17=no], [POSTC17=yes])
+AC_MSG_RESULT(${POSTC17})
+
+# If a too recent standard was detected with the user's CFLAGS, try asking for
+# C17 with GNU extensions explicitly.
+if test "$POSTC17" = yes; then
+  old_CFLAGS="$CFLAGS"
+  PGAC_PROG_CC_CFLAGS_OPT([-std=gnu17])
+  if test "$CFLAGS" = "$old_CFLAGS"; then
+    AC_MSG_ERROR([cannot proceed])
+  fi
+fi
+
 # C[XX]FLAGS we determined above will be added back at the end
 user_CFLAGS=$CFLAGS
 CFLAGS=""
@@ -620,6 +640,13 @@ if test "$with_llvm" = yes ; then
 
   PGAC_PROG_VARCC_VARFLAGS_OPT(CLANG, BITCODE_CFLAGS, [-Xclang -no-opaque-pointers])
   PGAC_PROG_VARCXX_VARFLAGS_OPT(CLANGXX, BITCODE_CXXFLAGS, [-Xclang -no-opaque-pointers])
+
+  # Ideally bitcode should perhaps match $CC's use, or not, of outline atomic
+  # functions, but for now we err on the side of suppressing them in bitcode,
+  # because we can't assume they're available at runtime.  This affects aarch64
+  # builds using the basic armv8-a ISA without LSE support.
+  PGAC_PROG_VARCXX_VARFLAGS_OPT(CLANG, BITCODE_CFLAGS, [-mno-outline-atomics])
+  PGAC_PROG_VARCXX_VARFLAGS_OPT(CLANG, BITCODE_CXXFLAGS, [-mno-outline-atomics])
 
   NOT_THE_CFLAGS=""
   PGAC_PROG_VARCC_VARFLAGS_OPT(CLANG, NOT_THE_CFLAGS, [-Wunused-command-line-argument])
@@ -1467,8 +1494,6 @@ AC_SUBST(UUID_LIBS)
 ## Header files
 ##
 
-AC_HEADER_STDBOOL
-
 AC_CHECK_HEADERS(m4_normalize([
 	atomic.h
 	copyfile.h
@@ -1790,14 +1815,11 @@ if test "$ac_cv_sizeof_off_t" -lt 8 -a "$segsize" != "1"; then
    AC_MSG_ERROR([Large file support is not enabled. Segment size cannot be larger than 1GB.])
 fi
 
-AC_CHECK_SIZEOF([bool], [],
-[#ifdef HAVE_STDBOOL_H
-#include <stdbool.h>
-#endif])
+AC_CHECK_SIZEOF([bool], [], [#include <stdbool.h>])
 
-dnl We use <stdbool.h> if we have it and it declares type bool as having
-dnl size 1.  Otherwise, c.h will fall back to declaring bool as unsigned char.
-if test "$ac_cv_header_stdbool_h" = yes -a "$ac_cv_sizeof_bool" = 1; then
+dnl We use <stdbool.h> if bool has size 1 after including it.  Otherwise, c.h
+dnl will fall back to declaring bool as unsigned char.
+if test "$ac_cv_sizeof_bool" = 1; then
   AC_DEFINE([PG_USE_STDBOOL], 1,
             [Define to 1 to use <stdbool.h> to define type bool.])
 fi
@@ -2251,11 +2273,15 @@ AC_COMPILE_IFELSE([AC_LANG_PROGRAM([], [
 # Check for ARMv8 CRC Extension intrinsics to do CRC calculations.
 #
 # First check if __crc32c* intrinsics can be used with the default compiler
-# flags. If not, check if adding -march=armv8-a+crc flag helps.
+# flags. If not, check if adding "-march=armv8-a+crc+simd" flag helps.
+# On systems using soft-float ABI, "-march=armv8-a+crc" is required instead.
 # CFLAGS_ARMV8_CRC32C is set if the extra flag is required.
 PGAC_ARMV8_CRC32C_INTRINSICS([])
 if test x"$pgac_armv8_crc32c_intrinsics" != x"yes"; then
-  PGAC_ARMV8_CRC32C_INTRINSICS([-march=armv8-a+crc])
+  PGAC_ARMV8_CRC32C_INTRINSICS([-march=armv8-a+crc+simd])
+  if test x"$pgac_armv8_crc32c_intrinsics" != x"yes"; then
+    PGAC_ARMV8_CRC32C_INTRINSICS([-march=armv8-a+crc])
+  fi
 fi
 AC_SUBST(CFLAGS_ARMV8_CRC32C)
 
