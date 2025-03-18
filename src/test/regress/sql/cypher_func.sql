@@ -366,3 +366,18 @@ MATCH (p:Person) WITH collect(p.age) AS ages RETURN percentiledisc(null, 0.5);
 
 -- Clean up
 DROP GRAPH percentile_graph CASCADE;
+
+--
+-- Testing graph_exists function
+--
+
+-- Creating sample graph
+CREATE GRAPH func_exist_graph;
+
+-- Testing the graph_exists() function
+SELECT graph_exists('func_exist_graph');
+SELECT graph_exists('func_not_exist_graph');
+SELECT graph_exists(NULL);
+
+-- Clean up
+DROP GRAPH func_exist_graph CASCADE;
