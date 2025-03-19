@@ -1738,6 +1738,285 @@ MATCH p=(:v1)-[*3]->() RETURN p;
  [v1[3.1]{},e1[4.2][3.1,5.2]{},v2[5.2]{"lv": 1},e2[6.4][5.2,5.6]{},v2[5.6]{"lv": 2},e3[7.8][5.6,8.8]{},v3[8.8]{}]
 (8 rows)
 
+-- Test cases for variable reuse
+CREATE GRAPH variable_reuse;
+SET graph_path = variable_reuse;
+-- add data
+CREATE (:v);
+CREATE (:v {i: 0});
+CREATE (:v {i: 1});
+CREATE (:v1 {id:'initial'})-[:e1]->(:v1 {id:'middle'})-[:e1]->(:v1 {id:'end'});
+CREATE (:v2 {id:'initial'})<-[:e2]-(:v2 {id:'middle'})-[:e2]->(:v2 {id:'end'});
+CREATE (:v3 {id:'initial'})-[:e3]->(:v3 {id:'middle'})<-[:e3]-(:v3 {id:'end'});
+-- valid variable reuse for edge labels across clauses
+MATCH ()-[r0]->() MATCH ()-[r0]->() RETURN r0;
+         r0         
+--------------------
+ e1[5.1][4.1,4.2]{}
+ e1[5.2][4.2,4.3]{}
+ e2[7.1][6.2,6.1]{}
+ e2[7.2][6.2,6.3]{}
+ e3[9.1][8.1,8.2]{}
+ e3[9.2][8.3,8.2]{}
+(6 rows)
+
+MATCH ()-[r0:e1]->() MATCH ()-[r0:e1]->() RETURN r0;
+         r0         
+--------------------
+ e1[5.1][4.1,4.2]{}
+ e1[5.2][4.2,4.3]{}
+(2 rows)
+
+MATCH ()-[r0:e2]->() MATCH ()-[r0:e2]->() RETURN r0;
+         r0         
+--------------------
+ e2[7.1][6.2,6.1]{}
+ e2[7.2][6.2,6.3]{}
+(2 rows)
+
+MATCH ()-[r0:e1]->()-[r1]->() RETURN r0,r1;
+         r0         |         r1         
+--------------------+--------------------
+ e1[5.1][4.1,4.2]{} | e1[5.2][4.2,4.3]{}
+(1 row)
+
+MATCH p0=()-[:e1]->() MATCH p1=()-[:e2]->() RETURN p1;
+                                  p1                                   
+-----------------------------------------------------------------------
+ [v2[6.2]{"id": "middle"},e2[7.1][6.2,6.1]{},v2[6.1]{"id": "initial"}]
+ [v2[6.2]{"id": "middle"},e2[7.1][6.2,6.1]{},v2[6.1]{"id": "initial"}]
+ [v2[6.2]{"id": "middle"},e2[7.2][6.2,6.3]{},v2[6.3]{"id": "end"}]
+ [v2[6.2]{"id": "middle"},e2[7.2][6.2,6.3]{},v2[6.3]{"id": "end"}]
+(4 rows)
+
+MATCH ()-[r0:e1]->()-[r1]->() MATCH ()-[r0:e1]->()-[r1]->() RETURN r0,r1;
+         r0         |         r1         
+--------------------+--------------------
+ e1[5.1][4.1,4.2]{} | e1[5.2][4.2,4.3]{}
+(1 row)
+
+MATCH ()-[]->() MATCH ()-[r1:e2]->() RETURN r1;
+         r1         
+--------------------
+ e2[7.1][6.2,6.1]{}
+ e2[7.2][6.2,6.3]{}
+ e2[7.1][6.2,6.1]{}
+ e2[7.2][6.2,6.3]{}
+ e2[7.1][6.2,6.1]{}
+ e2[7.2][6.2,6.3]{}
+ e2[7.1][6.2,6.1]{}
+ e2[7.2][6.2,6.3]{}
+ e2[7.1][6.2,6.1]{}
+ e2[7.2][6.2,6.3]{}
+ e2[7.1][6.2,6.1]{}
+ e2[7.2][6.2,6.3]{}
+(12 rows)
+
+MATCH ()-[r0:e1]->() MATCH ()-[r1:e2]->() RETURN r0,r1;
+         r0         |         r1         
+--------------------+--------------------
+ e1[5.1][4.1,4.2]{} | e2[7.1][6.2,6.1]{}
+ e1[5.1][4.1,4.2]{} | e2[7.2][6.2,6.3]{}
+ e1[5.2][4.2,4.3]{} | e2[7.1][6.2,6.1]{}
+ e1[5.2][4.2,4.3]{} | e2[7.2][6.2,6.3]{}
+(4 rows)
+
+MATCH ()-[e:e1]->() WITH e OPTIONAL MATCH (a)-[e]->(c) RETURN a, c;
+            a             |            c            
+--------------------------+-------------------------
+ v1[4.1]{"id": "initial"} | v1[4.2]{"id": "middle"}
+ v1[4.2]{"id": "middle"}  | v1[4.3]{"id": "end"}
+(2 rows)
+
+MATCH ()-[e:e1]->() WITH e WHERE EXISTS((:v1)-[e]->()) RETURN e;
+         e          
+--------------------
+ e1[5.1][4.1,4.2]{}
+ e1[5.2][4.2,4.3]{}
+(2 rows)
+
+MATCH ()-[e:e1]->() WITH e WHERE EXISTS((:v2)-[e]->()) RETURN e;
+ e 
+---
+(0 rows)
+
+-- valid variable reuse for vertex labels across clauses
+MATCH (r1:v2), (r1:v2) RETURN r1;
+            r1            
+--------------------------
+ v2[6.1]{"id": "initial"}
+ v2[6.2]{"id": "middle"}
+ v2[6.3]{"id": "end"}
+(3 rows)
+
+MATCH (r1), (r1) RETURN r1;
+            r1            
+--------------------------
+ v[3.1]{}
+ v[3.2]{"i": 0}
+ v[3.3]{"i": 1}
+ v1[4.1]{"id": "initial"}
+ v1[4.2]{"id": "middle"}
+ v1[4.3]{"id": "end"}
+ v2[6.1]{"id": "initial"}
+ v2[6.2]{"id": "middle"}
+ v2[6.3]{"id": "end"}
+ v3[8.1]{"id": "initial"}
+ v3[8.2]{"id": "middle"}
+ v3[8.3]{"id": "end"}
+(12 rows)
+
+MATCH (r1:v2), (r1) RETURN r1;
+            r1            
+--------------------------
+ v2[6.1]{"id": "initial"}
+ v2[6.2]{"id": "middle"}
+ v2[6.3]{"id": "end"}
+(3 rows)
+
+MATCH (r1:v2), (r1), (r1), (r1:v2) RETURN r1;
+            r1            
+--------------------------
+ v2[6.1]{"id": "initial"}
+ v2[6.2]{"id": "middle"}
+ v2[6.3]{"id": "end"}
+(3 rows)
+
+MATCH (r1:v2)-[]->(r1)-[]->(r1:v2)-[]->(r1) RETURN r1;
+ r1 
+----
+(0 rows)
+
+MATCH (r1:v2)-[]->()-[]->()-[]->(r1:v2) RETURN r1;
+ r1 
+----
+(0 rows)
+
+MATCH ()-[r0:e1]->() MATCH ()-[r0]->() RETURN r0;
+         r0         
+--------------------
+ e1[5.1][4.1,4.2]{}
+ e1[5.2][4.2,4.3]{}
+(2 rows)
+
+MATCH (a:v1) WITH a OPTIONAL MATCH (a)-[:e1]->(c) RETURN a, c;
+            a             |            c            
+--------------------------+-------------------------
+ v1[4.1]{"id": "initial"} | v1[4.2]{"id": "middle"}
+ v1[4.2]{"id": "middle"}  | v1[4.3]{"id": "end"}
+ v1[4.3]{"id": "end"}     | 
+(3 rows)
+
+MATCH (a:v2) WITH a WHERE EXISTS((a)-[:e1]->()) RETURN a;
+ a 
+---
+(0 rows)
+
+-- Property constraints on reused variables
+MATCH (r1:v2 {id: 'initial'}), (r2:v2 {id: 'middle'}) CREATE (r1)-[:e1 {id: 1}]->(r2);
+MATCH (r1:v2 {id: 'initial'}), (r2:v2 {id: 'middle'}) CREATE (r1)-[:e1 {id: 2}]->(r2);
+MATCH (r1:v2), (r1:v2 {id: 'initial'}) RETURN r1;
+            r1            
+--------------------------
+ v2[6.1]{"id": "initial"}
+(1 row)
+
+MATCH (r1:v2) MATCH (r1:v2 {id: 'middle'}) RETURN r1;
+           r1            
+-------------------------
+ v2[6.2]{"id": "middle"}
+(1 row)
+
+MATCH (r1:v2) MATCH (r1:v2), (r1 {id: 'end'}) RETURN r1;
+          r1          
+----------------------
+ v2[6.3]{"id": "end"}
+(1 row)
+
+MATCH (r1:v2) MATCH (r1 {id: 'initial'})-[e:e1]->(r2) RETURN r1,e,r2;
+            r1            |             e             |           r2            
+--------------------------+---------------------------+-------------------------
+ v2[6.1]{"id": "initial"} | e1[5.3][6.1,6.2]{"id": 1} | v2[6.2]{"id": "middle"}
+ v2[6.1]{"id": "initial"} | e1[5.4][6.1,6.2]{"id": 2} | v2[6.2]{"id": "middle"}
+(2 rows)
+
+MATCH (r1:v2) MATCH (r1 {id: 'initial'})-[e:e1]->(r2) MATCH (r1)-[e:e1 {id: 1}]->(r2) RETURN r1,e,r2;
+            r1            |             e             |           r2            
+--------------------------+---------------------------+-------------------------
+ v2[6.1]{"id": "initial"} | e1[5.3][6.1,6.2]{"id": 1} | v2[6.2]{"id": "middle"}
+(1 row)
+
+MATCH (r1:v2) MATCH (r1 {id: 'initial'})-[e:e1]->(r2) MATCH (r1)-[e:e1 {id: 2}]->(r2) RETURN r1,e,r2;
+            r1            |             e             |           r2            
+--------------------------+---------------------------+-------------------------
+ v2[6.1]{"id": "initial"} | e1[5.4][6.1,6.2]{"id": 2} | v2[6.2]{"id": "middle"}
+(1 row)
+
+-- invalid variable reuse for labels across clauses
+MATCH (r1:v1), (r1:v2) RETURN r1;
+ERROR:  label conflict on node "r1"
+LINE 1: MATCH (r1:v1), (r1:v2) RETURN r1;
+                        ^
+MATCH (r1:e1), (r1:e2) return r1;
+ERROR:  label conflict on node "r1"
+LINE 1: MATCH (r1:e1), (r1:e2) return r1;
+                        ^
+MATCH (r0)-[r0]->() MATCH ()-[]->() RETURN r0;
+ERROR:  duplicate variable "r0"
+LINE 1: MATCH (r0)-[r0]->() MATCH ()-[]->() RETURN r0;
+                    ^
+MATCH (r0)-[]->() MATCH ()-[r0]->() RETURN r0;
+ERROR:  duplicate variable "r0"
+LINE 1: MATCH (r0)-[]->() MATCH ()-[r0]->() RETURN r0;
+                                    ^
+MATCH ()-[r0]->() MATCH ()-[]->(r0) RETURN r0;
+ERROR:  duplicate variable "r0"
+LINE 1: MATCH ()-[r0]->() MATCH ()-[]->(r0) RETURN r0;
+                                        ^
+MATCH ()-[r0:e1]->() MATCH ()-[r0:e2]->() RETURN r0;
+ERROR:  label on variable from previous clauses is not allowed
+LINE 1: MATCH ()-[r0:e1]->() MATCH ()-[r0:e2]->() RETURN r0;
+                                       ^
+MATCH ()-[r0]->() MATCH ()-[r0:e2]->() RETURN r0;
+ERROR:  label on variable from previous clauses is not allowed
+LINE 1: MATCH ()-[r0]->() MATCH ()-[r0:e2]->() RETURN r0;
+                                    ^
+MATCH ()-[r0:e1]->() MATCH ()-[r0:e2]->() RETURN r0;
+ERROR:  label on variable from previous clauses is not allowed
+LINE 1: MATCH ()-[r0:e1]->() MATCH ()-[r0:e2]->() RETURN r0;
+                                       ^
+MATCH ()-[r0:e1]->()-[r0]->() MATCH ()-[r0:e2]->() RETURN r0;
+ERROR:  duplicate variable "r0"
+LINE 1: MATCH ()-[r0:e1]->()-[r0]->() MATCH ()-[r0:e2]->() RETURN r0...
+                              ^
+MATCH ()-[r0:e1]->()-[r1]->() MATCH ()-[r1:e1]->()-[r0]->() RETURN r0;
+ERROR:  label on variable from previous clauses is not allowed
+LINE 1: MATCH ()-[r0:e1]->()-[r1]->() MATCH ()-[r1:e1]->()-[r0]->() ...
+                                                ^
+MATCH ()-[r0:e1]->()-[r1]->() MATCH ()-[r0:e1]->()-[r0]->() RETURN r0;
+ERROR:  duplicate variable "r0"
+LINE 1: ...TCH ()-[r0:e1]->()-[r1]->() MATCH ()-[r0:e1]->()-[r0]->() RE...
+                                                             ^
+MATCH ()-[r0 *]->() MATCH ()-[r0]->() RETURN r0;
+ERROR:  duplicate variable "r0"
+LINE 1: MATCH ()-[r0 *]->() MATCH ()-[r0]->() RETURN r0;
+                                      ^
+MATCH ()-[r0]->() MATCH ()-[r0 *]->() RETURN r0;
+ERROR:  duplicate variable "r0"
+LINE 1: MATCH ()-[r0]->() MATCH ()-[r0 *]->() RETURN r0;
+                                    ^
+DROP GRAPH variable_reuse CASCADE;
+NOTICE:  drop cascades to 10 other objects
+DETAIL:  drop cascades to sequence variable_reuse.ag_label_seq
+drop cascades to vlabel ag_vertex
+drop cascades to elabel ag_edge
+drop cascades to vlabel v
+drop cascades to vlabel v1
+drop cascades to elabel e1
+drop cascades to vlabel v2
+drop cascades to elabel e2
+drop cascades to vlabel v3
+drop cascades to elabel e3
 SET graph_path = agens;
 --
 -- DISTINCT
