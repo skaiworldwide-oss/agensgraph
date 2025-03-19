@@ -561,6 +561,69 @@ CREATE (n)-[:e3]->(:v3), (n)-[:e3]->(:v3);
 
 MATCH p=(:v1)-[*3]->() RETURN p;
 
+-- Test cases for variable reuse
+CREATE GRAPH variable_reuse;
+SET graph_path = variable_reuse;
+
+-- add data
+CREATE (:v);
+CREATE (:v {i: 0});
+CREATE (:v {i: 1});
+CREATE (:v1 {id:'initial'})-[:e1]->(:v1 {id:'middle'})-[:e1]->(:v1 {id:'end'});
+CREATE (:v2 {id:'initial'})<-[:e2]-(:v2 {id:'middle'})-[:e2]->(:v2 {id:'end'});
+CREATE (:v3 {id:'initial'})-[:e3]->(:v3 {id:'middle'})<-[:e3]-(:v3 {id:'end'});
+
+-- valid variable reuse for edge labels across clauses
+MATCH ()-[r0]->() MATCH ()-[r0]->() RETURN r0;
+MATCH ()-[r0:e1]->() MATCH ()-[r0:e1]->() RETURN r0;
+MATCH ()-[r0:e2]->() MATCH ()-[r0:e2]->() RETURN r0;
+MATCH ()-[r0:e1]->()-[r1]->() RETURN r0,r1;
+MATCH p0=()-[:e1]->() MATCH p1=()-[:e2]->() RETURN p1;
+MATCH ()-[r0:e1]->()-[r1]->() MATCH ()-[r0:e1]->()-[r1]->() RETURN r0,r1;
+MATCH ()-[]->() MATCH ()-[r1:e2]->() RETURN r1;
+MATCH ()-[r0:e1]->() MATCH ()-[r1:e2]->() RETURN r0,r1;
+MATCH ()-[e:e1]->() WITH e OPTIONAL MATCH (a)-[e]->(c) RETURN a, c;
+MATCH ()-[e:e1]->() WITH e WHERE EXISTS((:v1)-[e]->()) RETURN e;
+MATCH ()-[e:e1]->() WITH e WHERE EXISTS((:v2)-[e]->()) RETURN e;
+
+-- valid variable reuse for vertex labels across clauses
+MATCH (r1:v2), (r1:v2) RETURN r1;
+MATCH (r1), (r1) RETURN r1;
+MATCH (r1:v2), (r1) RETURN r1;
+MATCH (r1:v2), (r1), (r1), (r1:v2) RETURN r1;
+MATCH (r1:v2)-[]->(r1)-[]->(r1:v2)-[]->(r1) RETURN r1;
+MATCH (r1:v2)-[]->()-[]->()-[]->(r1:v2) RETURN r1;
+MATCH ()-[r0:e1]->() MATCH ()-[r0]->() RETURN r0;
+MATCH (a:v1) WITH a OPTIONAL MATCH (a)-[:e1]->(c) RETURN a, c;
+MATCH (a:v2) WITH a WHERE EXISTS((a)-[:e1]->()) RETURN a;
+
+-- Property constraints on reused variables
+MATCH (r1:v2 {id: 'initial'}), (r2:v2 {id: 'middle'}) CREATE (r1)-[:e1 {id: 1}]->(r2);
+MATCH (r1:v2 {id: 'initial'}), (r2:v2 {id: 'middle'}) CREATE (r1)-[:e1 {id: 2}]->(r2);
+MATCH (r1:v2), (r1:v2 {id: 'initial'}) RETURN r1;
+MATCH (r1:v2) MATCH (r1:v2 {id: 'middle'}) RETURN r1;
+MATCH (r1:v2) MATCH (r1:v2), (r1 {id: 'end'}) RETURN r1;
+MATCH (r1:v2) MATCH (r1 {id: 'initial'})-[e:e1]->(r2) RETURN r1,e,r2;
+MATCH (r1:v2) MATCH (r1 {id: 'initial'})-[e:e1]->(r2) MATCH (r1)-[e:e1 {id: 1}]->(r2) RETURN r1,e,r2;
+MATCH (r1:v2) MATCH (r1 {id: 'initial'})-[e:e1]->(r2) MATCH (r1)-[e:e1 {id: 2}]->(r2) RETURN r1,e,r2;
+
+-- invalid variable reuse for labels across clauses
+MATCH (r1:v1), (r1:v2) RETURN r1;
+MATCH (r1:e1), (r1:e2) return r1;
+MATCH (r0)-[r0]->() MATCH ()-[]->() RETURN r0;
+MATCH (r0)-[]->() MATCH ()-[r0]->() RETURN r0;
+MATCH ()-[r0]->() MATCH ()-[]->(r0) RETURN r0;
+MATCH ()-[r0:e1]->() MATCH ()-[r0:e2]->() RETURN r0;
+MATCH ()-[r0]->() MATCH ()-[r0:e2]->() RETURN r0;
+MATCH ()-[r0:e1]->() MATCH ()-[r0:e2]->() RETURN r0;
+MATCH ()-[r0:e1]->()-[r0]->() MATCH ()-[r0:e2]->() RETURN r0;
+MATCH ()-[r0:e1]->()-[r1]->() MATCH ()-[r1:e1]->()-[r0]->() RETURN r0;
+MATCH ()-[r0:e1]->()-[r1]->() MATCH ()-[r0:e1]->()-[r0]->() RETURN r0;
+MATCH ()-[r0 *]->() MATCH ()-[r0]->() RETURN r0;
+MATCH ()-[r0]->() MATCH ()-[r0 *]->() RETURN r0;
+
+DROP GRAPH variable_reuse CASCADE;
+
 SET graph_path = agens;
 
 --
