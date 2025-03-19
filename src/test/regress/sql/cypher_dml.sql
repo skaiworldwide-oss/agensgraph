@@ -1409,6 +1409,16 @@ MATCH p=((u)-[*..3]->(v)) RETURN p LIMIT 5; -- crash
 
 DROP GRAPH asterisk CASCADE;
 
+--
+-- CTES
+--
+SET graph_path = agens;
+WITH graph as (MERGE (n) return n) SELECT * FROM graph;
+WITH graph as (CREATE (n) return n) SELECT * FROM graph;
+WITH graph as (MATCH (n) RETURN n) SELECT * FROM graph;
+WITH graph as (LOAD FROM history AS n RETURN n) SELECT * FROM graph;
+WITH graph as (MATCH (n) SET n.vertex = true RETURN n) SELECT * FROM graph;
+
 -- cleanup
 
 DROP GRAPH srf CASCADE;
