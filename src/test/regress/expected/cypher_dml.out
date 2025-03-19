@@ -4014,6 +4014,43 @@ drop cascades to vlabel vertex
 drop cascades to elabel edge
 drop cascades to vlabel city
 drop cascades to elabel road
+--
+-- CTES
+--
+SET graph_path = agens;
+WITH graph as (MERGE (n) return n) SELECT * FROM graph;
+         n         
+-------------------
+ ag_vertex[1.32]{}
+(1 row)
+
+WITH graph as (CREATE (n) return n) SELECT * FROM graph;
+         n         
+-------------------
+ ag_vertex[1.33]{}
+(1 row)
+
+WITH graph as (MATCH (n) RETURN n) SELECT * FROM graph;
+         n         
+-------------------
+ ag_vertex[1.32]{}
+ ag_vertex[1.33]{}
+(2 rows)
+
+WITH graph as (LOAD FROM history AS n RETURN n) SELECT * FROM graph;
+                   n                   
+---------------------------------------
+ {"year": 1996, "event": "PostgreSQL"}
+ {"year": 2016, "event": "Graph"}
+(2 rows)
+
+WITH graph as (MATCH (n) SET n.vertex = true RETURN n) SELECT * FROM graph;
+                n                
+---------------------------------
+ ag_vertex[1.32]{"vertex": true}
+ ag_vertex[1.33]{"vertex": true}
+(2 rows)
+
 -- cleanup
 DROP GRAPH srf CASCADE;
 NOTICE:  drop cascades to 5 other objects

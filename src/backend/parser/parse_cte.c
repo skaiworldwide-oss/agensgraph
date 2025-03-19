@@ -95,6 +95,9 @@ static void checkWellFormedRecursion(CteState *cstate);
 static bool checkWellFormedRecursionWalker(Node *node, CteState *cstate);
 static void checkWellFormedSelectStmt(SelectStmt *stmt, CteState *cstate);
 
+/* Cypher */
+static bool cypherHasModifyingClause(CypherStmt *stmt);
+
 
 /*
  * transformWithClause -
@@ -148,7 +151,12 @@ transformWithClause(ParseState *pstate, WithClause *withClause)
 		cte->cterecursive = false;
 		cte->cterefcount = 0;
 
-		if (!IsA(cte->ctequery, SelectStmt))
+		if (IsA(cte->ctequery, CypherStmt))
+		{
+			pstate->p_hasModifyingCTE = 
+				cypherHasModifyingClause((CypherStmt *) cte->ctequery);
+		}
+		else if (!IsA(cte->ctequery, SelectStmt))
 		{
 			/* must be a data-modifying statement */
 			Assert(IsA(cte->ctequery, InsertStmt) ||
@@ -1209,4 +1217,37 @@ checkWellFormedSelectStmt(SelectStmt *stmt, CteState *cstate)
 					 (int) stmt->op);
 		}
 	}
+}
+
+static bool cypherHasModifyingClause(CypherStmt *stmt)
+{
+	CypherClause *clause = (CypherClause *) stmt->last;
+	NodeTag type;
+
+	while (clause != NULL)
+	{
+		type = cypherClauseTag(clause);
+		switch (type)
+		{
+			case T_CypherMatchClause:
+			case T_CypherUnwindClause:
+			case T_CypherProjection:
+			case T_CypherLoadClause:
+				/* do nothing. */
+				break;
+			case T_CypherCreateClause:
+			case T_CypherDeleteClause:
+			case T_CypherSetClause:
+			case T_CypherMergeClause:
+				/* found a modifying clause */
+				return true;
+			default:
+				elog(ERROR, "unrecognized Cypher clause type: %d", type);
+				break;
+		}
+
+		clause = (CypherClause *) clause->prev;
+	}
+
+	return false;
 }
