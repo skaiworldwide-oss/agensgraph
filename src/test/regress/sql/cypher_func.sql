@@ -381,3 +381,21 @@ SELECT graph_exists(NULL);
 
 -- Clean up
 DROP GRAPH func_exist_graph CASCADE;
+
+
+--
+-- Testing start_id(), end_id() functions for edges
+--
+
+-- Creating sample graph
+CREATE GRAPH edge_test_graph;
+SET graph_path = edge_test_graph;
+CREATE (keanu:Person {name: 'Keanu Reeves', age: 58}),
+  (speed:Movie {title: 'Speed'}),
+  (keanu)-[:ACTED_IN]->(speed);
+
+-- Testing the start_id(), end_id() function
+MATCH (n1)-[e1]->(n2) return id(n1),id(e1),id(n2),start_id(e1),end_id(e1);
+
+-- Clean up
+DROP GRAPH edge_test_graph CASCADE;
