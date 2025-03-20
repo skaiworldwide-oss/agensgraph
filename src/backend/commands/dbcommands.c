@@ -140,7 +140,7 @@ createdb(ParseState *pstate, const CreatedbStmt *stmt)
 	int			encoding = -1;
 	bool		dbistemplate = false;
 	bool		dballowconnections = true;
-	int			dbconnlimit = -1;
+	int			dbconnlimit = DATCONNLIMIT_UNLIMITED;
 	int			notherbackends;
 	int			npreparedxacts;
 	createdb_failure_params fparms;
@@ -309,7 +309,7 @@ createdb(ParseState *pstate, const CreatedbStmt *stmt)
 	if (dconnlimit && dconnlimit->arg)
 	{
 		dbconnlimit = defGetInt32(dconnlimit);
-		if (dbconnlimit < -1)
+		if (dbconnlimit < DATCONNLIMIT_UNLIMITED)
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 					 errmsg("invalid connection limit: %d", dbconnlimit)));
@@ -356,6 +356,16 @@ createdb(ParseState *pstate, const CreatedbStmt *stmt)
 				(errcode(ERRCODE_UNDEFINED_DATABASE),
 				 errmsg("template database \"%s\" does not exist",
 						dbtemplate)));
+
+	/*
+	 * If the source database was in the process of being dropped, we can't
+	 * use it as a template.
+	 */
+	if (database_is_invalid_oid(src_dboid))
+		ereport(ERROR,
+				errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+				errmsg("cannot use invalid database \"%s\" as template", dbtemplate),
+				errhint("Use DROP DATABASE to drop invalid databases."));
 
 	/*
 	 * Permission check: to copy a DB that's not marked datistemplate, you
@@ -817,6 +827,9 @@ dropdb(const char *dbname, bool missing_ok, bool force)
 	bool		db_istemplate;
 	Relation	pgdbrel;
 	HeapTuple	tup;
+	ScanKeyData scankey;
+	void	   *inplace_state;
+	Form_pg_database datform;
 	int			notherbackends;
 	int			npreparedxacts;
 	int			nslots,
@@ -933,17 +946,6 @@ dropdb(const char *dbname, bool missing_ok, bool force)
 				 errdetail_busy_db(notherbackends, npreparedxacts)));
 
 	/*
-	 * Remove the database's tuple from pg_database.
-	 */
-	tup = SearchSysCache1(DATABASEOID, ObjectIdGetDatum(db_id));
-	if (!HeapTupleIsValid(tup))
-		elog(ERROR, "cache lookup failed for database %u", db_id);
-
-	CatalogTupleDelete(pgdbrel, &tup->t_self);
-
-	ReleaseSysCache(tup);
-
-	/*
 	 * Delete any comments or security labels associated with the database.
 	 */
 	DeleteSharedComments(db_id, DatabaseRelationId);
@@ -958,6 +960,37 @@ dropdb(const char *dbname, bool missing_ok, bool force)
 	 * Remove shared dependency references for the database.
 	 */
 	dropDatabaseDependencies(db_id);
+
+	/*
+	 * Except for the deletion of the catalog row, subsequent actions are not
+	 * transactional (consider DropDatabaseBuffers() discarding modified
+	 * buffers). But we might crash or get interrupted below. To prevent
+	 * accesses to a database with invalid contents, mark the database as
+	 * invalid using an in-place update.
+	 *
+	 * We need to flush the WAL before continuing, to guarantee the
+	 * modification is durable before performing irreversible filesystem
+	 * operations.
+	 */
+	ScanKeyInit(&scankey,
+				Anum_pg_database_datname,
+				BTEqualStrategyNumber, F_NAMEEQ,
+				CStringGetDatum(dbname));
+	systable_inplace_update_begin(pgdbrel, DatabaseNameIndexId, true,
+								  NULL, 1, &scankey, &tup, &inplace_state);
+	if (!HeapTupleIsValid(tup))
+		elog(ERROR, "cache lookup failed for database %u", db_id);
+	datform = (Form_pg_database) GETSTRUCT(tup);
+	datform->datconnlimit = DATCONNLIMIT_INVALID_DB;
+	systable_inplace_update_finish(inplace_state, tup);
+	XLogFlush(XactLastRecEnd);
+
+	/*
+	 * Also delete the tuple - transactionally. If this transaction commits,
+	 * the row will be gone, but if we fail, dropdb() can be invoked again.
+	 */
+	CatalogTupleDelete(pgdbrel, &tup->t_self);
+	heap_freetuple(tup);
 
 	/*
 	 * Drop db-specific replication slots.
@@ -1020,6 +1053,7 @@ RenameDatabase(const char *oldname, const char *newname)
 {
 	Oid			db_id;
 	HeapTuple	newtup;
+	ItemPointerData otid;
 	Relation	rel;
 	int			notherbackends;
 	int			npreparedxacts;
@@ -1091,11 +1125,13 @@ RenameDatabase(const char *oldname, const char *newname)
 				 errdetail_busy_db(notherbackends, npreparedxacts)));
 
 	/* rename */
-	newtup = SearchSysCacheCopy1(DATABASEOID, ObjectIdGetDatum(db_id));
+	newtup = SearchSysCacheLockedCopy1(DATABASEOID, ObjectIdGetDatum(db_id));
 	if (!HeapTupleIsValid(newtup))
 		elog(ERROR, "cache lookup failed for database %u", db_id);
+	otid = newtup->t_self;
 	namestrcpy(&(((Form_pg_database) GETSTRUCT(newtup))->datname), newname);
-	CatalogTupleUpdate(rel, &newtup->t_self, newtup);
+	CatalogTupleUpdate(rel, &otid, newtup);
+	UnlockTuple(rel, &otid, InplaceUpdateTupleLock);
 
 	InvokeObjectPostAlterHook(DatabaseRelationId, db_id, 0);
 
@@ -1339,6 +1375,7 @@ movedb(const char *dbname, const char *tblspcname)
 			ereport(ERROR,
 					(errcode(ERRCODE_UNDEFINED_DATABASE),
 					 errmsg("database \"%s\" does not exist", dbname)));
+		LockTuple(pgdbrel, &oldtuple->t_self, InplaceUpdateTupleLock);
 
 		MemSet(new_record, 0, sizeof(new_record));
 		MemSet(new_record_nulls, false, sizeof(new_record_nulls));
@@ -1351,6 +1388,7 @@ movedb(const char *dbname, const char *tblspcname)
 									 new_record,
 									 new_record_nulls, new_record_repl);
 		CatalogTupleUpdate(pgdbrel, &oldtuple->t_self, newtuple);
+		UnlockTuple(pgdbrel, &oldtuple->t_self, InplaceUpdateTupleLock);
 
 		InvokeObjectPostAlterHook(DatabaseRelationId, db_id, 0);
 
@@ -1481,7 +1519,7 @@ AlterDatabase(ParseState *pstate, AlterDatabaseStmt *stmt, bool isTopLevel)
 	ListCell   *option;
 	bool		dbistemplate = false;
 	bool		dballowconnections = true;
-	int			dbconnlimit = -1;
+	int			dbconnlimit = DATCONNLIMIT_UNLIMITED;
 	DefElem    *distemplate = NULL;
 	DefElem    *dallowconnections = NULL;
 	DefElem    *dconnlimit = NULL;
@@ -1564,7 +1602,7 @@ AlterDatabase(ParseState *pstate, AlterDatabaseStmt *stmt, bool isTopLevel)
 	if (dconnlimit && dconnlimit->arg)
 	{
 		dbconnlimit = defGetInt32(dconnlimit);
-		if (dbconnlimit < -1)
+		if (dbconnlimit < DATCONNLIMIT_UNLIMITED)
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 					 errmsg("invalid connection limit: %d", dbconnlimit)));
@@ -1587,9 +1625,18 @@ AlterDatabase(ParseState *pstate, AlterDatabaseStmt *stmt, bool isTopLevel)
 		ereport(ERROR,
 				(errcode(ERRCODE_UNDEFINED_DATABASE),
 				 errmsg("database \"%s\" does not exist", stmt->dbname)));
+	LockTuple(rel, &tuple->t_self, InplaceUpdateTupleLock);
 
 	datform = (Form_pg_database) GETSTRUCT(tuple);
 	dboid = datform->oid;
+
+	if (database_is_invalid_form(datform))
+	{
+		ereport(FATAL,
+				errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+				errmsg("cannot alter invalid database \"%s\"", stmt->dbname),
+				errhint("Use DROP DATABASE to drop invalid databases."));
+	}
 
 	if (!pg_database_ownercheck(dboid, GetUserId()))
 		aclcheck_error(ACLCHECK_NOT_OWNER, OBJECT_DATABASE,
@@ -1632,6 +1679,7 @@ AlterDatabase(ParseState *pstate, AlterDatabaseStmt *stmt, bool isTopLevel)
 	newtuple = heap_modify_tuple(tuple, RelationGetDescr(rel), new_record,
 								 new_record_nulls, new_record_repl);
 	CatalogTupleUpdate(rel, &tuple->t_self, newtuple);
+	UnlockTuple(rel, &tuple->t_self, InplaceUpdateTupleLock);
 
 	InvokeObjectPostAlterHook(DatabaseRelationId, dboid, 0);
 
@@ -1742,6 +1790,8 @@ AlterDatabaseOwner(const char *dbname, Oid newOwnerId)
 					(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
 					 errmsg("permission denied to change owner of database")));
 
+		LockTuple(rel, &tuple->t_self, InplaceUpdateTupleLock);
+
 		memset(repl_null, false, sizeof(repl_null));
 		memset(repl_repl, false, sizeof(repl_repl));
 
@@ -1766,6 +1816,7 @@ AlterDatabaseOwner(const char *dbname, Oid newOwnerId)
 
 		newtuple = heap_modify_tuple(tuple, RelationGetDescr(rel), repl_val, repl_null, repl_repl);
 		CatalogTupleUpdate(rel, &newtuple->t_self, newtuple);
+		UnlockTuple(rel, &tuple->t_self, InplaceUpdateTupleLock);
 
 		heap_freetuple(newtuple);
 
@@ -2169,6 +2220,42 @@ get_database_name(Oid dbid)
 
 	return result;
 }
+
+
+/*
+ * While dropping a database the pg_database row is marked invalid, but the
+ * catalog contents still exist. Connections to such a database are not
+ * allowed.
+ */
+bool
+database_is_invalid_form(Form_pg_database datform)
+{
+	return datform->datconnlimit == DATCONNLIMIT_INVALID_DB;
+}
+
+
+/*
+ * Convenience wrapper around database_is_invalid_form()
+ */
+bool
+database_is_invalid_oid(Oid dboid)
+{
+	HeapTuple	dbtup;
+	Form_pg_database dbform;
+	bool		invalid;
+
+	dbtup = SearchSysCache1(DATABASEOID, ObjectIdGetDatum(dboid));
+	if (!HeapTupleIsValid(dbtup))
+		elog(ERROR, "cache lookup failed for database %u", dboid);
+	dbform = (Form_pg_database) GETSTRUCT(dbtup);
+
+	invalid = database_is_invalid_form(dbform);
+
+	ReleaseSysCache(dbtup);
+
+	return invalid;
+}
+
 
 /*
  * recovery_create_dbdir()

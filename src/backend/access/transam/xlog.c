@@ -68,6 +68,7 @@
 #include "storage/proc.h"
 #include "storage/procarray.h"
 #include "storage/reinit.h"
+#include "storage/sinvaladt.h"
 #include "storage/smgr.h"
 #include "storage/spin.h"
 #include "storage/sync.h"
@@ -1235,8 +1236,10 @@ XLogInsertRecord(XLogRecData *rdata,
 
 		if (!debug_reader)
 			debug_reader = XLogReaderAllocate(wal_segment_size, NULL,
-											  XL_ROUTINE(), NULL);
-
+											  XL_ROUTINE(.page_read = NULL,
+														 .segment_open = NULL,
+														 .segment_close = NULL),
+											  NULL);
 		if (!debug_reader)
 		{
 			appendStringInfoString(&buf, "error decoding record: out of memory");
@@ -3645,15 +3648,12 @@ InstallXLogFileSegment(XLogSegNo *segno, char *tmppath,
 		}
 	}
 
-	/*
-	 * Perform the rename using link if available, paranoidly trying to avoid
-	 * overwriting an existing file (there shouldn't be one).
-	 */
-	if (durable_rename_excl(tmppath, path, LOG) != 0)
+	Assert(access(path, F_OK) != 0 && errno == ENOENT);
+	if (durable_rename(tmppath, path, LOG) != 0)
 	{
 		if (use_lock)
 			LWLockRelease(ControlFileLock);
-		/* durable_rename_excl already emitted log message */
+		/* durable_rename already emitted log message */
 		return false;
 	}
 
@@ -5833,8 +5833,13 @@ recoveryStopsBefore(XLogReaderState *record)
 		stopsHere = (recordXid == recoveryTargetXid);
 	}
 
-	if (recoveryTarget == RECOVERY_TARGET_TIME &&
-		getRecordTimestamp(record, &recordXtime))
+	/*
+	 * Note: we must fetch recordXtime regardless of recoveryTarget setting.
+	 * We don't expect getRecordTimestamp ever to fail, since we already know
+	 * this is a commit or abort record; but test its result anyway.
+	 */
+	if (getRecordTimestamp(record, &recordXtime) &&
+		recoveryTarget == RECOVERY_TARGET_TIME)
 	{
 		/*
 		 * There can be many transactions that share the same commit time, so
@@ -5886,7 +5891,7 @@ recoveryStopsAfter(XLogReaderState *record)
 	uint8		info;
 	uint8		xact_info;
 	uint8		rmid;
-	TimestampTz recordXtime;
+	TimestampTz recordXtime = 0;
 
 	/*
 	 * Ignore recovery target settings when not in archive recovery (meaning
@@ -7127,6 +7132,9 @@ StartupXLOG(void)
 				RunningTransactionsData running;
 				TransactionId latestCompletedXid;
 
+				/* Update pg_subtrans entries for any prepared transactions */
+				StandbyRecoverPreparedTransactions();
+
 				/*
 				 * Construct a RunningTransactions snapshot representing a
 				 * shut down server, with only prepared transactions still
@@ -7135,7 +7143,7 @@ StartupXLOG(void)
 				 */
 				running.xcnt = nxids;
 				running.subxcnt = 0;
-				running.subxid_overflow = false;
+				running.subxid_status = SUBXIDS_IN_SUBTRANS;
 				running.nextXid = XidFromFullTransactionId(checkPoint.nextFullXid);
 				running.oldestRunningXid = oldestActiveXID;
 				latestCompletedXid = XidFromFullTransactionId(checkPoint.nextFullXid);
@@ -7145,8 +7153,6 @@ StartupXLOG(void)
 				running.xids = xids;
 
 				ProcArrayApplyRecoveryInfo(&running);
-
-				StandbyRecoverPreparedTransactions();
 			}
 		}
 
@@ -7858,6 +7864,88 @@ StartupXLOG(void)
 			CreateCheckPoint(CHECKPOINT_END_OF_RECOVERY | CHECKPOINT_IMMEDIATE);
 	}
 
+	/*
+	 * Invalidate all sinval-managed caches before READ WRITE transactions
+	 * begin.  The xl_heap_inplace WAL record doesn't store sufficient data
+	 * for invalidations.  The commit record, if any, has the invalidations.
+	 * However, the inplace update is permanent, whether or not we reach a
+	 * commit record.  Fortunately, read-only transactions tolerate caches not
+	 * reflecting the latest inplace updates.  Read-only transactions
+	 * experience the notable inplace updates as follows:
+	 *
+	 * - relhasindex=true affects readers only after the CREATE INDEX
+	 * transaction commit makes an index fully available to them.
+	 *
+	 * - datconnlimit=DATCONNLIMIT_INVALID_DB affects readers only at
+	 * InitPostgres() time, and that read does not use a cache.
+	 *
+	 * - relfrozenxid, datfrozenxid, relminmxid, and datminmxid have no effect
+	 * on readers.
+	 *
+	 * Hence, hot standby queries (all READ ONLY) function correctly without
+	 * the missing invalidations.  This avoided changing the WAL format in
+	 * back branches.
+	 */
+	SIResetAll();
+
+	/*
+	 * Preallocate additional log files, if wanted.
+	 */
+	PreallocXlogFiles(EndOfLog);
+
+	/*
+	 * Okay, we're officially UP.
+	 */
+	InRecovery = false;
+
+	/* start the archive_timeout timer and LSN running */
+	XLogCtl->lastSegSwitchTime = (pg_time_t) time(NULL);
+	XLogCtl->lastSegSwitchLSN = EndOfLog;
+
+	/* also initialize latestCompletedXid, to nextXid - 1 */
+	LWLockAcquire(ProcArrayLock, LW_EXCLUSIVE);
+	ShmemVariableCache->latestCompletedXid = XidFromFullTransactionId(ShmemVariableCache->nextFullXid);
+	TransactionIdRetreat(ShmemVariableCache->latestCompletedXid);
+	LWLockRelease(ProcArrayLock);
+
+	/*
+	 * Start up the commit log and subtrans, if not already done for hot
+	 * standby.  (commit timestamps are started below, if necessary.)
+	 */
+	if (standbyState == STANDBY_DISABLED)
+	{
+		StartupCLOG();
+		StartupSUBTRANS(oldestActiveXID);
+	}
+
+	/*
+	 * Perform end of recovery actions for any SLRUs that need it.
+	 */
+	TrimCLOG();
+	TrimMultiXact();
+
+	/*
+	 * Reload shared-memory state for prepared transactions.  This needs to
+	 * happen before renaming the last partial segment of the old timeline as
+	 * it may be possible that we have to recovery some transactions from it.
+	 */
+	RecoverPreparedTransactions();
+
+	/* Shut down xlogreader */
+	if (readFile >= 0)
+	{
+		close(readFile);
+		readFile = -1;
+	}
+	XLogReaderFree(xlogreader);
+
+	/*
+	 * If any of the critical GUCs have changed, log them before we allow
+	 * backends to write WAL.
+	 */
+	LocalSetXLogInsertAllowed();
+	XLogReportParameters();
+
 	if (ArchiveRecoveryRequested)
 	{
 		/*
@@ -7938,60 +8026,6 @@ StartupXLOG(void)
 			}
 		}
 	}
-
-	/*
-	 * Preallocate additional log files, if wanted.
-	 */
-	PreallocXlogFiles(EndOfLog);
-
-	/*
-	 * Okay, we're officially UP.
-	 */
-	InRecovery = false;
-
-	/* start the archive_timeout timer and LSN running */
-	XLogCtl->lastSegSwitchTime = (pg_time_t) time(NULL);
-	XLogCtl->lastSegSwitchLSN = EndOfLog;
-
-	/* also initialize latestCompletedXid, to nextXid - 1 */
-	LWLockAcquire(ProcArrayLock, LW_EXCLUSIVE);
-	ShmemVariableCache->latestCompletedXid = XidFromFullTransactionId(ShmemVariableCache->nextFullXid);
-	TransactionIdRetreat(ShmemVariableCache->latestCompletedXid);
-	LWLockRelease(ProcArrayLock);
-
-	/*
-	 * Start up the commit log and subtrans, if not already done for hot
-	 * standby.  (commit timestamps are started below, if necessary.)
-	 */
-	if (standbyState == STANDBY_DISABLED)
-	{
-		StartupCLOG();
-		StartupSUBTRANS(oldestActiveXID);
-	}
-
-	/*
-	 * Perform end of recovery actions for any SLRUs that need it.
-	 */
-	TrimCLOG();
-	TrimMultiXact();
-
-	/* Reload shared-memory state for prepared transactions */
-	RecoverPreparedTransactions();
-
-	/* Shut down xlogreader */
-	if (readFile >= 0)
-	{
-		close(readFile);
-		readFile = -1;
-	}
-	XLogReaderFree(xlogreader);
-
-	/*
-	 * If any of the critical GUCs have changed, log them before we allow
-	 * backends to write WAL.
-	 */
-	LocalSetXLogInsertAllowed();
-	XLogReportParameters();
 
 	/*
 	 * Local WAL inserts enabled, so it's time to finish initialization of
@@ -9105,6 +9139,12 @@ CreateCheckPoint(int flags)
 	{
 		do
 		{
+			/*
+			 * Keep absorbing fsync requests while we wait. There could even
+			 * be a deadlock if we don't, if the process that prevents the
+			 * checkpoint is trying to add a request to the queue.
+			 */
+			AbsorbSyncRequests();
 			pg_usleep(10000L);	/* wait for 10 msec */
 		} while (HaveVirtualXIDsDelayingChkpt(vxids, nvxids));
 	}
@@ -9117,6 +9157,7 @@ CreateCheckPoint(int flags)
 	{
 		do
 		{
+			AbsorbSyncRequests();
 			pg_usleep(10000L);	/* wait for 10 msec */
 		} while (HaveVirtualXIDsDelayingChkptEnd(vxids, nvxids));
 	}
@@ -9831,7 +9872,7 @@ KeepLogSeg(XLogRecPtr recptr, XLogSegNo *logSegNo)
 	 * max_slot_wal_keep_size.
 	 */
 	keep = XLogGetReplicationSlotMinimumLSN();
-	if (keep != InvalidXLogRecPtr)
+	if (keep != InvalidXLogRecPtr && keep < recptr)
 	{
 		XLByteToSeg(keep, segno, wal_segment_size);
 
@@ -10206,6 +10247,9 @@ xlog_redo(XLogReaderState *record)
 
 			oldestActiveXID = PrescanPreparedTransactions(&xids, &nxids);
 
+			/* Update pg_subtrans entries for any prepared transactions */
+			StandbyRecoverPreparedTransactions();
+
 			/*
 			 * Construct a RunningTransactions snapshot representing a shut
 			 * down server, with only prepared transactions still alive. We're
@@ -10214,7 +10258,7 @@ xlog_redo(XLogReaderState *record)
 			 */
 			running.xcnt = nxids;
 			running.subxcnt = 0;
-			running.subxid_overflow = false;
+			running.subxid_status = SUBXIDS_IN_SUBTRANS;
 			running.nextXid = XidFromFullTransactionId(checkPoint.nextFullXid);
 			running.oldestRunningXid = oldestActiveXID;
 			latestCompletedXid = XidFromFullTransactionId(checkPoint.nextFullXid);
@@ -10224,8 +10268,6 @@ xlog_redo(XLogReaderState *record)
 			running.xids = xids;
 
 			ProcArrayApplyRecoveryInfo(&running);
-
-			StandbyRecoverPreparedTransactions();
 		}
 
 		/* ControlFile->checkPointCopy always tracks the latest ckpt XID */
@@ -12290,16 +12332,16 @@ retry:
 
 	/*
 	 * Check the page header immediately, so that we can retry immediately if
-	 * it's not valid. This may seem unnecessary, because XLogReadRecord()
+	 * it's not valid. This may seem unnecessary, because ReadPageInternal()
 	 * validates the page header anyway, and would propagate the failure up to
 	 * ReadRecord(), which would retry. However, there's a corner case with
 	 * continuation records, if a record is split across two pages such that
-	 * we would need to read the two pages from different sources. For
-	 * example, imagine a scenario where a streaming replica is started up,
-	 * and replay reaches a record that's split across two WAL segments. The
-	 * first page is only available locally, in pg_wal, because it's already
-	 * been recycled in the master. The second page, however, is not present
-	 * in pg_wal, and we should stream it from the master. There is a recycled
+	 * we would need to read the two pages from different sources across two
+	 * WAL segments.
+	 *
+	 * The first page is only available locally, in pg_wal, because it's
+	 * already been recycled on the primary. The second page, however, is not
+	 * present in pg_wal, and we should stream it from the primary. There is a
 	 * WAL segment present in pg_wal, with garbage contents, however. We would
 	 * read the first page from the local WAL segment, but when reading the
 	 * second page, we would read the bogus, recycled, WAL segment. If we
@@ -12313,9 +12355,24 @@ retry:
 	 *
 	 * Validating the page header is cheap enough that doing it twice
 	 * shouldn't be a big deal from a performance point of view.
+	 *
+	 * When not in standby mode, an invalid page header should cause recovery
+	 * to end, not retry reading the page, so we don't need to validate the
+	 * page header here for the retry. Instead, ReadPageInternal() is
+	 * responsible for the validation.
 	 */
-	if (!XLogReaderValidatePageHeader(xlogreader, targetPagePtr, readBuf))
+	if (StandbyMode &&
+		(targetPagePtr % wal_segment_size) == 0 &&
+		!XLogReaderValidatePageHeader(xlogreader, targetPagePtr, readBuf))
 	{
+		/*
+		 * Emit this error right now then retry this page immediately. Use
+		 * errmsg_internal() because the message was already translated.
+		 */
+		if (xlogreader->errormsg_buf[0])
+			ereport(emode_for_corrupt_record(emode, EndRecPtr),
+					(errmsg_internal("%s", xlogreader->errormsg_buf)));
+
 		/* reset any error XLogReaderValidatePageHeader() might have set */
 		xlogreader->errormsg_buf[0] = '\0';
 		goto next_record_is_invalid;
@@ -12513,6 +12570,9 @@ WaitForWALToBecomeAvailable(XLogRecPtr RecPtr, bool randAccess,
 
 						wait_time = wal_retrieve_retry_interval -
 							TimestampDifferenceMilliseconds(last_fail_time, now);
+
+						/* Do background tasks that might benefit us later. */
+						KnownAssignedTransactionIdsIdleMaintenance();
 
 						(void) WaitLatch(&XLogCtl->recoveryWakeupLatch,
 										 WL_LATCH_SET | WL_TIMEOUT |
@@ -12775,6 +12835,9 @@ WaitForWALToBecomeAvailable(XLogRecPtr RecPtr, bool randAccess,
 						WalRcvForceReply();
 						streaming_reply_sent = true;
 					}
+
+					/* Do any background tasks that might benefit us later. */
+					KnownAssignedTransactionIdsIdleMaintenance();
 
 					/*
 					 * Wait for more WAL to arrive. Time out after 5 seconds

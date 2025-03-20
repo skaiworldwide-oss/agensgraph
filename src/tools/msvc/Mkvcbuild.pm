@@ -50,7 +50,8 @@ my @contrib_excludes = (
 	'pgcrypto',         'sepgsql',
 	'brin',             'test_extensions',
 	'test_misc',        'test_pg_dump',
-	'snapshot_too_old', 'unsafe_tests');
+	'snapshot_too_old', 'unsafe_tests',
+	'test_escape');
 
 # Set of variables for frontend modules
 my $frontend_defines = { 'initdb' => 'FRONTEND' };
@@ -103,7 +104,8 @@ sub mkvcbuild
 	  pg_strong_random.c pgcheckdir.c pgmkdirp.c pgsleep.c pgstrcasecmp.c
 	  pqsignal.c mkdtemp.c qsort.c qsort_arg.c quotes.c setenv.c system.c
 	  sprompt.c strerror.c tar.c thread.c
-	  win32env.c win32error.c win32security.c win32setlocale.c);
+	  win32env.c win32error.c win32ntdll.c
+	  win32security.c win32setlocale.c win32stat.c);
 
 	push(@pgportfiles, 'strtof.c') if ($vsVersion < '14.00');
 
@@ -580,6 +582,11 @@ sub mkvcbuild
 
 		# hack to prevent duplicate definitions of uid_t/gid_t
 		push(@perl_embed_ccflags, 'PLPERL_HAVE_UID_GID');
+		# prevent binary mismatch between MSVC built plperl and
+		# Strawberry or msys ucrt perl libraries
+		my $perl_v = `$^X -V 2>&1`;
+		push(@perl_embed_ccflags, 'NO_THREAD_SAFE_LOCALE')
+		  unless $perl_v =~ /USE_THREAD_SAFE_LOCALE/;
 
 		# Windows offers several 32-bit ABIs.  Perl is sensitive to
 		# sizeof(time_t), one of the ABI dimensions.  To get 32-bit time_t,

@@ -199,23 +199,30 @@ $node->command_fails(
 	[ 'pg_basebackup', '-D', "$tempdir/backup_foo", '-Fp', "-Tfoo" ],
 	'-T with invalid format fails');
 
-# Tar format doesn't support filenames longer than 100 bytes.
 my $superlongname = "superlongname_" . ("x" x 100);
-my $superlongpath = "$pgdata/$superlongname";
+# Tar format doesn't support filenames longer than 100 bytes.
+SKIP:
+{
+	my $superlongpath = "$pgdata/$superlongname";
 
-open my $file, '>', "$superlongpath"
-  or die "unable to create file $superlongpath";
-close $file;
-$node->command_fails(
-	[ 'pg_basebackup', '-D', "$tempdir/tarbackup_l1", '-Ft' ],
-	'pg_basebackup tar with long name fails');
-unlink "$pgdata/$superlongname";
+	skip "File path too long", 1
+	  if $windows_os && length($superlongpath) > 255;
+
+	open my $file, '>', "$superlongpath"
+	  or die "unable to create file $superlongpath";
+	close $file;
+	$node->command_fails(
+		[ 'pg_basebackup', '-D', "$tempdir/tarbackup_l1", '-Ft' ],
+		'pg_basebackup tar with long name fails');
+	unlink "$superlongpath";
+}
 
 # The following tests test symlinks. Windows doesn't have symlinks, so
 # skip on Windows.
 SKIP:
 {
-	skip "symlinks not supported on Windows", 18 if ($windows_os);
+	skip "symlinks not supported on Windows", 18
+	  if ($windows_os);
 
 	# Move pg_replslot out of $pgdata and create a symlink to it.
 	$node->stop;
@@ -301,9 +308,15 @@ SKIP:
 		"tablespace symlink was updated");
 	closedir $dh;
 
-	# Group access should be enabled on all backup files
-	ok(check_mode_recursive("$tempdir/backup1", 0750, 0640),
-		"check backup dir permissions");
+	SKIP:
+	{
+		skip "unix-style permissions not supported on Windows", 1
+		  if ($Config::Config{osname} eq 'cygwin');
+
+		# Group access should be enabled on all backup files
+		ok(check_mode_recursive("$tempdir/backup1", 0750, 0640),
+		   "check backup dir permissions");
+	}
 
 	# Unlogged relation forks other than init should not be copied
 	my ($tblspc1UnloggedBackupPath) =

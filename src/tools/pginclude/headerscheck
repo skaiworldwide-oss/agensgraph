@@ -71,6 +71,7 @@ do
 	test "$f" = src/include/port/win32/sys/socket.h && continue
 	test "$f" = src/include/port/win32_msvc/dirent.h && continue
 	test "$f" = src/include/port/win32_msvc/utime.h && continue
+	test "$f" = src/include/port/win32ntdll.h && continue
 	test "$f" = src/port/pthread-win32.h && continue
 
 	# Likewise, these files are platform-specific, and the one
@@ -121,6 +122,9 @@ do
 
 	# This produces a "no previous prototype" warning.
 	test "$f" = src/include/storage/checksum_impl.h && continue
+
+	# SectionMemoryManager.h is C++
+	test "$f" = src/include/jit/SectionMemoryManager.h && continue
 
 	# ppport.h is not under our control, so we can't make it standalone.
 	test "$f" = src/pl/plperl/ppport.h && continue

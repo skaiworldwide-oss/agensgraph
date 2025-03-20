@@ -1241,6 +1241,10 @@ acquire_inherited_sample_rows(Relation onerel, int elevel,
 	ListCell   *lc;
 	bool		has_child;
 
+	/* Initialize output parameters to zero now, in case we exit early */
+	*totalrows = 0;
+	*totaldeadrows = 0;
+
 	/*
 	 * Find all members of inheritance set.  We only need AccessShareLock on
 	 * the children.
@@ -1374,16 +1378,31 @@ acquire_inherited_sample_rows(Relation onerel, int elevel,
 	pgstat_progress_update_param(PROGRESS_ANALYZE_CHILD_TABLES_TOTAL,
 								 nrels);
 	numrows = 0;
-	*totalrows = 0;
-	*totaldeadrows = 0;
 	for (i = 0; i < nrels; i++)
 	{
 		Relation	childrel = rels[i];
 		AcquireSampleRowsFunc acquirefunc = acquirefuncs[i];
 		double		childblocks = relblocks[i];
 
-		pgstat_progress_update_param(PROGRESS_ANALYZE_CURRENT_CHILD_TABLE_RELID,
-									 RelationGetRelid(childrel));
+		/*
+		 * Report progress.  The sampling function will normally report blocks
+		 * done/total, but we need to reset them to 0 here, so that they don't
+		 * show an old value until that.
+		 */
+		{
+			const int	progress_index[] = {
+				PROGRESS_ANALYZE_CURRENT_CHILD_TABLE_RELID,
+				PROGRESS_ANALYZE_BLOCKS_DONE,
+				PROGRESS_ANALYZE_BLOCKS_TOTAL
+			};
+			const int64 progress_vals[] = {
+				RelationGetRelid(childrel),
+				0,
+				0,
+			};
+
+			pgstat_progress_update_multi_param(3, progress_index, progress_vals);
+		}
 
 		if (childblocks > 0)
 		{

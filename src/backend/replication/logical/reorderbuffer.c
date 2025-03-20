@@ -300,9 +300,17 @@ ReorderBufferAllocate(void)
 											SLAB_DEFAULT_BLOCK_SIZE,
 											sizeof(ReorderBufferTXN));
 
+	/*
+	 * To minimize memory fragmentation caused by long-running transactions
+	 * with changes spanning multiple memory blocks, we use a single
+	 * fixed-size memory block for decoded tuple storage. The performance
+	 * testing showed that the default memory block size maintains logical
+	 * decoding performance without causing fragmentation due to concurrent
+	 * transactions.
+	 */
 	buffer->tup_context = GenerationContextCreate(new_ctx,
 												  "Tuples",
-												  SLAB_LARGE_BLOCK_SIZE);
+												  SLAB_DEFAULT_BLOCK_SIZE);
 
 	hash_ctl.keysize = sizeof(TransactionId);
 	hash_ctl.entrysize = sizeof(ReorderBufferTXNByIdEnt);
@@ -672,6 +680,13 @@ ReorderBufferQueueMessage(ReorderBuffer *rb, TransactionId xid,
 
 		Assert(xid != InvalidTransactionId);
 
+		/*
+		 * We don't expect snapshots for transactional changes - we'll use the
+		 * snapshot derived later during apply (unless the change gets
+		 * skipped).
+		 */
+		Assert(!snapshot);
+
 		oldcontext = MemoryContextSwitchTo(rb->context);
 
 		change = ReorderBufferGetChange(rb);
@@ -689,6 +704,9 @@ ReorderBufferQueueMessage(ReorderBuffer *rb, TransactionId xid,
 	{
 		ReorderBufferTXN *txn = NULL;
 		volatile Snapshot snapshot_now = snapshot;
+
+		/* Non-transactional changes require a valid snapshot. */
+		Assert(snapshot_now);
 
 		if (xid != InvalidTransactionId)
 			txn = ReorderBufferTXNByXid(rb, xid, true, NULL, lsn, true);
@@ -2450,7 +2468,7 @@ ReorderBufferSerializeTXN(ReorderBuffer *rb, ReorderBufferTXN *txn)
 	dlist_mutable_iter change_i;
 	int			fd = -1;
 	XLogSegNo	curOpenSegNo = 0;
-	Size		spilled = 0;
+	Size		spilled PG_USED_FOR_ASSERTS_ONLY = 0;
 
 	elog(DEBUG2, "spill %u changes in XID %u to disk",
 		 (uint32) txn->nentries_mem, txn->xid);

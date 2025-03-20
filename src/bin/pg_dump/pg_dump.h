@@ -286,7 +286,7 @@ typedef struct _tableInfo
 	uint32		toast_frozenxid;	/* toast table's relfrozenxid, if any */
 	uint32		toast_minmxid;	/* toast table's relminmxid */
 	int			ncheck;			/* # of CHECK expressions */
-	char	   *reloftype;		/* underlying type for typed table */
+	Oid			reloftype;		/* underlying type for typed table */
 	Oid			foreign_server; /* foreign server oid, if applicable */
 	/* these two are set only if table is a sequence owned by a column: */
 	Oid			owning_tab;		/* OID of table owning sequence */
@@ -298,6 +298,7 @@ typedef struct _tableInfo
 	bool		dummy_view;		/* view's real definition must be postponed */
 	bool		postponed_def;	/* matview must be postponed into post-data */
 	bool		ispartition;	/* is table a partition? */
+	bool		unsafe_partitions;	/* is it an unsafe partitioned table? */
 
 	/*
 	 * These fields are computed only if we decide the table is interesting
@@ -324,8 +325,6 @@ typedef struct _tableInfo
 	bool	   *inhNotNull;		/* true if NOT NULL is inherited */
 	struct _attrDefInfo **attrdefs; /* DEFAULT expressions */
 	struct _constraintInfo *checkexprs; /* CHECK constraints */
-	char	   *partkeydef;		/* partition key definition */
-	char	   *partbound;		/* partition bound definition */
 	bool		needs_override; /* has GENERATED ALWAYS AS IDENTITY */
 	char	   *amname;			/* relation access method */
 	char		ag_labkind;
@@ -394,6 +393,7 @@ typedef struct _statsExtInfo
 {
 	DumpableObject dobj;
 	char	   *rolname;		/* name of owner, or empty string */
+	TableInfo  *stattable;		/* link to table the stats are for */
 	int			stattarget;		/* statistics target */
 } StatsExtInfo;
 
@@ -699,6 +699,7 @@ extern ConvInfo *getConversions(Archive *fout, int *numConversions);
 extern TableInfo *getTables(Archive *fout, int *numTables);
 extern void getOwnedSeqs(Archive *fout, TableInfo tblinfo[], int numTables);
 extern InhInfo *getInherits(Archive *fout, int *numInherits);
+extern void getPartitioningInfo(Archive *fout);
 extern void getIndexes(Archive *fout, TableInfo tblinfo[], int numTables);
 extern void getExtendedStatistics(Archive *fout);
 extern void getConstraints(Archive *fout, TableInfo tblinfo[], int numTables);

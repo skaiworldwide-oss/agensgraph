@@ -626,7 +626,6 @@ heapam_relation_copy_data(Relation rel, const RelFileNode *newrnode)
 	SMgrRelation dstrel;
 
 	dstrel = smgropen(*newrnode, rel->rd_backend);
-	RelationOpenSmgr(rel);
 
 	/*
 	 * Since we copy the file directly without looking at the shared buffers,
@@ -646,14 +645,14 @@ heapam_relation_copy_data(Relation rel, const RelFileNode *newrnode)
 	RelationCreateStorage(*newrnode, rel->rd_rel->relpersistence);
 
 	/* copy main fork */
-	RelationCopyStorage(rel->rd_smgr, dstrel, MAIN_FORKNUM,
+	RelationCopyStorage(RelationGetSmgr(rel), dstrel, MAIN_FORKNUM,
 						rel->rd_rel->relpersistence);
 
 	/* copy those extra forks that exist */
 	for (ForkNumber forkNum = MAIN_FORKNUM + 1;
 		 forkNum <= MAX_FORKNUM; forkNum++)
 	{
-		if (smgrexists(rel->rd_smgr, forkNum))
+		if (smgrexists(RelationGetSmgr(rel), forkNum))
 		{
 			smgrcreate(dstrel, forkNum, false);
 
@@ -665,7 +664,7 @@ heapam_relation_copy_data(Relation rel, const RelFileNode *newrnode)
 				(rel->rd_rel->relpersistence == RELPERSISTENCE_UNLOGGED &&
 				 forkNum == INIT_FORKNUM))
 				log_smgrcreate(newrnode, forkNum);
-			RelationCopyStorage(rel->rd_smgr, dstrel, forkNum,
+			RelationCopyStorage(RelationGetSmgr(rel), dstrel, forkNum,
 								rel->rd_rel->relpersistence);
 		}
 	}
@@ -2124,9 +2123,11 @@ heapam_scan_bitmap_next_block(TableScanDesc scan,
 	 * Ignore any claimed entries past what we think is the end of the
 	 * relation. It may have been extended after the start of our scan (we
 	 * only hold an AccessShareLock, and it could be inserts from this
-	 * backend).
+	 * backend).  We don't take this optimization in SERIALIZABLE isolation
+	 * though, as we need to examine all invisible tuples reachable by the
+	 * index.
 	 */
-	if (page >= hscan->rs_nblocks)
+	if (!IsolationIsSerializable() && page >= hscan->rs_nblocks)
 		return false;
 
 	/*

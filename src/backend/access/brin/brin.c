@@ -35,6 +35,7 @@
 #include "storage/freespace.h"
 #include "utils/acl.h"
 #include "utils/builtins.h"
+#include "utils/datum.h"
 #include "utils/index_selfuncs.h"
 #include "utils/memutils.h"
 #include "utils/rel.h"
@@ -173,7 +174,7 @@ brininsert(Relation idxRel, Datum *values, bool *nulls,
 
 	for (;;)
 	{
-		bool		need_insert = false;
+		bool		need_insert;
 		OffsetNumber off;
 		BrinTuple  *brtup;
 		BrinMemTuple *dtup;
@@ -241,6 +242,9 @@ brininsert(Relation idxRel, Datum *values, bool *nulls,
 
 		dtup = brin_deform_tuple(bdesc, brtup, NULL);
 
+		/* If the range starts empty, we're certainly going to modify it. */
+		need_insert = dtup->bt_empty_range;
+
 		/*
 		 * Compare the key values of the new tuple to the stored index values;
 		 * our deformed tuple will get updated if the new tuple doesn't fit
@@ -253,8 +257,20 @@ brininsert(Relation idxRel, Datum *values, bool *nulls,
 			Datum		result;
 			BrinValues *bval;
 			FmgrInfo   *addValue;
+			bool		has_nulls;
 
 			bval = &dtup->bt_columns[keyno];
+
+			/*
+			 * Does the range have actual NULL values? Either of the flags can
+			 * be set, but we ignore the state before adding first row.
+			 *
+			 * We have to remember this, because we'll modify the flags and we
+			 * need to know if the range started as empty.
+			 */
+			has_nulls = ((!dtup->bt_empty_range) &&
+						 (bval->bv_hasnulls || bval->bv_allnulls));
+
 			addValue = index_getprocinfo(idxRel, keyno + 1,
 										 BRIN_PROCNUM_ADDVALUE);
 			result = FunctionCall4Coll(addValue,
@@ -265,7 +281,32 @@ brininsert(Relation idxRel, Datum *values, bool *nulls,
 									   nulls[keyno]);
 			/* if that returned true, we need to insert the updated tuple */
 			need_insert |= DatumGetBool(result);
+
+			/*
+			 * If the range was had actual NULL values (i.e. did not start empty),
+			 * make sure we don't forget about the NULL values. Either the allnulls
+			 * flag is still set to true, or (if the opclass cleared it) we need to
+			 * set hasnulls=true.
+			 *
+			 * XXX This can only happen when the opclass modified the tuple, so the
+			 * modified flag should be set.
+			 */
+			if (has_nulls && !(bval->bv_hasnulls || bval->bv_allnulls))
+			{
+				Assert(need_insert);
+				bval->bv_hasnulls = true;
+			}
 		}
+
+		/*
+		 * After updating summaries for all the keys, mark it as not empty.
+		 *
+		 * If we're actually changing the flag value (i.e. tuple started as
+		 * empty), we should have modified the tuple. So we should not see
+		 * empty range that was not modified.
+		 */
+		Assert(!dtup->bt_empty_range || need_insert);
+		dtup->bt_empty_range = false;
 
 		if (!need_insert)
 		{
@@ -381,7 +422,7 @@ bringetbitmap(IndexScanDesc scan, TIDBitmap *tbm)
 	BrinOpaque *opaque;
 	BlockNumber nblocks;
 	BlockNumber heapBlk;
-	int			totalpages = 0;
+	int64		totalpages = 0;
 	FmgrInfo   *consistentFn;
 	MemoryContext oldcxt;
 	MemoryContext perRangeCxt;
@@ -506,6 +547,17 @@ bringetbitmap(IndexScanDesc scan, TIDBitmap *tbm)
 												BRIN_PROCNUM_CONSISTENT);
 						fmgr_info_copy(&consistentFn[keyattno - 1], tmp,
 									   CurrentMemoryContext);
+					}
+
+					/*
+					 * If the BRIN tuple indicates that this range is empty,
+					 * we can skip it: there's nothing to match.  We don't
+					 * need to examine the next columns.
+					 */
+					if (dtup->bt_empty_range)
+					{
+						addrange = false;
+						break;
 					}
 
 					/*
@@ -645,8 +697,24 @@ brinbuildCallback(Relation index,
 		FmgrInfo   *addValue;
 		BrinValues *col;
 		Form_pg_attribute attr = TupleDescAttr(state->bs_bdesc->bd_tupdesc, i);
+		bool		has_nulls;
 
 		col = &state->bs_dtuple->bt_columns[i];
+
+		/*
+		 * Does the range have actual NULL values? Either of the flags can
+		 * be set, but we ignore the state before adding first row.
+		 *
+		 * We have to remember this, because we'll modify the flags and we
+		 * need to know if the range started as empty.
+		 */
+		has_nulls = ((!state->bs_dtuple->bt_empty_range) &&
+					 (col->bv_hasnulls || col->bv_allnulls));
+
+		/*
+		 * Call the BRIN_PROCNUM_ADDVALUE procedure. We do this even for NULL
+		 * values, because who knows what the opclass is doing.
+		 */
 		addValue = index_getprocinfo(index, i + 1,
 									 BRIN_PROCNUM_ADDVALUE);
 
@@ -658,7 +726,25 @@ brinbuildCallback(Relation index,
 						  PointerGetDatum(state->bs_bdesc),
 						  PointerGetDatum(col),
 						  values[i], isnull[i]);
+
+		/*
+		 * If the range was had actual NULL values (i.e. did not start empty),
+		 * make sure we don't forget about the NULL values. Either the allnulls
+		 * flag is still set to true, or (if the opclass cleared it) we need to
+		 * set hasnulls=true.
+		 */
+		if (has_nulls && !(col->bv_hasnulls || col->bv_allnulls))
+			col->bv_hasnulls = true;
 	}
+
+	/*
+	 * After updating summaries for all the keys, mark it as not empty.
+	 *
+	 * If we're actually changing the flag value (i.e. tuple started as
+	 * empty), we should have modified the tuple. So we should not see
+	 * empty range that was not modified.
+	 */
+	state->bs_dtuple->bt_empty_range = false;
 }
 
 /*
@@ -945,8 +1031,14 @@ brin_summarize_range(PG_FUNCTION_ARGS)
 				 errmsg("could not open parent table of index %s",
 						RelationGetRelationName(indexRel))));
 
-	/* OK, do it */
-	brinsummarize(indexRel, heapRel, heapBlk, true, &numSummarized, NULL);
+	/* see gin_clean_pending_list() */
+	if (indexRel->rd_index->indisvalid)
+		brinsummarize(indexRel, heapRel, heapBlk, true, &numSummarized, NULL);
+	else
+		ereport(DEBUG1,
+				(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+				 errmsg("index \"%s\" is not valid",
+						RelationGetRelationName(indexRel))));
 
 	/* Roll back any GUC changes executed by index functions */
 	AtEOXact_GUC(false, save_nestlevel);
@@ -1031,12 +1123,21 @@ brin_desummarize_range(PG_FUNCTION_ARGS)
 				 errmsg("could not open parent table of index %s",
 						RelationGetRelationName(indexRel))));
 
-	/* the revmap does the hard work */
-	do
+	/* see gin_clean_pending_list() */
+	if (indexRel->rd_index->indisvalid)
 	{
-		done = brinRevmapDesummarizeRange(indexRel, heapBlk);
+		/* the revmap does the hard work */
+		do
+		{
+			done = brinRevmapDesummarizeRange(indexRel, heapBlk);
+		}
+		while (!done);
 	}
-	while (!done);
+	else
+		ereport(DEBUG1,
+				(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+				 errmsg("index \"%s\" is not valid",
+						RelationGetRelationName(indexRel))));
 
 	relation_close(indexRel, ShareUpdateExclusiveLock);
 	relation_close(heapRel, ShareUpdateExclusiveLock);
@@ -1465,6 +1566,64 @@ union_tuples(BrinDesc *bdesc, BrinMemTuple *a, BrinTuple *b)
 	db = brin_deform_tuple(bdesc, b, NULL);
 	MemoryContextSwitchTo(oldcxt);
 
+	/*
+	 * Check if the ranges are empty.
+	 *
+	 * If at least one of them is empty, we don't need to call per-key union
+	 * functions at all. If "b" is empty, we just use "a" as the result (it
+	 * might be empty fine, but that's fine). If "a" is empty but "b" is not,
+	 * we use "b" as the result (but we have to copy the data into "a" first).
+	 *
+	 * Only when both ranges are non-empty, we actually do the per-key merge.
+	 */
+
+	/* If "b" is empty - ignore it and just use "a" (even if it's empty etc.). */
+	if (db->bt_empty_range)
+	{
+		/* skip the per-key merge */
+		MemoryContextDelete(cxt);
+		return;
+	}
+
+	/*
+	 * Now we know "b" is not empty. If "a" is empty, then "b" is the result.
+	 * But we need to copy the data from "b" to "a" first, because that's how
+	 * we pass result out.
+	 *
+	 * We have to copy all the global/per-key flags etc. too.
+	 */
+	if (a->bt_empty_range)
+	{
+		for (keyno = 0; keyno < bdesc->bd_tupdesc->natts; keyno++)
+		{
+			int			i;
+			BrinValues *col_a = &a->bt_columns[keyno];
+			BrinValues *col_b = &db->bt_columns[keyno];
+			BrinOpcInfo *opcinfo = bdesc->bd_info[keyno];
+
+			col_a->bv_allnulls = col_b->bv_allnulls;
+			col_a->bv_hasnulls = col_b->bv_hasnulls;
+
+			/* If "b" has no data, we're done. */
+			if (col_b->bv_allnulls)
+				continue;
+
+			for (i = 0; i < opcinfo->oi_nstored; i++)
+				col_a->bv_values[i] =
+					datumCopy(col_b->bv_values[i],
+							  opcinfo->oi_typcache[i]->typbyval,
+							  opcinfo->oi_typcache[i]->typlen);
+		}
+
+		/* "a" started empty, but "b" was not empty, so remember that */
+		a->bt_empty_range = false;
+
+		/* skip the per-key merge */
+		MemoryContextDelete(cxt);
+		return;
+	}
+
+	/* Neither range is empty, so call the union proc. */
 	for (keyno = 0; keyno < bdesc->bd_tupdesc->natts; keyno++)
 	{
 		FmgrInfo   *unionFn;

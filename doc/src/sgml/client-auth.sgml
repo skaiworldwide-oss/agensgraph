@@ -1079,7 +1079,7 @@ omicron         bryanh                  guest1
       <para>
        The method <literal>scram-sha-256</literal> performs SCRAM-SHA-256
        authentication, as described in
-       <ulink url="https://tools.ietf.org/html/rfc7677">RFC 7677</ulink>.  It
+       <ulink url="https://datatracker.ietf.org/doc/html/rfc7677">RFC 7677</ulink>.  It
        is a challenge-response scheme that prevents password sniffing on
        untrusted connections and supports storing passwords on the server in a
        cryptographically hashed form that is thought to be secure.
@@ -1191,7 +1191,7 @@ omicron         bryanh                  guest1
    <para>
     <productname>GSSAPI</productname> is an industry-standard protocol
     for secure authentication defined in
-    <ulink url="https://tools.ietf.org/html/rfc2743">RFC 2743</ulink>.
+    <ulink url="https://datatracker.ietf.org/doc/html/rfc2743">RFC 2743</ulink>.
     <productname>PostgreSQL</productname>
     supports <productname>GSSAPI</productname> for authentication,
     communications encryption, or both.
@@ -1361,10 +1361,12 @@ omicron         bryanh                  guest1
     <literal>negotiate</literal> mode, which will use
     <productname>Kerberos</productname> when possible and automatically
     fall back to <productname>NTLM</productname> in other cases.
-    <productname>SSPI</productname> authentication only works when both
-    server and client are running <productname>Windows</productname>,
-    or, on non-Windows platforms, when <productname>GSSAPI</productname>
-    is available.
+    <productname>SSPI</productname> and <productname>GSSAPI</productname>
+    interoperate as clients and servers, e.g., an
+    <productname>SSPI</productname> client can authenticate to an
+    <productname>GSSAPI</productname> server.  It is recommended to use
+    <productname>SSPI</productname> on Windows clients and servers and
+    <productname>GSSAPI</productname> on non-Windows platforms.
    </para>
 
    <para>
@@ -2018,7 +2020,8 @@ host ... radius radiusservers="server1,server2" radiussecrets="""secret one"",""
 
    <para>
     This authentication method uses SSL client certificates to perform
-    authentication. It is therefore only available for SSL connections.
+    authentication. It is therefore only available for SSL connections;
+    see <xref linkend="ssl-openssl-config"/> for SSL configuration instructions.
     When using this authentication method, the server will require that
     the client provide a valid, trusted certificate.  No password prompt
     will be sent to the client.  The <literal>cn</literal> (Common Name)

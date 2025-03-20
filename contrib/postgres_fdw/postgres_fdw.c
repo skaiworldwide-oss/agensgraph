@@ -29,6 +29,7 @@
 #include "nodes/nodeFuncs.h"
 #include "optimizer/clauses.h"
 #include "optimizer/cost.h"
+#include "optimizer/inherit.h"
 #include "optimizer/optimizer.h"
 #include "optimizer/pathnode.h"
 #include "optimizer/paths.h"
@@ -1697,7 +1698,8 @@ postgresPlanForeignModify(PlannerInfo *root,
 	else if (operation == CMD_UPDATE)
 	{
 		int			col;
-		Bitmapset  *allUpdatedCols = bms_union(rte->updatedCols, rte->extraUpdatedCols);
+		RelOptInfo *rel = find_base_rel(root, resultRelation);
+		Bitmapset  *allUpdatedCols = get_rel_all_updated_cols(root, rel);
 
 		col = -1;
 		while ((col = bms_next_member(allUpdatedCols, col)) >= 0)
@@ -6334,6 +6336,20 @@ add_foreign_final_paths(PlannerInfo *root, RelOptInfo *input_rel,
 	 * cannot be pushed down.
 	 */
 	if (ifpinfo->local_conds)
+		return;
+
+	/*
+	 * If the query has FETCH FIRST .. WITH TIES, 1) it must have ORDER BY as
+	 * well, which is used to determine which additional rows tie for the last
+	 * place in the result set, and 2) ORDER BY must already have been
+	 * determined to be safe to push down before we get here.  So in that case
+	 * the FETCH clause is safe to push down with ORDER BY if the remote
+	 * server is v13 or later, but if not, the remote query will fail entirely
+	 * for lack of support for it.  Since we do not currently have a way to do
+	 * a remote-version check (without accessing the remote server), disable
+	 * pushing the FETCH clause for now.
+	 */
+	if (parse->limitOption == LIMIT_OPTION_WITH_TIES)
 		return;
 
 	/*

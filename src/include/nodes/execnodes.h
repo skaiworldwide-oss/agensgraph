@@ -507,6 +507,19 @@ typedef struct ResultRelInfo
 	struct CopyMultiInsertBuffer *ri_CopyMultiInsertBuffer;
 } ResultRelInfo;
 
+/*
+ * To avoid an ABI-breaking change in the size of ResultRelInfo in back
+ * branches, we create one of these for each result relation for which we've
+ * computed extraUpdatedCols, and store it in EState.es_resultrelinfo_extra.
+ */
+typedef struct ResultRelInfoExtra
+{
+	ResultRelInfo *rinfo;		/* owning ResultRelInfo */
+
+	/* For INSERT/UPDATE, attnums of generated columns to be computed */
+	Bitmapset  *ri_extraUpdatedCols;
+} ResultRelInfoExtra;
+
 typedef struct GraphWriteStats
 {
 	uint32		insertVertex;
@@ -623,6 +636,9 @@ typedef struct EState
 	int			es_jit_flags;
 	struct JitContext *es_jit;
 	struct JitInstrumentation *es_jit_worker_instr;
+
+	/* List of ResultRelInfoExtra structs (see above) */
+	List	   *es_resultrelinfo_extra;
 } EState;
 
 
@@ -1499,6 +1515,8 @@ typedef struct IndexScanContext
  *		TableSlot		   slot for holding tuples fetched from the table
  *		VMBuffer		   buffer in use for visibility map testing, if any
  *		PscanLen		   size of parallel index-only scan descriptor
+ *		NameCStringAttNums attnums of name typed columns to pad to NAMEDATALEN
+ *		NameCStringCount   number of elements in the NameCStringAttNums array
  * ----------------
  */
 typedef struct IndexOnlyScanState
@@ -1518,7 +1536,10 @@ typedef struct IndexOnlyScanState
 	TupleTableSlot *ioss_TableSlot;
 	Buffer		ioss_VMBuffer;
 	Size		ioss_PscanLen;
+	AttrNumber *ioss_NameCStringAttNums;
+	int			ioss_NameCStringCount;
 
+	/* Agensgraph */
 	dlist_head	ctxs_head;		/* list of IndexScanContext */
 	dlist_node *prev_ctx_node;
 } IndexOnlyScanState;

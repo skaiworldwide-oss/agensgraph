@@ -339,11 +339,13 @@ standard_planner(Query *parse, const char *query_string, int cursorOptions,
 	 * functions are present in the query tree.
 	 *
 	 * (Note that we do allow CREATE TABLE AS, SELECT INTO, and CREATE
-	 * MATERIALIZED VIEW to use parallel plans, but as of now, only the leader
-	 * backend writes into a completely new table.  In the future, we can
-	 * extend it to allow workers to write into the table.  However, to allow
-	 * parallel updates and deletes, we have to solve other problems,
-	 * especially around combo CIDs.)
+	 * MATERIALIZED VIEW to use parallel plans, but this is safe only because
+	 * the command is writing into a completely new table which workers won't
+	 * be able to see.  If the workers could see the table, the fact that
+	 * group locking would cause them to ignore the leader's heavyweight
+	 * GIN page locks would make this unsafe.  We'll have to fix that somehow
+	 * if we want to allow parallel inserts in general; updates and deletes
+	 * have additional problems especially around combo CIDs.)
 	 *
 	 * For now, we don't try to use parallel mode if we're running inside a
 	 * parallel worker.  We might eventually be able to relax this
@@ -445,12 +447,10 @@ standard_planner(Query *parse, const char *query_string, int cursorOptions,
 		Gather	   *gather = makeNode(Gather);
 
 		/*
-		 * If there are any initPlans attached to the formerly-top plan node,
-		 * move them up to the Gather node; same as we do for Material node in
-		 * materialize_finished_plan.
+		 * Top plan must not have any initPlans, else it shouldn't have been
+		 * marked parallel-safe.
 		 */
-		gather->plan.initPlan = top_plan->initPlan;
-		top_plan->initPlan = NIL;
+		Assert(top_plan->initPlan == NIL);
 
 		gather->plan.targetlist = top_plan->targetlist;
 		gather->plan.qual = NIL;
@@ -1738,10 +1738,6 @@ inheritance_planner(PlannerInfo *root)
 		Assert(subroot->join_info_list == NIL);
 		/* and we haven't created PlaceHolderInfos, either */
 		Assert(subroot->placeholder_list == NIL);
-
-		/* Fix MULTIEXPR_SUBLINK params if any */
-		if (root->multiexpr_params)
-			SS_make_multiexprs_unique(root, subroot);
 
 		/* Generate Path(s) for accessing this result relation */
 		grouping_planner(subroot, true, 0.0 /* retrieve all tuples */ );
@@ -4249,9 +4245,10 @@ create_ordinary_grouping_paths(PlannerInfo *root, RelOptInfo *input_rel,
 		 * If this is the topmost relation or if the parent relation is doing
 		 * full partitionwise aggregation, then we can do full partitionwise
 		 * aggregation provided that the GROUP BY clause contains all of the
-		 * partitioning columns at this level.  Otherwise, we can do at most
-		 * partial partitionwise aggregation.  But if partial aggregation is
-		 * not supported in general then we can't use it for partitionwise
+		 * partitioning columns at this level and the collation used by GROUP
+		 * BY matches the partitioning collation.  Otherwise, we can do at
+		 * most partial partitionwise aggregation.  But if partial aggregation
+		 * is not supported in general then we can't use it for partitionwise
 		 * aggregation either.
 		 */
 		if (extra->patype == PARTITIONWISE_AGGREGATE_FULL &&
@@ -7981,8 +7978,8 @@ create_partitionwise_grouping_paths(PlannerInfo *root,
 /*
  * group_by_has_partkey
  *
- * Returns true, if all the partition keys of the given relation are part of
- * the GROUP BY clauses, false otherwise.
+ * Returns true if all the partition keys of the given relation are part of
+ * the GROUP BY clauses, including having matching collation, false otherwise.
  */
 static bool
 group_by_has_partkey(RelOptInfo *input_rel,
@@ -8010,13 +8007,40 @@ group_by_has_partkey(RelOptInfo *input_rel,
 
 		foreach(lc, partexprs)
 		{
+			ListCell   *lg;
 			Expr	   *partexpr = lfirst(lc);
+			Oid			partcoll = input_rel->part_scheme->partcollation[cnt];
 
-			if (list_member(groupexprs, partexpr))
+			foreach(lg, groupexprs)
 			{
-				found = true;
-				break;
+				Expr	   *groupexpr = lfirst(lg);
+				Oid			groupcoll = exprCollation((Node *) groupexpr);
+
+				/*
+				 * Note: we can assume there is at most one RelabelType node;
+				 * eval_const_expressions() will have simplified if more than
+				 * one.
+				 */
+				if (IsA(groupexpr, RelabelType))
+					groupexpr = ((RelabelType *) groupexpr)->arg;
+
+				if (equal(groupexpr, partexpr))
+				{
+					/*
+					 * Reject a match if the grouping collation does not match
+					 * the partitioning collation.
+					 */
+					if (OidIsValid(partcoll) && OidIsValid(groupcoll) &&
+						partcoll != groupcoll)
+						return false;
+
+					found = true;
+					break;
+				}
 			}
+
+			if (found)
+				break;
 		}
 
 		/*

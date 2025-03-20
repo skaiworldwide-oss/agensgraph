@@ -1204,7 +1204,19 @@ trivial_subqueryscan(SubqueryScan *plan)
 static Plan *
 clean_up_removed_plan_level(Plan *parent, Plan *child)
 {
-	/* We have to be sure we don't lose any initplans */
+	/*
+	 * We have to be sure we don't lose any initplans, so move any that were
+	 * attached to the parent plan to the child.  If we do move any, the child
+	 * is no longer parallel-safe.
+	 */
+	if (parent->initPlan)
+		child->parallel_safe = false;
+
+	/*
+	 * Attach plans this way so that parent's initplans are processed before
+	 * any pre-existing initplans of the child.  Probably doesn't matter, but
+	 * let's preserve the ordering just in case.
+	 */
 	child->initPlan = list_concat(parent->initPlan,
 								  child->initPlan);
 
@@ -1411,6 +1423,12 @@ set_append_references(PlannerInfo *root,
 				PartitionedRelPruneInfo *pinfo = lfirst(l2);
 
 				pinfo->rtindex += rtoffset;
+				pinfo->initial_pruning_steps =
+					fix_scan_list(root, pinfo->initial_pruning_steps,
+								  rtoffset);
+				pinfo->exec_pruning_steps =
+					fix_scan_list(root, pinfo->exec_pruning_steps,
+								  rtoffset);
 			}
 		}
 	}
@@ -1483,6 +1501,12 @@ set_mergeappend_references(PlannerInfo *root,
 				PartitionedRelPruneInfo *pinfo = lfirst(l2);
 
 				pinfo->rtindex += rtoffset;
+				pinfo->initial_pruning_steps =
+					fix_scan_list(root, pinfo->initial_pruning_steps,
+								  rtoffset);
+				pinfo->exec_pruning_steps =
+					fix_scan_list(root, pinfo->exec_pruning_steps,
+								  rtoffset);
 			}
 		}
 	}
@@ -1751,22 +1775,14 @@ fix_scan_expr_mutator(Node *node, fix_scan_expr_context *context)
 	if (IsA(node, Aggref))
 	{
 		Aggref	   *aggref = (Aggref *) node;
+		Param	   *aggparam;
 
 		/* See if the Aggref should be replaced by a Param */
-		if (context->root->minmax_aggs != NIL &&
-			list_length(aggref->args) == 1)
+		aggparam = find_minmax_agg_replacement_param(context->root, aggref);
+		if (aggparam != NULL)
 		{
-			TargetEntry *curTarget = (TargetEntry *) linitial(aggref->args);
-			ListCell   *lc;
-
-			foreach(lc, context->root->minmax_aggs)
-			{
-				MinMaxAggInfo *mminfo = (MinMaxAggInfo *) lfirst(lc);
-
-				if (mminfo->aggfnoid == aggref->aggfnoid &&
-					equal(mminfo->target, curTarget->expr))
-					return (Node *) copyObject(mminfo->param);
-			}
+			/* Make a copy of the Param for paranoia's sake */
+			return (Node *) copyObject(aggparam);
 		}
 		/* If no match, just fall through to process it normally */
 	}
@@ -2673,22 +2689,14 @@ fix_upper_expr_mutator(Node *node, fix_upper_expr_context *context)
 	if (IsA(node, Aggref))
 	{
 		Aggref	   *aggref = (Aggref *) node;
+		Param	   *aggparam;
 
 		/* See if the Aggref should be replaced by a Param */
-		if (context->root->minmax_aggs != NIL &&
-			list_length(aggref->args) == 1)
+		aggparam = find_minmax_agg_replacement_param(context->root, aggref);
+		if (aggparam != NULL)
 		{
-			TargetEntry *curTarget = (TargetEntry *) linitial(aggref->args);
-			ListCell   *lc;
-
-			foreach(lc, context->root->minmax_aggs)
-			{
-				MinMaxAggInfo *mminfo = (MinMaxAggInfo *) lfirst(lc);
-
-				if (mminfo->aggfnoid == aggref->aggfnoid &&
-					equal(mminfo->target, curTarget->expr))
-					return (Node *) copyObject(mminfo->param);
-			}
+			/* Make a copy of the Param for paranoia's sake */
+			return (Node *) copyObject(aggparam);
 		}
 		/* If no match, just fall through to process it normally */
 	}
@@ -2761,6 +2769,38 @@ set_returning_clause_references(PlannerInfo *root,
 	pfree(itlist);
 
 	return rlist;
+}
+
+
+/*
+ * find_minmax_agg_replacement_param
+ *		If the given Aggref is one that we are optimizing into a subquery
+ *		(cf. planagg.c), then return the Param that should replace it.
+ *		Else return NULL.
+ *
+ * This is exported so that SS_finalize_plan can use it before setrefs.c runs.
+ * Note that it will not find anything until we have built a Plan from a
+ * MinMaxAggPath, as root->minmax_aggs will never be filled otherwise.
+ */
+Param *
+find_minmax_agg_replacement_param(PlannerInfo *root, Aggref *aggref)
+{
+	if (root->minmax_aggs != NIL &&
+		list_length(aggref->args) == 1)
+	{
+		TargetEntry *curTarget = (TargetEntry *) linitial(aggref->args);
+		ListCell   *lc;
+
+		foreach(lc, root->minmax_aggs)
+		{
+			MinMaxAggInfo *mminfo = (MinMaxAggInfo *) lfirst(lc);
+
+			if (mminfo->aggfnoid == aggref->aggfnoid &&
+				equal(mminfo->target, curTarget->expr))
+				return mminfo->param;
+		}
+	}
+	return NULL;
 }
 
 
@@ -2906,8 +2946,25 @@ extract_query_dependencies_walker(Node *node, PlannerInfo *context)
 		if (query->commandType == CMD_UTILITY)
 		{
 			/*
-			 * Ignore utility statements, except those (such as EXPLAIN) that
-			 * contain a parsed-but-not-planned query.
+			 * This logic must handle any utility command for which parse
+			 * analysis was nontrivial (cf. stmt_requires_parse_analysis).
+			 *
+			 * Notably, CALL requires its own processing.
+			 */
+			if (IsA(query->utilityStmt, CallStmt))
+			{
+				CallStmt   *callstmt = (CallStmt *) query->utilityStmt;
+
+				/* We need not examine funccall, just the transformed exprs */
+				(void) extract_query_dependencies_walker((Node *) callstmt->funcexpr,
+														 context);
+				return false;
+			}
+
+			/*
+			 * Ignore other utility statements, except those (such as EXPLAIN)
+			 * that contain a parsed-but-not-planned query.  For those, we
+			 * just need to transfer our attention to the contained query.
 			 */
 			query = UtilityContainsQuery(query->utilityStmt);
 			if (query == NULL)

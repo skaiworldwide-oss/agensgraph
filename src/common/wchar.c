@@ -16,6 +16,25 @@
 
 
 /*
+ * In today's multibyte encodings other than UTF8, this two-byte sequence
+ * ensures pg_encoding_mblen() == 2 && pg_encoding_verifymbstr() == 0.
+ *
+ * For historical reasons, several verifychar implementations opt to reject
+ * this pair specifically.  Byte pair range constraints, in encoding
+ * originator documentation, always excluded this pair.  No core conversion
+ * could translate it.  However, longstanding verifychar implementations
+ * accepted any non-NUL byte.  big5_to_euc_tw and big5_to_mic even translate
+ * pairs not valid per encoding originator documentation.  To avoid tightening
+ * core or non-core conversions in a security patch, we sought this one pair.
+ *
+ * PQescapeString() historically used spaces for BYTE1; many other values
+ * could suffice for BYTE1.
+ */
+#define NONUTF8_INVALID_BYTE0 (0x8d)
+#define NONUTF8_INVALID_BYTE1 (' ')
+
+
+/*
  * Operations on multi-byte encodings are driven by a table of helper
  * functions.
  *
@@ -1330,6 +1349,11 @@ pg_big5_verifier(const unsigned char *s, int len)
 	if (len < l)
 		return -1;
 
+	if (l == 2 &&
+		s[0] == NONUTF8_INVALID_BYTE0 &&
+		s[1] == NONUTF8_INVALID_BYTE1)
+		return -1;
+
 	while (--l > 0)
 	{
 		if (*++s == '\0')
@@ -1350,6 +1374,11 @@ pg_gbk_verifier(const unsigned char *s, int len)
 	if (len < l)
 		return -1;
 
+	if (l == 2 &&
+		s[0] == NONUTF8_INVALID_BYTE0 &&
+		s[1] == NONUTF8_INVALID_BYTE1)
+		return -1;
+
 	while (--l > 0)
 	{
 		if (*++s == '\0')
@@ -1368,6 +1397,11 @@ pg_uhc_verifier(const unsigned char *s, int len)
 	l = mbl = pg_uhc_mblen(s);
 
 	if (len < l)
+		return -1;
+
+	if (l == 2 &&
+		s[0] == NONUTF8_INVALID_BYTE0 &&
+		s[1] == NONUTF8_INVALID_BYTE1)
 		return -1;
 
 	while (--l > 0)
@@ -1497,6 +1531,19 @@ pg_utf8_islegal(const unsigned char *source, int length)
 
 
 /*
+ * Fills the provided buffer with two bytes such that:
+ *   pg_encoding_mblen(dst) == 2 && pg_encoding_verifymbstr(dst) == 0
+ */
+void
+pg_encoding_set_invalid(int encoding, char *dst)
+{
+	Assert(pg_encoding_max_length(encoding) > 1);
+
+	dst[0] = (encoding == PG_UTF8 ? 0xc0 : NONUTF8_INVALID_BYTE0);
+	dst[1] = NONUTF8_INVALID_BYTE1;
+}
+
+/*
  *-------------------------------------------------------------------
  * encoding info table
  * XXX must be sorted by the same order as enum pg_enc (in mb/pg_wchar.h)
@@ -1597,6 +1644,72 @@ pg_encoding_verifymb(int encoding, const char *mbstr, int len)
 			pg_wchar_table[PG_SQL_ASCII].mbverify((const unsigned char *) mbstr, len));
 }
 
+/* v14+ function name, for easier backpatching */
+int
+pg_encoding_verifymbchar(int encoding, const char *mbstr, int len)
+{
+	int ok_bytes = pg_encoding_verifymb(encoding, mbstr, len);
+
+	if (ok_bytes == 0)
+		return -1;
+	return ok_bytes;
+}
+
+/* replace v14+ function, adapted from pg_verify_mbstr_len */
+int
+pg_encoding_verifymbstr(int encoding, const char *mbstr, int len)
+{
+	mbverifier	mbverify;
+	int			ok_bytes;
+
+	Assert(PG_VALID_ENCODING(encoding));
+
+	/*
+	 * In single-byte encodings, we need only reject nulls (\0).
+	 */
+	if (pg_encoding_max_length(encoding) <= 1)
+	{
+		const char *nullpos = memchr(mbstr, 0, len);
+
+		if (nullpos == NULL)
+			return len;
+		return nullpos - mbstr;
+	}
+
+	/* fetch function pointer just once */
+	mbverify = pg_wchar_table[encoding].mbverify;
+
+	ok_bytes = 0;
+
+	while (len > 0)
+	{
+		int			l;
+
+		/* fast path for ASCII-subset characters */
+		if (!IS_HIGHBIT_SET(*mbstr))
+		{
+			if (*mbstr != '\0')
+			{
+				ok_bytes++;
+				mbstr++;
+				len--;
+				continue;
+			}
+			return ok_bytes;
+		}
+
+		l = (*mbverify) ((const unsigned char *) mbstr, len);
+
+		if (l < 0)
+			return ok_bytes;
+
+		mbstr += l;
+		len -= l;
+		ok_bytes += l;
+	}
+	return ok_bytes;
+}
+
 /*
  * fetch maximum length of a given encoding
  */
@@ -1605,5 +1718,11 @@ pg_encoding_max_length(int encoding)
 {
 	Assert(PG_VALID_ENCODING(encoding));
 
-	return pg_wchar_table[encoding].maxmblen;
+	/*
+	 * Check for the encoding despite the assert, due to some mingw versions
+	 * otherwise issuing bogus warnings.
+	 */
+	return PG_VALID_ENCODING(encoding) ?
+		pg_wchar_table[encoding].maxmblen :
+		pg_wchar_table[PG_SQL_ASCII].maxmblen;
 }

@@ -463,12 +463,13 @@ SELECT * from FKTABLE;
 DROP TABLE FKTABLE;
 DROP TABLE PKTABLE;
 
-CREATE TABLE PKTABLE (ptest1 int PRIMARY KEY);
+-- Test some invalid FK definitions
+CREATE TABLE PKTABLE (ptest1 int PRIMARY KEY, someoid oid);
 CREATE TABLE FKTABLE_FAIL1 ( ftest1 int, CONSTRAINT fkfail1 FOREIGN KEY (ftest2) REFERENCES PKTABLE);
 CREATE TABLE FKTABLE_FAIL2 ( ftest1 int, CONSTRAINT fkfail1 FOREIGN KEY (ftest1) REFERENCES PKTABLE(ptest2));
+CREATE TABLE FKTABLE_FAIL3 ( ftest1 int, CONSTRAINT fkfail1 FOREIGN KEY (tableoid) REFERENCES PKTABLE(someoid));
+CREATE TABLE FKTABLE_FAIL4 ( ftest1 oid, CONSTRAINT fkfail1 FOREIGN KEY (ftest1) REFERENCES PKTABLE(tableoid));
 
-DROP TABLE FKTABLE_FAIL1;
-DROP TABLE FKTABLE_FAIL2;
 DROP TABLE PKTABLE;
 
 -- Test for referencing column number smaller than referenced constraint
@@ -1365,6 +1366,23 @@ ALTER TABLE fk_partitioned_fk ATTACH PARTITION fk_partitioned_fk_2
 
 -- leave these tables around intentionally
 
+-- Verify that attaching a table that's referenced by an existing FK
+-- in the parent throws an error
+CREATE TABLE fk_partitioned_pk_6 (a int PRIMARY KEY);
+CREATE TABLE fk_partitioned_fk_6 (a int REFERENCES fk_partitioned_pk_6) PARTITION BY LIST (a);
+ALTER TABLE fk_partitioned_fk_6 ATTACH PARTITION fk_partitioned_pk_6 FOR VALUES IN (1);
+DROP TABLE fk_partitioned_pk_6, fk_partitioned_fk_6;
+
+-- This case is similar to above, but the referenced relation is one level
+-- lower in the hierarchy.  This one fails in a different way as the above,
+-- because we don't bother to protect against this case explicitly.  If the
+-- current error stops happening, we'll need to add a better protection.
+CREATE TABLE fk_partitioned_pk_6 (a int PRIMARY KEY) PARTITION BY list (a);
+CREATE TABLE fk_partitioned_pk_61 PARTITION OF fk_partitioned_pk_6 FOR VALUES IN (1);
+CREATE TABLE fk_partitioned_fk_6 (a int REFERENCES fk_partitioned_pk_61) PARTITION BY LIST (a);
+ALTER TABLE fk_partitioned_fk_6 ATTACH PARTITION fk_partitioned_pk_6 FOR VALUES IN (1);
+DROP TABLE fk_partitioned_pk_6, fk_partitioned_fk_6;
+
 -- test the case when the referenced table is owned by a different user
 create role regress_other_partitioned_fk_owner;
 grant references on fk_notpartitioned_pk to regress_other_partitioned_fk_owner;
@@ -1868,3 +1886,59 @@ DELETE FROM fkpart9.pk WHERE a=35;
 SELECT * FROM fkpart9.pk;
 SELECT * FROM fkpart9.fk;
 DROP SCHEMA fkpart9 CASCADE;
+
+-- When a table is attached as partition to a partitioned table that has
+-- a foreign key to another partitioned table, it acquires a clone of the
+-- FK.  Upon detach, Postgres 14 and earlier remove the foreign key (newer
+-- versions make it a standalone constraint.)
+CREATE SCHEMA fkpart12
+  CREATE TABLE fk_p ( id int, jd int, PRIMARY KEY(id, jd)) PARTITION BY list (id)
+  CREATE TABLE fk_p_1 PARTITION OF fk_p FOR VALUES IN (1) PARTITION BY list (jd)
+  CREATE TABLE fk_p_1_1 PARTITION OF fk_p_1 FOR VALUES IN (1)
+  CREATE TABLE fk_p_1_2 PARTITION OF fk_p_1 FOR VALUES IN (2)
+  CREATE TABLE fk_p_2 PARTITION OF fk_p FOR VALUES IN (2) PARTITION BY list (jd)
+  CREATE TABLE fk_p_2_1 PARTITION OF fk_p_2 FOR VALUES IN (1)
+  CREATE TABLE fk_p_2_2 PARTITION OF fk_p_2 FOR VALUES IN (2)
+  CREATE TABLE fk_r_1 ( id int PRIMARY KEY, p_id int NOT NULL, p_jd int NOT NULL)
+  CREATE TABLE fk_r_2 ( id int PRIMARY KEY, p_id int NOT NULL, p_jd int NOT NULL) PARTITION BY list (id)
+  CREATE TABLE fk_r_2_1 PARTITION OF fk_r_2 FOR VALUES IN (2, 1)
+  CREATE TABLE fk_r   ( id int PRIMARY KEY, p_id int NOT NULL, p_jd int NOT NULL,
+       FOREIGN KEY (p_id, p_jd) REFERENCES fk_p (id, jd)
+  ) PARTITION BY list (id);
+SET search_path TO fkpart12;
+
+INSERT INTO fk_p VALUES (1, 1);
+
+ALTER TABLE fk_r ATTACH PARTITION fk_r_1 FOR VALUES IN (1);
+ALTER TABLE fk_r ATTACH PARTITION fk_r_2 FOR VALUES IN (2);
+
+\d fk_r_2
+
+INSERT INTO fk_r VALUES (1, 1, 1);
+INSERT INTO fk_r VALUES (2, 2, 1);	-- fails
+
+ALTER TABLE fk_r DETACH PARTITION fk_r_1;
+ALTER TABLE fk_r DETACH PARTITION fk_r_2;
+
+\d fk_r_2
+
+INSERT INTO fk_r_1 VALUES (2, 1, 2); -- works: there's no FK anymore
+DELETE FROM fk_p;	-- works
+
+ALTER TABLE fk_r ATTACH PARTITION fk_r_1 FOR VALUES IN (1);	-- fails
+
+INSERT INTO fk_r_2 VALUES (2, 2, 2);
+INSERT INTO fk_p VALUES (2, 2);
+ALTER TABLE fk_r ATTACH PARTITION fk_r_2 FOR VALUES IN (2);
+\d fk_r_2
+DELETE FROM fk_p;	-- fails
+
+-- these should all fail
+ALTER TABLE fk_r_1 DROP CONSTRAINT fk_r_p_id_p_jd_fkey;
+ALTER TABLE fk_r DROP CONSTRAINT fk_r_p_id_p_jd_fkey1;
+ALTER TABLE fk_r_2 DROP CONSTRAINT fk_r_p_id_p_jd_fkey;
+
+SET client_min_messages TO warning;
+DROP SCHEMA fkpart12 CASCADE;
+RESET client_min_messages;
+RESET search_path;

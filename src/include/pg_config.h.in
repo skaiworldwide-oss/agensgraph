@@ -95,9 +95,6 @@
 /* Define to 1 if you have the `backtrace_symbols' function. */
 #undef HAVE_BACKTRACE_SYMBOLS
 
-/* Define to 1 if you have the `BIO_get_data' function. */
-#undef HAVE_BIO_GET_DATA
-
 /* Define to 1 if you have the `BIO_meth_new' function. */
 #undef HAVE_BIO_METH_NEW
 
@@ -500,8 +497,8 @@
 /* Define to 1 if you have the `srandom' function. */
 #undef HAVE_SRANDOM
 
-/* Define to 1 if stdbool.h conforms to C99. */
-#undef HAVE_STDBOOL_H
+/* Define to 1 if you have the `SSL_CTX_set_num_tickets' function. */
+#undef HAVE_SSL_CTX_SET_NUM_TICKETS
 
 /* Define to 1 if you have the <stdint.h> header file. */
 #undef HAVE_STDINT_H
@@ -599,6 +596,9 @@
 /* Define to 1 if you have the <sys/ipc.h> header file. */
 #undef HAVE_SYS_IPC_H
 
+/* Define to 1 if you have the <sys/personality.h> header file. */
+#undef HAVE_SYS_PERSONALITY_H
+
 /* Define to 1 if you have the <sys/prctl.h> header file. */
 #undef HAVE_SYS_PRCTL_H
 
@@ -689,14 +689,14 @@
 /* Define to 1 if you have the <winldap.h> header file. */
 #undef HAVE_WINLDAP_H
 
+/* Define to 1 if you have the `X509_get_signature_info' function. */
+#undef HAVE_X509_GET_SIGNATURE_INFO
+
 /* Define to 1 if you have the `X509_get_signature_nid' function. */
 #undef HAVE_X509_GET_SIGNATURE_NID
 
 /* Define to 1 if the assembler supports X86_64's POPCNTQ instruction. */
 #undef HAVE_X86_64_POPCNTQ
-
-/* Define to 1 if the system has the type `_Bool'. */
-#undef HAVE__BOOL
 
 /* Define to 1 if your compiler understands __builtin_bswap16. */
 #undef HAVE__BUILTIN_BSWAP16
@@ -760,6 +760,10 @@
 
 /* Define bytes to use libc memset(). */
 #undef MEMSET_LOOP_LIMIT
+
+/* Define to the OpenSSL API version in use. This avoids deprecation warnings
+   from newer OpenSSL versions. */
+#undef OPENSSL_API_COMPAT
 
 /* Define to the address where bug reports for this package should be sent. */
 #undef PACKAGE_BUGREPORT

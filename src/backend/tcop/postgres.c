@@ -79,6 +79,7 @@
 #include "utils/snapmgr.h"
 #include "utils/timeout.h"
 #include "utils/timestamp.h"
+#include "utils/varlena.h"
 
 /* ----------------
  *		global variables
@@ -99,6 +100,9 @@ int			max_stack_depth = 100;
 
 /* wait N seconds to allow attach from a debugger */
 int			PostAuthDelay = 0;
+
+/* flags for non-system relation kinds to restrict use */
+int			restrict_nonsystem_relation_kind;
 
 /* Global variable to hold the graph write statistics */
 GraphWriteStats graphWriteStats;
@@ -1240,7 +1244,7 @@ exec_simple_query(const char *query_string)
 		(void) PortalRun(portal,
 						 FETCH_ALL,
 						 true,	/* always top level */
-						 true,
+						 true,	/* ignored */
 						 receiver,
 						 receiver,
 						 &qc);
@@ -2187,7 +2191,7 @@ exec_execute_message(const char *portal_name, long max_rows)
 	completed = PortalRun(portal,
 						  max_rows,
 						  true, /* always top level */
-						  !execute_is_fetch && max_rows == FETCH_ALL,
+						  true, /* ignored */
 						  receiver,
 						  receiver,
 						  &qc);
@@ -2227,6 +2231,12 @@ exec_execute_message(const char *portal_name, long max_rows)
 			CommandCounterIncrement();
 
 			/*
+			 * Set XACT_FLAGS_PIPELINING whenever we complete an Execute
+			 * message without immediately committing the transaction.
+			 */
+			MyXactFlags |= XACT_FLAGS_PIPELINING;
+
+			/*
 			 * Disable statement timeout whenever we complete an Execute
 			 * message.  The next protocol message will start a fresh timeout.
 			 */
@@ -2241,6 +2251,12 @@ exec_execute_message(const char *portal_name, long max_rows)
 		/* Portal run not complete, so send PortalSuspended */
 		if (whereToSendOutput == DestRemote)
 			pq_putemptymessage('s');
+
+		/*
+		 * Set XACT_FLAGS_PIPELINING whenever we suspend an Execute message,
+		 * too.
+		 */
+		MyXactFlags |= XACT_FLAGS_PIPELINING;
 	}
 
 	/*
@@ -3431,6 +3447,71 @@ assign_max_stack_depth(int newval, void *extra)
 	max_stack_depth_bytes = newval_bytes;
 }
 
+/*
+ * GUC check_hook for restrict_nonsystem_relation_kind
+ */
+bool
+check_restrict_nonsystem_relation_kind(char **newval, void **extra, GucSource source)
+{
+	char	   *rawstring;
+	List	   *elemlist;
+	ListCell   *l;
+	int			flags = 0;
+
+	/* Need a modifiable copy of string */
+	rawstring = pstrdup(*newval);
+
+	if (!SplitIdentifierString(rawstring, ',', &elemlist))
+	{
+		/* syntax error in list */
+		GUC_check_errdetail("List syntax is invalid.");
+		pfree(rawstring);
+		list_free(elemlist);
+		return false;
+	}
+
+	foreach(l, elemlist)
+	{
+		char	   *tok = (char *) lfirst(l);
+
+		if (pg_strcasecmp(tok, "view") == 0)
+			flags |= RESTRICT_RELKIND_VIEW;
+		else if (pg_strcasecmp(tok, "foreign-table") == 0)
+			flags |= RESTRICT_RELKIND_FOREIGN_TABLE;
+		else
+		{
+			GUC_check_errdetail("Unrecognized key word: \"%s\".", tok);
+			pfree(rawstring);
+			list_free(elemlist);
+			return false;
+		}
+	}
+
+	pfree(rawstring);
+	list_free(elemlist);
+
+	/* Save the flags in *extra, for use by the assign function */
+	*extra = malloc(sizeof(int));
+	if (*extra == NULL)
+		ereport(ERROR,
+				(errcode(ERRCODE_OUT_OF_MEMORY),
+				 errmsg("out of memory")));
+
+	*((int *) *extra) = flags;
+
+	return true;
+}
+
+/*
+ * GUC assign_hook for restrict_nonsystem_relation_kind
+ */
+void
+assign_restrict_nonsystem_relation_kind(const char *newval, void *extra)
+{
+	int		   *flags = (int *) extra;
+
+	restrict_nonsystem_relation_kind = *flags;
+}
 
 /*
  * set_debug_options --- apply "-d N" command line option
@@ -3813,11 +3894,11 @@ PostgresMain(int argc, char *argv[],
 			 const char *dbname,
 			 const char *username)
 {
-	int			firstchar;
-	StringInfoData input_message;
 	sigjmp_buf	local_sigjmp_buf;
+
+	/* these must be volatile to ensure state is preserved across longjmp: */
 	volatile bool send_ready_for_query = true;
-	bool		disable_idle_in_transaction_timeout = false;
+	volatile bool disable_idle_in_transaction_timeout = false;
 
 	/* Initialize startup process environment if necessary. */
 	if (!IsUnderPostmaster)
@@ -4101,8 +4182,9 @@ PostgresMain(int argc, char *argv[],
 		 * query cancels from being misreported as timeouts in case we're
 		 * forgetting a timeout cancel.
 		 */
-		disable_all_timeouts(false);
-		QueryCancelPending = false; /* second to avoid race condition */
+		disable_all_timeouts(false);	/* do first to avoid race condition */
+		QueryCancelPending = false;
+		disable_idle_in_transaction_timeout = false;
 
 		/* Not reading from the client anymore. */
 		DoingCommandRead = false;
@@ -4191,6 +4273,9 @@ PostgresMain(int argc, char *argv[],
 
 	for (;;)
 	{
+		int			firstchar;
+		StringInfoData input_message;
+
 		/*
 		 * At top of loop, reset extended-query-message flag, so that any
 		 * errors encountered in "idle" state don't provoke skip.

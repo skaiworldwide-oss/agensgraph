@@ -242,7 +242,18 @@ be_tls_init(bool isServerStart)
 		}
 	}
 
-	/* disallow SSL session tickets */
+	/*
+	 * Disallow SSL session tickets. OpenSSL use both stateful and stateless
+	 * tickets for TLSv1.3, and stateless ticket for TLSv1.2. SSL_OP_NO_TICKET
+	 * is available since 0.9.8f but only turns off stateless tickets. In
+	 * order to turn off stateful tickets we need SSL_CTX_set_num_tickets,
+	 * which is available since OpenSSL 1.1.1. LibreSSL 3.5.4 (from OpenBSD
+	 * 7.1) introduced this API for compatibility, but doesn't support session
+	 * tickets at all so it's a no-op there.
+	 */
+#ifdef HAVE_SSL_CTX_SET_NUM_TICKETS
+	SSL_CTX_set_num_tickets(context, 0);
+#endif
 	SSL_CTX_set_options(context, SSL_OP_NO_TICKET);
 
 	/* disallow SSL session caching, too */
@@ -424,6 +435,7 @@ aloop:
 	 * per-thread error queue following another call to an OpenSSL I/O
 	 * routine.
 	 */
+	errno = 0;
 	ERR_clear_error();
 	r = SSL_accept(port->ssl);
 	if (r <= 0)
@@ -460,7 +472,7 @@ aloop:
 										 WAIT_EVENT_SSL_OPEN_SERVER);
 				goto aloop;
 			case SSL_ERROR_SYSCALL:
-				if (r < 0)
+				if (r < 0 && errno != 0)
 					ereport(COMMERROR,
 							(errcode_for_socket_access(),
 							 errmsg("could not accept SSL connection: %m")));
@@ -636,7 +648,7 @@ be_tls_read(Port *port, void *ptr, size_t len, int *waitfor)
 			break;
 		case SSL_ERROR_SYSCALL:
 			/* leave it to caller to ereport the value of errno */
-			if (n != -1)
+			if (n != -1 || errno == 0)
 			{
 				errno = ECONNRESET;
 				n = -1;
@@ -694,8 +706,14 @@ be_tls_write(Port *port, void *ptr, size_t len, int *waitfor)
 			n = -1;
 			break;
 		case SSL_ERROR_SYSCALL:
-			/* leave it to caller to ereport the value of errno */
-			if (n != -1)
+
+			/*
+			 * Leave it to caller to ereport the value of errno.  However, if
+			 * errno is still zero then assume it's a read EOF situation, and
+			 * report ECONNRESET.  (This seems possible because SSL_write can
+			 * also do reads.)
+			 */
+			if (n != -1 || errno == 0)
 			{
 				errno = ECONNRESET;
 				n = -1;
@@ -748,11 +766,6 @@ be_tls_write(Port *port, void *ptr, size_t len, int *waitfor)
  * to retry; do we need to adopt their logic for that?
  */
 
-#ifndef HAVE_BIO_GET_DATA
-#define BIO_get_data(bio) (bio->ptr)
-#define BIO_set_data(bio, data) (bio->ptr = data)
-#endif
-
 static BIO_METHOD *my_bio_methods = NULL;
 
 static int
@@ -762,7 +775,7 @@ my_sock_read(BIO *h, char *buf, int size)
 
 	if (buf != NULL)
 	{
-		res = secure_raw_read(((Port *) BIO_get_data(h)), buf, size);
+		res = secure_raw_read(((Port *) BIO_get_app_data(h)), buf, size);
 		BIO_clear_retry_flags(h);
 		if (res <= 0)
 		{
@@ -782,7 +795,7 @@ my_sock_write(BIO *h, const char *buf, int size)
 {
 	int			res = 0;
 
-	res = secure_raw_write(((Port *) BIO_get_data(h)), buf, size);
+	res = secure_raw_write(((Port *) BIO_get_app_data(h)), buf, size);
 	BIO_clear_retry_flags(h);
 	if (res <= 0)
 	{
@@ -858,7 +871,7 @@ my_SSL_set_fd(Port *port, int fd)
 		SSLerr(SSL_F_SSL_SET_FD, ERR_R_BUF_LIB);
 		goto err;
 	}
-	BIO_set_data(bio, port);
+	BIO_set_app_data(bio, port);
 
 	BIO_set_fd(bio, fd, BIO_NOCLOSE);
 	SSL_set_bio(port->ssl, bio, bio);
@@ -1144,9 +1157,9 @@ initialize_ecdh(SSL_CTX *context, bool isServerStart)
  *
  * ERR_get_error() is used by caller to get errcode to pass here.
  *
- * Some caution is needed here since ERR_reason_error_string will
- * return NULL if it doesn't recognize the error code.  We don't
- * want to return NULL ever.
+ * Some caution is needed here since ERR_reason_error_string will return NULL
+ * if it doesn't recognize the error code, or (in OpenSSL >= 3) if the code
+ * represents a system errno value.  We don't want to return NULL ever.
  */
 static const char *
 SSLerrmessage(unsigned long ecode)
@@ -1159,6 +1172,20 @@ SSLerrmessage(unsigned long ecode)
 	errreason = ERR_reason_error_string(ecode);
 	if (errreason != NULL)
 		return errreason;
+
+	/*
+	 * In OpenSSL 3.0.0 and later, ERR_reason_error_string does not map system
+	 * errno values anymore.  (See OpenSSL source code for the explanation.)
+	 * We can cover that shortcoming with this bit of code.  Older OpenSSL
+	 * versions don't have the ERR_SYSTEM_ERROR macro, but that's okay because
+	 * they don't have the shortcoming either.
+	 */
+#ifdef ERR_SYSTEM_ERROR
+	if (ERR_SYSTEM_ERROR(ecode))
+		return strerror(ERR_GET_REASON(ecode));
+#endif
+
+	/* No choice but to report the numeric ecode */
 	snprintf(errbuf, sizeof(errbuf), _("SSL error code %lu"), ecode);
 	return errbuf;
 }
@@ -1243,7 +1270,7 @@ be_tls_get_peer_serial(Port *port, char *ptr, size_t len)
 		ptr[0] = '\0';
 }
 
-#ifdef HAVE_X509_GET_SIGNATURE_NID
+#if defined(HAVE_X509_GET_SIGNATURE_NID) || defined(HAVE_X509_GET_SIGNATURE_INFO)
 char *
 be_tls_get_certificate_hash(Port *port, size_t *len)
 {
@@ -1261,10 +1288,15 @@ be_tls_get_certificate_hash(Port *port, size_t *len)
 
 	/*
 	 * Get the signature algorithm of the certificate to determine the hash
-	 * algorithm to use for the result.
+	 * algorithm to use for the result.  Prefer X509_get_signature_info(),
+	 * introduced in OpenSSL 1.1.1, which can handle RSA-PSS signatures.
 	 */
+#if HAVE_X509_GET_SIGNATURE_INFO
+	if (!X509_get_signature_info(server_cert, &algo_nid, NULL, NULL, NULL))
+#else
 	if (!OBJ_find_sigid_algs(X509_get_signature_nid(server_cert),
 							 &algo_nid, NULL))
+#endif
 		elog(ERROR, "could not determine server certificate signature algorithm");
 
 	/*

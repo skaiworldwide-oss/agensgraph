@@ -1514,7 +1514,7 @@ EnableDisableTriggerNew(Relation rel, const char *tgname,
 	{
 		Form_pg_trigger oldtrig = (Form_pg_trigger) GETSTRUCT(tuple);
 
-		if (oldtrig->tgisinternal)
+		if (oldtrig->tgisinternal && !OidIsValid(oldtrig->tgparentid))
 		{
 			/* system trigger ... ok to process? */
 			if (skip_system)
@@ -3610,6 +3610,30 @@ afterTriggerCheckState(AfterTriggerShared evtshared)
 	return ((evtshared->ats_event & AFTER_TRIGGER_INITDEFERRED) != 0);
 }
 
+/* ----------
+ * afterTriggerCopyBitmap()
+ *
+ * Copy bitmap into AfterTriggerEvents memory context, which is where the after
+ * trigger events are kept.
+ * ----------
+ */
+static Bitmapset *
+afterTriggerCopyBitmap(Bitmapset *src)
+{
+	Bitmapset	   *dst;
+	MemoryContext	oldcxt;
+
+	if (src == NULL)
+		return NULL;
+
+	oldcxt = MemoryContextSwitchTo(afterTriggers.event_cxt);
+
+	dst = bms_copy(src);
+
+	MemoryContextSwitchTo(oldcxt);
+
+	return dst;
+}
 
 /* ----------
  * afterTriggerAddEvent()
@@ -3703,16 +3727,21 @@ afterTriggerAddEvent(AfterTriggerEventList *events,
 		 (char *) newshared >= chunk->endfree;
 		 newshared--)
 	{
+		/* compare fields roughly by probability of them being different */
 		if (newshared->ats_tgoid == evtshared->ats_tgoid &&
-			newshared->ats_relid == evtshared->ats_relid &&
 			newshared->ats_event == evtshared->ats_event &&
+			newshared->ats_firing_id == 0 &&
 			newshared->ats_table == evtshared->ats_table &&
-			newshared->ats_firing_id == 0)
+			newshared->ats_relid == evtshared->ats_relid &&
+			bms_equal(newshared->ats_modifiedcols,
+					  evtshared->ats_modifiedcols))
 			break;
 	}
 	if ((char *) newshared < chunk->endfree)
 	{
 		*newshared = *evtshared;
+		/* now we must make a suitably-long-lived copy of the bitmap */
+		newshared->ats_modifiedcols = afterTriggerCopyBitmap(evtshared->ats_modifiedcols);
 		newshared->ats_firing_id = 0;	/* just to be sure */
 		chunk->endfree = (char *) newshared;
 	}
@@ -3869,8 +3898,12 @@ AfterTriggerExecute(EState *estate,
 	bool		should_free_new = false;
 
 	/*
-	 * Locate trigger in trigdesc.
+	 * Locate trigger in trigdesc.  It might not be present, and in fact the
+	 * trigdesc could be NULL, if the trigger was dropped since the event was
+	 * queued.  In that case, silently do nothing.
 	 */
+	if (trigdesc == NULL)
+		return;
 	for (tgindx = 0; tgindx < trigdesc->numtriggers; tgindx++)
 	{
 		if (trigdesc->triggers[tgindx].tgoid == tgoid)
@@ -3880,7 +3913,7 @@ AfterTriggerExecute(EState *estate,
 		}
 	}
 	if (LocTriggerData.tg_trigger == NULL)
-		elog(ERROR, "could not find trigger %u", tgoid);
+		return;
 
 	/*
 	 * If doing EXPLAIN ANALYZE, start charging time to this trigger. We want
@@ -4204,6 +4237,7 @@ afterTriggerInvokeEvents(AfterTriggerEventList *events,
 					/* Catch calls with insufficient relcache refcounting */
 					Assert(!RelationHasReferenceCountZero(rel));
 					trigdesc = rInfo->ri_TrigDesc;
+					/* caution: trigdesc could be NULL here */
 					finfo = rInfo->ri_TrigFunctions;
 					instr = rInfo->ri_TrigInstrument;
 					if (slot1 != NULL)
@@ -4219,9 +4253,6 @@ afterTriggerInvokeEvents(AfterTriggerEventList *events,
 						slot2 = MakeSingleTupleTableSlot(rel->rd_att,
 														 &TTSOpsMinimalTuple);
 					}
-					if (trigdesc == NULL)	/* should not happen */
-						elog(ERROR, "relation %u has no triggers",
-							 evtshared->ats_relid);
 				}
 
 				/*
@@ -4382,8 +4413,10 @@ TransitionCaptureState *
 MakeTransitionCaptureState(TriggerDesc *trigdesc, Oid relid, CmdType cmdType)
 {
 	TransitionCaptureState *state;
-	bool		need_old,
-				need_new;
+	bool		need_old_upd,
+				need_new_upd,
+				need_old_del,
+				need_new_ins;
 	AfterTriggersTableData *table;
 	MemoryContext oldcxt;
 	ResourceOwner saveResourceOwner;
@@ -4395,23 +4428,25 @@ MakeTransitionCaptureState(TriggerDesc *trigdesc, Oid relid, CmdType cmdType)
 	switch (cmdType)
 	{
 		case CMD_INSERT:
-			need_old = false;
-			need_new = trigdesc->trig_insert_new_table;
+			need_old_upd = need_old_del = need_new_upd = false;
+			need_new_ins = trigdesc->trig_insert_new_table;
 			break;
 		case CMD_UPDATE:
-			need_old = trigdesc->trig_update_old_table;
-			need_new = trigdesc->trig_update_new_table;
+			need_old_upd = trigdesc->trig_update_old_table;
+			need_new_upd = trigdesc->trig_update_new_table;
+			need_old_del = need_new_ins = false;
 			break;
 		case CMD_DELETE:
-			need_old = trigdesc->trig_delete_old_table;
-			need_new = false;
+			need_old_del = trigdesc->trig_delete_old_table;
+			need_old_upd = need_new_upd = need_new_ins = false;
 			break;
 		default:
 			elog(ERROR, "unexpected CmdType: %d", (int) cmdType);
-			need_old = need_new = false;	/* keep compiler quiet */
+			/* keep compiler quiet */
+			need_old_upd = need_new_upd = need_old_del = need_new_ins = false;
 			break;
 	}
-	if (!need_old && !need_new)
+	if (!need_old_upd && !need_new_upd && !need_new_ins && !need_old_del)
 		return NULL;
 
 	/* Check state, like AfterTriggerSaveEvent. */
@@ -4441,9 +4476,9 @@ MakeTransitionCaptureState(TriggerDesc *trigdesc, Oid relid, CmdType cmdType)
 	saveResourceOwner = CurrentResourceOwner;
 	CurrentResourceOwner = CurTransactionResourceOwner;
 
-	if (need_old && table->old_tuplestore == NULL)
+	if ((need_old_upd || need_old_del) && table->old_tuplestore == NULL)
 		table->old_tuplestore = tuplestore_begin_heap(false, false, work_mem);
-	if (need_new && table->new_tuplestore == NULL)
+	if ((need_new_upd || need_new_ins) && table->new_tuplestore == NULL)
 		table->new_tuplestore = tuplestore_begin_heap(false, false, work_mem);
 
 	CurrentResourceOwner = saveResourceOwner;
@@ -4451,10 +4486,10 @@ MakeTransitionCaptureState(TriggerDesc *trigdesc, Oid relid, CmdType cmdType)
 
 	/* Now build the TransitionCaptureState struct, in caller's context */
 	state = (TransitionCaptureState *) palloc0(sizeof(TransitionCaptureState));
-	state->tcs_delete_old_table = trigdesc->trig_delete_old_table;
-	state->tcs_update_old_table = trigdesc->trig_update_old_table;
-	state->tcs_update_new_table = trigdesc->trig_update_new_table;
-	state->tcs_insert_new_table = trigdesc->trig_insert_new_table;
+	state->tcs_delete_old_table = need_old_del;
+	state->tcs_update_old_table = need_old_upd;
+	state->tcs_update_new_table = need_new_upd;
+	state->tcs_insert_new_table = need_new_ins;
 	state->tcs_private = table;
 
 	return state;

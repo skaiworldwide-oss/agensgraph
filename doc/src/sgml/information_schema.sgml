@@ -639,8 +639,8 @@
        <structfield>dtd_identifier</structfield> <type>sql_identifier</type>
       </para>
       <para>
-       An identifier of the data type descriptor of the column, unique
-       among the data type descriptors pertaining to the table.  This
+       An identifier of the data type descriptor of the attribute, unique
+       among the data type descriptors pertaining to the composite type.  This
        is mainly useful for joining with other instances of such
        identifiers.  (The specific format of the identifier is not
        defined and not guaranteed to remain the same in future
@@ -697,8 +697,8 @@
       <para>
        An encoding of some character repertoire.  Most older character
        repertoires only use one encoding form, and so there are no
-       separate names for them (e.g., <literal>LATIN1</literal> is an
-       encoding form applicable to the <literal>LATIN1</literal>
+       separate names for them (e.g., <literal>LATIN2</literal> is an
+       encoding form applicable to the <literal>LATIN2</literal>
        repertoire).  But for example Unicode has the encoding forms
        <literal>UTF8</literal>, <literal>UTF16</literal>, etc. (not
        all supported by PostgreSQL).  Encoding forms are not exposed

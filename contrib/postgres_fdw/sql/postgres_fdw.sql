@@ -310,6 +310,13 @@ DELETE FROM loct_empty;
 ANALYZE ft_empty;
 EXPLAIN (VERBOSE, COSTS OFF) SELECT * FROM ft_empty ORDER BY c1;
 
+-- test restriction on non-system foreign tables.
+SET restrict_nonsystem_relation_kind TO 'foreign-table';
+SELECT * from ft1 where c1 < 1; -- ERROR
+INSERT INTO ft1 (c1) VALUES (1); -- ERROR
+DELETE FROM ft1 WHERE c1 = 1; -- ERROR
+RESET restrict_nonsystem_relation_kind;
+
 -- ===================================================================
 -- WHERE with remotely-executable conditions
 -- ===================================================================
@@ -328,7 +335,7 @@ EXPLAIN (VERBOSE, COSTS OFF) SELECT * FROM ft1 t1 WHERE c8 = 'foo';  -- can't be
 -- parameterized remote path for foreign table
 EXPLAIN (VERBOSE, COSTS OFF)
   SELECT * FROM "S 1"."T 1" a, ft2 b WHERE a."C 1" = 47 AND b.c1 = a.c2;
-SELECT * FROM ft2 a, ft2 b WHERE a.c1 = 47 AND b.c1 = a.c2;
+SELECT * FROM "S 1"."T 1" a, ft2 b WHERE a."C 1" = 47 AND b.c1 = a.c2;
 
 -- check both safe and unsafe join conditions
 EXPLAIN (VERBOSE, COSTS OFF)
@@ -339,12 +346,6 @@ WHERE a.c2 = 6 AND b.c1 = a.c1 AND a.c8 = 'foo' AND b.c7 = upper(a.c7);
 -- bug before 9.3.5 due to sloppy handling of remote-estimate parameters
 SELECT * FROM ft1 WHERE c1 = ANY (ARRAY(SELECT c1 FROM ft2 WHERE c1 < 5));
 SELECT * FROM ft2 WHERE c1 = ANY (ARRAY(SELECT c1 FROM ft1 WHERE c1 < 5));
--- we should not push order by clause with volatile expressions or unsafe
--- collations
-EXPLAIN (VERBOSE, COSTS OFF)
-	SELECT * FROM ft2 ORDER BY ft2.c1, random();
-EXPLAIN (VERBOSE, COSTS OFF)
-	SELECT * FROM ft2 ORDER BY ft2.c1, ft2.c3 collate "C";
 
 -- user-defined operator/function
 CREATE FUNCTION postgres_fdw_abs(int) RETURNS int AS $$
@@ -398,6 +399,11 @@ EXPLAIN (VERBOSE, COSTS OFF)
   SELECT * FROM ft1 t1 WHERE t1.c1 === t1.c2 order by t1.c2 limit 1;
 SELECT * FROM ft1 t1 WHERE t1.c1 === t1.c2 order by t1.c2 limit 1;
 
+-- Ensure we don't ship FETCH FIRST .. WITH TIES
+EXPLAIN (VERBOSE, COSTS OFF)
+SELECT t1.c2 FROM ft1 t1 WHERE t1.c1 > 960 ORDER BY t1.c2 FETCH FIRST 2 ROWS WITH TIES;
+SELECT t1.c2 FROM ft1 t1 WHERE t1.c1 > 960 ORDER BY t1.c2 FETCH FIRST 2 ROWS WITH TIES;
+
 -- check schema-qualification of regconfig constant
 CREATE TEXT SEARCH CONFIGURATION public.custom_search
   (COPY = pg_catalog.english);
@@ -406,6 +412,32 @@ SELECT c1, to_tsvector('custom_search'::regconfig, c3) FROM ft1
 WHERE c1 = 642 AND length(to_tsvector('custom_search'::regconfig, c3)) > 0;
 SELECT c1, to_tsvector('custom_search'::regconfig, c3) FROM ft1
 WHERE c1 = 642 AND length(to_tsvector('custom_search'::regconfig, c3)) > 0;
+
+-- ===================================================================
+-- ORDER BY queries
+-- ===================================================================
+-- we should not push order by clause with volatile expressions or unsafe
+-- collations
+EXPLAIN (VERBOSE, COSTS OFF)
+	SELECT * FROM ft2 ORDER BY ft2.c1, random();
+EXPLAIN (VERBOSE, COSTS OFF)
+	SELECT * FROM ft2 ORDER BY ft2.c1, ft2.c3 collate "C";
+
+-- Ensure we don't push ORDER BY expressions which are Consts at the UNION
+-- child level to the foreign server.
+EXPLAIN (VERBOSE, COSTS OFF)
+SELECT * FROM (
+    SELECT 1 AS type,c1 FROM ft1
+    UNION ALL
+    SELECT 2 AS type,c1 FROM ft2
+) a ORDER BY type,c1;
+
+EXPLAIN (VERBOSE, COSTS OFF)
+SELECT * FROM (
+    SELECT 1 AS type,c1 FROM ft1
+    UNION ALL
+    SELECT 2 AS type,c1 FROM ft2
+) a ORDER BY type;
 
 -- ===================================================================
 -- JOIN queries
@@ -583,6 +615,9 @@ SELECT t1c1, avg(t1c1 + t2c1) FROM (SELECT t1.c1, t2.c1 FROM ft1 t1 JOIN ft2 t2 
 EXPLAIN (VERBOSE, COSTS OFF)
 SELECT t1."C 1" FROM "S 1"."T 1" t1, LATERAL (SELECT DISTINCT t2.c1, t3.c1 FROM ft1 t2, ft2 t3 WHERE t2.c1 = t3.c1 AND t2.c2 = t1.c2) q ORDER BY t1."C 1" OFFSET 10 LIMIT 10;
 SELECT t1."C 1" FROM "S 1"."T 1" t1, LATERAL (SELECT DISTINCT t2.c1, t3.c1 FROM ft1 t2, ft2 t3 WHERE t2.c1 = t3.c1 AND t2.c2 = t1.c2) q ORDER BY t1."C 1" OFFSET 10 LIMIT 10;
+-- join with pseudoconstant quals, not pushed down.
+EXPLAIN (VERBOSE, COSTS OFF)
+SELECT t1.c1, t2.c1 FROM ft1 t1 JOIN ft2 t2 ON (t1.c1 = t2.c1 AND CURRENT_USER = SESSION_USER) ORDER BY t1.c3, t1.c1 OFFSET 100 LIMIT 10;
 
 -- non-Var items in targetlist of the nullable rel of a join preventing
 -- push-down in some cases

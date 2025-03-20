@@ -3133,8 +3133,14 @@ advanceConnectionState(TState *thread, CState *st, StatsData *agg)
 						switch (conditional_stack_peek(st->cstack))
 						{
 							case IFSTATE_FALSE:
-								if (command->meta == META_IF ||
-									command->meta == META_ELIF)
+								if (command->meta == META_IF)
+								{
+									/* nested if in skipped branch - ignore */
+									conditional_stack_push(st->cstack,
+														   IFSTATE_IGNORED);
+									st->command++;
+								}
+								else if (command->meta == META_ELIF)
 								{
 									/* we must evaluate the condition */
 									st->state = CSTATE_START_COMMAND;
@@ -3153,11 +3159,7 @@ advanceConnectionState(TState *thread, CState *st, StatsData *agg)
 									conditional_stack_pop(st->cstack);
 									if (conditional_active(st->cstack))
 										st->state = CSTATE_START_COMMAND;
-
-									/*
-									 * else state remains in
-									 * CSTATE_SKIP_COMMAND
-									 */
+									/* else state remains CSTATE_SKIP_COMMAND */
 									st->command++;
 								}
 								break;
@@ -3840,6 +3842,8 @@ initGenerateDataClientSide(PGconn *con)
 	PGresult   *res;
 	int			i;
 	int64		k;
+	int			chars = 0;
+	int			prev_chars = 0;
 
 	/* used to track elapsed time and estimate of the remaining time */
 	instr_time	start,
@@ -3926,10 +3930,20 @@ initGenerateDataClientSide(PGconn *con)
 			elapsed_sec = INSTR_TIME_GET_DOUBLE(diff);
 			remaining_sec = ((double) scale * naccounts - j) * elapsed_sec / j;
 
-			fprintf(stderr, INT64_FORMAT " of " INT64_FORMAT " tuples (%d%%) done (elapsed %.2f s, remaining %.2f s)%c",
-					j, (int64) naccounts * scale,
-					(int) (((int64) j * 100) / (naccounts * (int64) scale)),
-					elapsed_sec, remaining_sec, eol);
+			chars = fprintf(stderr, INT64_FORMAT " of " INT64_FORMAT " tuples (%d%%) done (elapsed %.2f s, remaining %.2f s)",
+							j, (int64) naccounts * scale,
+							(int) (((int64) j * 100) / (naccounts * (int64) scale)),
+							elapsed_sec, remaining_sec);
+
+			/*
+			 * If the previous progress message is longer than the current
+			 * one, add spaces to the current line to fully overwrite any
+			 * remaining characters from the previous message.
+			 */
+			if (prev_chars > chars)
+				fprintf(stderr, "%*c", prev_chars - chars, ' ');
+			fputc(eol, stderr);
+			prev_chars = chars;
 		}
 		/* let's not call the timing for each row, but only each 100 rows */
 		else if (use_quiet && (j % 100 == 0))
@@ -3943,9 +3957,19 @@ initGenerateDataClientSide(PGconn *con)
 			/* have we reached the next interval (or end)? */
 			if ((j == scale * naccounts) || (elapsed_sec >= log_interval * LOG_STEP_SECONDS))
 			{
-				fprintf(stderr, INT64_FORMAT " of " INT64_FORMAT " tuples (%d%%) done (elapsed %.2f s, remaining %.2f s)%c",
-						j, (int64) naccounts * scale,
-						(int) (((int64) j * 100) / (naccounts * (int64) scale)), elapsed_sec, remaining_sec, eol);
+				chars = fprintf(stderr, INT64_FORMAT " of " INT64_FORMAT " tuples (%d%%) done (elapsed %.2f s, remaining %.2f s)",
+								j, (int64) naccounts * scale,
+								(int) (((int64) j * 100) / (naccounts * (int64) scale)), elapsed_sec, remaining_sec);
+
+				/*
+				 * If the previous progress message is longer than the current
+				 * one, add spaces to the current line to fully overwrite any
+				 * remaining characters from the previous message.
+				 */
+				if (prev_chars > chars)
+					fprintf(stderr, "%*c", prev_chars - chars, ' ');
+				fputc(eol, stderr);
+				prev_chars = chars;
 
 				/* skip to the next interval */
 				log_interval = (int) ceil(elapsed_sec / LOG_STEP_SECONDS);
@@ -6710,15 +6734,22 @@ clear_socket_set(socket_set *sa)
 static void
 add_socket_to_set(socket_set *sa, int fd, int idx)
 {
-	if (fd < 0 || fd >= FD_SETSIZE)
+	/* See connect_slot() for background on this code. */
+#ifdef WIN32
+	if (sa->fds.fd_count + 1 >= FD_SETSIZE)
 	{
-		/*
-		 * Doing a hard exit here is a bit grotty, but it doesn't seem worth
-		 * complicating the API to make it less grotty.
-		 */
-		pg_log_fatal("too many client connections for select()");
+		pg_log_fatal("too many concurrent database clients for this platform: %d",
+					 sa->fds.fd_count + 1);
 		exit(1);
 	}
+#else
+	if (fd < 0 || fd >= FD_SETSIZE)
+	{
+		pg_log_fatal("socket file descriptor out of range for select(): %d",
+					 fd);
+		exit(1);
+	}
+#endif
 	FD_SET(fd, &sa->fds);
 	if (fd > sa->maxfd)
 		sa->maxfd = fd;

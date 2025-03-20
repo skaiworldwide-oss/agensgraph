@@ -99,6 +99,32 @@ int
 pgunlink(const char *path)
 {
 	int			loops = 0;
+	struct stat st;
+
+	/*
+	 * This function might be called for a regular file or for a junction
+	 * point (which we use to emulate symlinks).  The latter must be unlinked
+	 * with rmdir() on Windows.  Before we worry about any of that, let's see
+	 * if we can unlink directly, since that's expected to be the most common
+	 * case.
+	 */
+	if (unlink(path) == 0)
+		return 0;
+	if (errno != EACCES)
+		return -1;
+
+	/*
+	 * EACCES is reported for many reasons including unlink() of a junction
+	 * point.  Check if that's the case so we can redirect to rmdir().
+	 *
+	 * Note that by checking only once, we can't cope with a path that changes
+	 * from regular file to junction point underneath us while we're retrying
+	 * due to sharing violations, but that seems unlikely.  We could perhaps
+	 * prevent that by holding a file handle ourselves across the lstat() and
+	 * the retry loop, but that seems like over-engineering for now.
+	 */
+	if (lstat(path, &st) < 0)
+		return -1;
 
 	/*
 	 * We need to loop because even though PostgreSQL uses flags that allow
@@ -107,7 +133,7 @@ pgunlink(const char *path)
 	 * someone else to close the file, as the caller might be holding locks
 	 * and blocking other backends.
 	 */
-	while (unlink(path))
+	while ((S_ISLNK(st.st_mode) ? rmdir(path) : unlink(path)) < 0)
 	{
 		if (errno != EACCES)
 			return -1;
@@ -325,10 +351,21 @@ pgreadlink(const char *path, char *buf, size_t size)
 	}
 
 	/*
-	 * If the path starts with "\??\", which it will do in most (all?) cases,
-	 * strip those out.
+	 * If the path starts with "\??\" followed by a "drive absolute" path
+	 * (known to Windows APIs as RtlPathTypeDriveAbsolute), then strip that
+	 * prefix.  This undoes some of the transformation performed by
+	 * pqsymlink(), to get back to a format that users are used to seeing.  We
+	 * don't know how to transform other path types that might be encountered
+	 * outside PGDATA, so we just return them directly.
 	 */
-	if (r > 4 && strncmp(buf, "\\??\\", 4) == 0)
+	if (r >= 7 &&
+		buf[0] == '\\' &&
+		buf[1] == '?' &&
+		buf[2] == '?' &&
+		buf[3] == '\\' &&
+		isalpha(buf[4]) &&
+		buf[5] == ':' &&
+		buf[6] == '\\')
 	{
 		memmove(buf, buf + 4, strlen(buf + 4) + 1);
 		r -= 4;
@@ -353,55 +390,3 @@ pgwin32_is_junction(const char *path)
 	return ((attr & FILE_ATTRIBUTE_REPARSE_POINT) == FILE_ATTRIBUTE_REPARSE_POINT);
 }
 #endif							/* defined(WIN32) && !defined(__CYGWIN__) */
-
-
-#if defined(WIN32) && !defined(__CYGWIN__)
-
-#undef stat
-
-/*
- * The stat() function in win32 is not guaranteed to update the st_size
- * field when run. So we define our own version that uses the Win32 API
- * to update this field.
- */
-int
-pgwin32_safestat(const char *path, struct stat *buf)
-{
-	int			r;
-	WIN32_FILE_ATTRIBUTE_DATA attr;
-
-	r = stat(path, buf);
-	if (r < 0)
-	{
-		if (GetLastError() == ERROR_DELETE_PENDING)
-		{
-			/*
-			 * File has been deleted, but is not gone from the filesystem yet.
-			 * This can happen when some process with FILE_SHARE_DELETE has it
-			 * open and it will be fully removed once that handle is closed.
-			 * Meanwhile, we can't open it, so indicate that the file just
-			 * doesn't exist.
-			 */
-			errno = ENOENT;
-			return -1;
-		}
-
-		return r;
-	}
-
-	if (!GetFileAttributesEx(path, GetFileExInfoStandard, &attr))
-	{
-		_dosmaperr(GetLastError());
-		return -1;
-	}
-
-	/*
-	 * XXX no support for large files here, but we don't do that in general on
-	 * Win32 yet.
-	 */
-	buf->st_size = attr.nFileSizeLow;
-
-	return 0;
-}
-
-#endif

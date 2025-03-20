@@ -31,6 +31,7 @@
 #include "access/tableam.h"
 #include "access/transam.h"
 #include "access/xact.h"
+#include "catalog/indexing.h"
 #include "catalog/namespace.h"
 #include "catalog/pg_database.h"
 #include "catalog/pg_inherits.h"
@@ -1212,14 +1213,21 @@ vac_update_relstats(Relation relation,
 {
 	Oid			relid = RelationGetRelid(relation);
 	Relation	rd;
+	ScanKeyData key[1];
 	HeapTuple	ctup;
+	void	   *inplace_state;
 	Form_pg_class pgcform;
 	bool		dirty;
 
 	rd = table_open(RelationRelationId, RowExclusiveLock);
 
 	/* Fetch a copy of the tuple to scribble on */
-	ctup = SearchSysCacheCopy1(RELOID, ObjectIdGetDatum(relid));
+	ScanKeyInit(&key[0],
+				Anum_pg_class_oid,
+				BTEqualStrategyNumber, F_OIDEQ,
+				ObjectIdGetDatum(relid));
+	systable_inplace_update_begin(rd, ClassOidIndexId, true,
+								  NULL, 1, key, &ctup, &inplace_state);
 	if (!HeapTupleIsValid(ctup))
 		elog(ERROR, "pg_class entry for relid %u vanished during vacuuming",
 			 relid);
@@ -1305,7 +1313,9 @@ vac_update_relstats(Relation relation,
 
 	/* If anything changed, write out the tuple. */
 	if (dirty)
-		heap_inplace_update(rd, ctup);
+		systable_inplace_update_finish(inplace_state, ctup);
+	else
+		systable_inplace_update_cancel(inplace_state);
 
 	table_close(rd, RowExclusiveLock);
 }
@@ -1343,6 +1353,8 @@ vac_update_datfrozenxid(void)
 	MultiXactId lastSaneMinMulti;
 	bool		bogus = false;
 	bool		dirty = false;
+	ScanKeyData key[1];
+	void	   *inplace_state;
 
 	/*
 	 * Restrict this task to one backend per database.  This avoids race
@@ -1377,6 +1389,8 @@ vac_update_datfrozenxid(void)
 	/*
 	 * We must seqscan pg_class to find the minimum Xid, because there is no
 	 * index that can help us here.
+	 *
+	 * See vac_truncate_clog() for the race condition to prevent.
 	 */
 	relation = table_open(RelationRelationId, AccessShareLock);
 
@@ -1385,7 +1399,9 @@ vac_update_datfrozenxid(void)
 
 	while ((classTup = systable_getnext(scan)) != NULL)
 	{
-		Form_pg_class classForm = (Form_pg_class) GETSTRUCT(classTup);
+		volatile FormData_pg_class *classForm = (Form_pg_class) GETSTRUCT(classTup);
+		TransactionId relfrozenxid = classForm->relfrozenxid;
+		TransactionId relminmxid = classForm->relminmxid;
 
 		/*
 		 * Only consider relations able to hold unfrozen XIDs (anything else
@@ -1395,8 +1411,8 @@ vac_update_datfrozenxid(void)
 			classForm->relkind != RELKIND_MATVIEW &&
 			classForm->relkind != RELKIND_TOASTVALUE)
 		{
-			Assert(!TransactionIdIsValid(classForm->relfrozenxid));
-			Assert(!MultiXactIdIsValid(classForm->relminmxid));
+			Assert(!TransactionIdIsValid(relfrozenxid));
+			Assert(!MultiXactIdIsValid(relminmxid));
 			continue;
 		}
 
@@ -1415,34 +1431,34 @@ vac_update_datfrozenxid(void)
 		 * before those relations have been scanned and cleaned up.
 		 */
 
-		if (TransactionIdIsValid(classForm->relfrozenxid))
+		if (TransactionIdIsValid(relfrozenxid))
 		{
-			Assert(TransactionIdIsNormal(classForm->relfrozenxid));
+			Assert(TransactionIdIsNormal(relfrozenxid));
 
 			/* check for values in the future */
-			if (TransactionIdPrecedes(lastSaneFrozenXid, classForm->relfrozenxid))
+			if (TransactionIdPrecedes(lastSaneFrozenXid, relfrozenxid))
 			{
 				bogus = true;
 				break;
 			}
 
 			/* determine new horizon */
-			if (TransactionIdPrecedes(classForm->relfrozenxid, newFrozenXid))
-				newFrozenXid = classForm->relfrozenxid;
+			if (TransactionIdPrecedes(relfrozenxid, newFrozenXid))
+				newFrozenXid = relfrozenxid;
 		}
 
-		if (MultiXactIdIsValid(classForm->relminmxid))
+		if (MultiXactIdIsValid(relminmxid))
 		{
 			/* check for values in the future */
-			if (MultiXactIdPrecedes(lastSaneMinMulti, classForm->relminmxid))
+			if (MultiXactIdPrecedes(lastSaneMinMulti, relminmxid))
 			{
 				bogus = true;
 				break;
 			}
 
 			/* determine new horizon */
-			if (MultiXactIdPrecedes(classForm->relminmxid, newMinMulti))
-				newMinMulti = classForm->relminmxid;
+			if (MultiXactIdPrecedes(relminmxid, newMinMulti))
+				newMinMulti = relminmxid;
 		}
 	}
 
@@ -1460,10 +1476,23 @@ vac_update_datfrozenxid(void)
 	/* Now fetch the pg_database tuple we need to update. */
 	relation = table_open(DatabaseRelationId, RowExclusiveLock);
 
-	/* Fetch a copy of the tuple to scribble on */
-	tuple = SearchSysCacheCopy1(DATABASEOID, ObjectIdGetDatum(MyDatabaseId));
+	/*
+	 * Fetch a copy of the tuple to scribble on.  We could check the syscache
+	 * tuple first.  If that concluded !dirty, we'd avoid waiting on
+	 * concurrent heap_update() and would avoid exclusive-locking the buffer.
+	 * For now, don't optimize that.
+	 */
+	ScanKeyInit(&key[0],
+				Anum_pg_database_oid,
+				BTEqualStrategyNumber, F_OIDEQ,
+				ObjectIdGetDatum(MyDatabaseId));
+
+	systable_inplace_update_begin(relation, DatabaseOidIndexId, true,
+								  NULL, 1, key, &tuple, &inplace_state);
+
 	if (!HeapTupleIsValid(tuple))
 		elog(ERROR, "could not find tuple for database %u", MyDatabaseId);
+
 	dbform = (Form_pg_database) GETSTRUCT(tuple);
 
 	/*
@@ -1493,7 +1522,9 @@ vac_update_datfrozenxid(void)
 		newMinMulti = dbform->datminmxid;
 
 	if (dirty)
-		heap_inplace_update(relation, tuple);
+		systable_inplace_update_finish(inplace_state, tuple);
+	else
+		systable_inplace_update_cancel(inplace_state);
 
 	heap_freetuple(tuple);
 	table_close(relation, RowExclusiveLock);
@@ -1580,6 +1611,20 @@ vac_truncate_clog(TransactionId frozenXID,
 		Assert(MultiXactIdIsValid(datminmxid));
 
 		/*
+		 * If database is in the process of getting dropped, or has been
+		 * interrupted while doing so, no connections to it are possible
+		 * anymore. Therefore we don't need to take it into account here.
+		 * Which is good, because it can't be processed by autovacuum either.
+		 */
+		if (database_is_invalid_form((Form_pg_database) dbform))
+		{
+			elog(DEBUG2,
+				 "skipping invalid database \"%s\" while computing relfrozenxid",
+				 NameStr(dbform->datname));
+			continue;
+		}
+
+		/*
 		 * If things are working properly, no database should have a
 		 * datfrozenxid or datminmxid that is "in the future".  However, such
 		 * cases have been known to arise due to bugs in pg_upgrade.  If we
@@ -1622,12 +1667,16 @@ vac_truncate_clog(TransactionId frozenXID,
 		ereport(WARNING,
 				(errmsg("some databases have not been vacuumed in over 2 billion transactions"),
 				 errdetail("You might have already suffered transaction-wraparound data loss.")));
+		LWLockRelease(WrapLimitsVacuumLock);
 		return;
 	}
 
 	/* chicken out if data is bogus in any other way */
 	if (bogus)
+	{
+		LWLockRelease(WrapLimitsVacuumLock);
 		return;
+	}
 
 	/*
 	 * Advance the oldest value for commit timestamps before truncating, so
