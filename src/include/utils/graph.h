@@ -147,6 +147,8 @@ extern Datum graphpath_edges(PG_FUNCTION_ARGS);
 extern Datum edge_start_vertex(PG_FUNCTION_ARGS);
 extern Datum edge_end_vertex(PG_FUNCTION_ARGS);
 extern Datum vertex_labels(PG_FUNCTION_ARGS);
+extern Datum edge_start_vid(PG_FUNCTION_ARGS);
+extern Datum edge_end_vid(PG_FUNCTION_ARGS);
 
 /* support functions */
 extern Datum getVertexIdDatum(Datum datum);

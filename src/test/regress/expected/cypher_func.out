@@ -818,3 +818,28 @@ NOTICE:  drop cascades to 3 other objects
 DETAIL:  drop cascades to sequence func_exist_graph.ag_label_seq
 drop cascades to vlabel ag_vertex
 drop cascades to elabel ag_edge
+--
+-- Testing start_id(), end_id() functions for edges
+--
+-- Creating sample graph
+CREATE GRAPH edge_test_graph;
+SET graph_path = edge_test_graph;
+CREATE (keanu:Person {name: 'Keanu Reeves', age: 58}),
+  (speed:Movie {title: 'Speed'}),
+  (keanu)-[:ACTED_IN]->(speed);
+-- Testing the start_id(), end_id() function
+MATCH (n1)-[e1]->(n2) return id(n1),id(e1),id(n2),start_id(e1),end_id(e1);
+ id  | id  | id  | start_id | end_id 
+-----+-----+-----+----------+--------
+ 3.1 | 5.1 | 4.1 | 3.1      | 4.1
+(1 row)
+
+-- Clean up
+DROP GRAPH edge_test_graph CASCADE;
+NOTICE:  drop cascades to 6 other objects
+DETAIL:  drop cascades to sequence edge_test_graph.ag_label_seq
+drop cascades to vlabel ag_vertex
+drop cascades to elabel ag_edge
+drop cascades to vlabel person
+drop cascades to vlabel movie
+drop cascades to elabel acted_in
