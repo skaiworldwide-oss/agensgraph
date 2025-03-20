@@ -165,8 +165,7 @@ static bool get_create_object_cmd(EditableObjectType obj_type, Oid oid,
 								  PQExpBuffer buf);
 static int	strip_lineno_from_objdesc(char *obj);
 static int	count_lines_in_buf(PQExpBuffer buf);
-static void print_with_linenumbers(FILE *output, char *lines,
-								   const char *header_keyword);
+static void print_with_linenumbers(FILE *output, char *lines, bool is_func);
 static void minimal_error_message(PGresult *res);
 
 static void printSSLInfo(void);
@@ -1078,7 +1077,7 @@ exec_command_edit(PsqlScanState scan_state, bool active_branch,
 				expand_tilde(&fname);
 				if (fname)
 				{
-					canonicalize_path(fname);
+					canonicalize_path_enc(fname, pset.encoding);
 					/* Always clear buffer if the file isn't modified */
 					discard_on_quit = true;
 				}
@@ -1190,17 +1189,19 @@ exec_command_ef_ev(PsqlScanState scan_state, bool active_branch,
 				/*
 				 * lineno "1" should correspond to the first line of the
 				 * function body.  We expect that pg_get_functiondef() will
-				 * emit that on a line beginning with "AS ", and that there
-				 * can be no such line before the real start of the function
-				 * body.  Increment lineno by the number of lines before that
-				 * line, so that it becomes relative to the first line of the
-				 * function definition.
+				 * emit that on a line beginning with "AS ", "BEGIN ", or
+				 * "RETURN ", and that there can be no such line before the
+				 * real start of the function body.  Increment lineno by the
+				 * number of lines before that line, so that it becomes
+				 * relative to the first line of the function definition.
 				 */
 				const char *lines = query_buf->data;
 
 				while (*lines != '\0')
 				{
-					if (strncmp(lines, "AS ", 3) == 0)
+					if (strncmp(lines, "AS ", 3) == 0 ||
+						strncmp(lines, "BEGIN ", 6) == 0 ||
+						strncmp(lines, "RETURN ", 7) == 0)
 						break;
 					lineno++;
 					/* find start of next line */
@@ -1304,6 +1305,7 @@ exec_command_encoding(PsqlScanState scan_state, bool active_branch)
 				/* save encoding info into psql internal data */
 				pset.encoding = PQclientEncoding(pset.db);
 				pset.popt.topt.encoding = pset.encoding;
+				setFmtEncoding(pset.encoding);
 				SetVariable(pset.vars, "ENCODING",
 							pg_encoding_to_char(pset.encoding));
 			}
@@ -2477,15 +2479,8 @@ exec_command_sf_sv(PsqlScanState scan_state, bool active_branch,
 
 			if (show_linenumbers)
 			{
-				/*
-				 * For functions, lineno "1" should correspond to the first
-				 * line of the function body.  We expect that
-				 * pg_get_functiondef() will emit that on a line beginning
-				 * with "AS ", and that there can be no such line before the
-				 * real start of the function body.
-				 */
-				print_with_linenumbers(output, buf->data,
-									   is_func ? "AS " : NULL);
+				/* add line numbers */
+				print_with_linenumbers(output, buf->data, is_func);
 			}
 			else
 			{
@@ -2653,7 +2648,7 @@ exec_command_write(PsqlScanState scan_state, bool active_branch,
 				}
 				else
 				{
-					canonicalize_path(fname);
+					canonicalize_path_enc(fname, pset.encoding);
 					fd = fopen(fname, "w");
 				}
 				if (!fd)
@@ -3700,6 +3695,8 @@ SyncVariables(void)
 	pset.popt.topt.encoding = pset.encoding;
 	pset.sversion = PQserverVersion(pset.db);
 
+	setFmtEncoding(pset.encoding);
+
 	SetVariable(pset.vars, "DBNAME", PQdb(pset.db));
 	SetVariable(pset.vars, "USER", PQuser(pset.db));
 	SetVariable(pset.vars, "HOST", PQhost(pset.db));
@@ -4041,7 +4038,7 @@ process_file(char *filename, bool use_relative_path)
 	}
 	else if (strcmp(filename, "-") != 0)
 	{
-		canonicalize_path(filename);
+		canonicalize_path_enc(filename, pset.encoding);
 
 		/*
 		 * If we were asked to resolve the pathname relative to the location
@@ -4055,7 +4052,7 @@ process_file(char *filename, bool use_relative_path)
 			strlcpy(relpath, pset.inputfile, sizeof(relpath));
 			get_parent_directory(relpath);
 			join_path_components(relpath, relpath, filename);
-			canonicalize_path(relpath);
+			canonicalize_path_enc(relpath, pset.encoding);
 
 			filename = relpath;
 		}
@@ -5378,24 +5375,28 @@ count_lines_in_buf(PQExpBuffer buf)
 /*
  * Write text at *lines to output with line numbers.
  *
- * If header_keyword isn't NULL, then line 1 should be the first line beginning
- * with header_keyword; lines before that are unnumbered.
+ * For functions, lineno "1" should correspond to the first line of the
+ * function body; lines before that are unnumbered.  We expect that
+ * pg_get_functiondef() will emit that on a line beginning with "AS ",
+ * "BEGIN ", or "RETURN ", and that there can be no such line before
+ * the real start of the function body.
  *
  * Caution: this scribbles on *lines.
  */
 static void
-print_with_linenumbers(FILE *output, char *lines,
-					   const char *header_keyword)
+print_with_linenumbers(FILE *output, char *lines, bool is_func)
 {
-	bool		in_header = (header_keyword != NULL);
-	size_t		header_sz = in_header ? strlen(header_keyword) : 0;
+	bool		in_header = is_func;
 	int			lineno = 0;
 
 	while (*lines != '\0')
 	{
 		char	   *eol;
 
-		if (in_header && strncmp(lines, header_keyword, header_sz) == 0)
+		if (in_header &&
+			(strncmp(lines, "AS ", 3) == 0 ||
+			 strncmp(lines, "BEGIN ", 6) == 0 ||
+			 strncmp(lines, "RETURN ", 7) == 0))
 			in_header = false;
 
 		/* increment lineno only for body's lines */

@@ -74,9 +74,6 @@ pgxml_parser_init(PgXmlStrictness strictness)
 	/* Initialize libxml */
 	xmlInitParser();
 
-	xmlSubstituteEntitiesDefault(1);
-	xmlLoadExtDtdDefaultValue = 1;
-
 	return xmlerrcxt;
 }
 
@@ -105,7 +102,8 @@ xml_is_well_formed(PG_FUNCTION_ARGS)
 
 	PG_TRY();
 	{
-		doctree = xmlParseMemory((char *) VARDATA_ANY(t), docsize);
+		doctree = xmlReadMemory((char *) VARDATA_ANY(t), docsize,
+								NULL, NULL, XML_PARSE_NOENT);
 
 		result = (doctree != NULL);
 
@@ -425,15 +423,16 @@ pgxml_xpath(text *document, xmlChar *xpath, xpath_workspace *workspace)
 
 	PG_TRY();
 	{
-		workspace->doctree = xmlParseMemory((char *) VARDATA_ANY(document),
-											docsize);
+		workspace->doctree = xmlReadMemory((char *) VARDATA_ANY(document),
+										   docsize, NULL, NULL,
+										   XML_PARSE_NOENT);
 		if (workspace->doctree != NULL)
 		{
 			workspace->ctxt = xmlXPathNewContext(workspace->doctree);
 			workspace->ctxt->node = xmlDocGetRootElement(workspace->doctree);
 
 			/* compile the path */
-			comppath = xmlXPathCompile(xpath);
+			comppath = xmlXPathCtxtCompile(workspace->ctxt, xpath);
 			if (comppath == NULL)
 				xml_ereport(xmlerrcxt, ERROR, ERRCODE_EXTERNAL_ROUTINE_EXCEPTION,
 							"XPath Syntax Error");
@@ -719,7 +718,9 @@ xpath_table(PG_FUNCTION_ARGS)
 
 			/* Parse the document */
 			if (xmldoc)
-				doctree = xmlParseMemory(xmldoc, strlen(xmldoc));
+				doctree = xmlReadMemory(xmldoc, strlen(xmldoc),
+										NULL, NULL,
+										XML_PARSE_NOENT);
 			else				/* treat NULL as not well-formed */
 				doctree = NULL;
 
@@ -745,7 +746,7 @@ xpath_table(PG_FUNCTION_ARGS)
 						ctxt->node = xmlDocGetRootElement(doctree);
 
 						/* compile the path */
-						comppath = xmlXPathCompile(xpaths[j]);
+						comppath = xmlXPathCtxtCompile(ctxt, xpaths[j]);
 						if (comppath == NULL)
 							xml_ereport(xmlerrcxt, ERROR,
 										ERRCODE_EXTERNAL_ROUTINE_EXCEPTION,

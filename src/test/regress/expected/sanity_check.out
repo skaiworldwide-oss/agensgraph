@@ -102,6 +102,8 @@ nummultirange_test|t
 numrange_test|t
 onek|t
 onek2|t
+past_inh_parent|f
+past_parted|f
 path_tbl|f
 person|f
 persons|f
@@ -179,6 +181,8 @@ quad_poly_tbl|t
 radix_text_tbl|t
 ramp|f
 real_city|f
+regress_constr_partition1|t
+regress_constr_partitioned|t
 reservations|f
 road|t
 shighway|t

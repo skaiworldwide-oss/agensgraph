@@ -54,7 +54,7 @@
 #endif
 
 
-#define MAX_TOKEN	256
+#define MAX_TOKEN	10240
 
 /* callback data for check_network_callback */
 typedef struct check_network_data
@@ -2331,12 +2331,12 @@ load_hba(void)
 /*
  * This macro specifies the maximum number of authentication options
  * that are possible with any given authentication method that is supported.
- * Currently LDAP supports 11, and there are 3 that are not dependent on
+ * Currently LDAP supports 12, and there are 3 that are not dependent on
  * the auth method here.  It may not actually be possible to set all of them
  * at the same time, but we'll set the macro value high enough to be
  * conservative and avoid warnings from static analysis tools.
  */
-#define MAX_HBA_OPTIONS 14
+#define MAX_HBA_OPTIONS 15
 
 /*
  * Create a text array listing the options specified in the HBA line.
@@ -2382,6 +2382,10 @@ gethba_options(HbaLine *hba)
 		if (hba->ldapport)
 			options[noptions++] =
 				CStringGetTextDatum(psprintf("ldapport=%d", hba->ldapport));
+
+		if (hba->ldapscheme)
+			options[noptions++] =
+				CStringGetTextDatum(psprintf("ldapscheme=%s", hba->ldapscheme));
 
 		if (hba->ldaptls)
 			options[noptions++] =
