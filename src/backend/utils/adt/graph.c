@@ -1074,7 +1074,7 @@ edge_start_vid(PG_FUNCTION_ARGS)
 	HeapTupleHeader edge = PG_GETARG_HEAPTUPLEHEADER(0);
 	Graphid		vertex_id = DatumGetGraphid(tuple_getattr(edge,
 														  Anum_ag_edge_start));
-	PG_RETURN_GRAPHID((vertex_id));
+	PG_RETURN_GRAPHID(vertex_id);
 }
 
 Datum
@@ -1083,7 +1083,7 @@ edge_end_vid(PG_FUNCTION_ARGS)
 	HeapTupleHeader edge = PG_GETARG_HEAPTUPLEHEADER(0);
 	Graphid		vertex_id = DatumGetGraphid(tuple_getattr(edge,
 														  Anum_ag_edge_end));
-	PG_RETURN_GRAPHID((vertex_id));
+	PG_RETURN_GRAPHID(vertex_id);
 }
 
 static LabelsOutData *
