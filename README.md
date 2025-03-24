@@ -1,20 +1,20 @@
 # AgensGraph: Powerful Multi-Model Graph Database
-![Build Status](https://github.com/bitnine-oss/agensgraph/actions/workflows/regression.yml/badge.svg)
+![Build Status](https://github.com/skaiworldwide-oss/agensgraph/actions/workflows/regression.yml/badge.svg)
 &nbsp;
-<a href="https://github.com/bitnine-oss/agensgraph/releases">
-<img src="https://img.shields.io/badge/Release-v2.14.1-FFA500?labelColor=gray&style=flat&link=https://github.com/bitnine-oss/agensgraph/releases"/>
+<a href="https://github.com/skaiworldwide-oss/agensgraph/releases">
+<img src="https://img.shields.io/badge/Release-v2.14.1-FFA500?labelColor=gray&style=flat&link=https://github.com/skaiworldwide-oss/agensgraph/releases"/>
 </a>
 &nbsp;
-<a href="https://github.com/bitnine-oss/agensgraph/issues">
-  <img src="https://img.shields.io/github/issues/bitnine-oss/agensgraph"/>
+<a href="https://github.com/skaiworldwide-oss/agensgraph/issues">
+  <img src="https://img.shields.io/github/issues/skaiworldwide-oss/agensgraph"/>
 </a>
 &nbsp;
-<a href="https://github.com/bitnine-oss/agensgraph/network/members">
- <img src="https://img.shields.io/github/forks/bitnine-oss/agensgraph"/>
+<a href="https://github.com/skaiworldwide-oss/agensgraph/network/members">
+ <img src="https://img.shields.io/github/forks/skaiworldwide-oss/agensgraph"/>
 </a>
 &nbsp;
-<a href="https://github.com/bitnine-oss/agensgraph/stargazers">
- <img src="https://img.shields.io/github/stars/bitnine-oss/agensgraph"/>
+<a href="https://github.com/skaiworldwide-oss/agensgraph/stargazers">
+ <img src="https://img.shields.io/github/stars/skaiworldwide-oss/agensgraph"/>
 </a>
 <br>
 
@@ -31,7 +31,7 @@ AgensGraph is a cutting-edge multi-model graph database designed for modern comp
 Follow these steps to build AgensGraph from the source code:
 1. **Clone the Repository**
     ```sh
-    git clone https://github.com/bitnine-oss/agensgraph.git
+    git clone https://github.com/skaiworldwide-oss/agensgraph.git
     ```
 
 2. **Install Dependencies**
@@ -93,10 +93,10 @@ Follow these steps to build AgensGraph from the source code:
 AgensGraph supports various drivers for seamless connection and interaction with the database. Below are the supported drivers:
 | Driver      | Description                                                                                       |
 |-------------|---------------------------------------------------------------------------------------------------|
-| **JDBC**    | [JDBC Driver](https://github.com/bitnine-oss/agensgraph-jdbc) <br> Enables Java applications to interact with AgensGraph. |
-| **Python**  | [Python Driver](https://github.com/bitnine-oss/agensgraph-python) <br> Facilitates interaction between Python applications and AgensGraph. |
-| **Node.js** | [Node.js Driver](https://github.com/bitnine-oss/agensgraph-nodejs) <br> Allows Node.js applications to interface with AgensGraph. |
-| **Go**      | [Go Driver](https://github.com/bitnine-oss/agensgraph-golang) <br> Provides connectivity for Go applications to AgensGraph. |
+| **JDBC**    | [JDBC Driver](https://github.com/skaiworldwide-oss/agensgraph-jdbc) <br> Enables Java applications to interact with AgensGraph. |
+| **Python**  | [Python Driver](https://github.com/skaiworldwide-oss/agensgraph-python) <br> Facilitates interaction between Python applications and AgensGraph. |
+| **Node.js** | [Node.js Driver](https://github.com/skaiworldwide-oss/agensgraph-nodejs) <br> Allows Node.js applications to interface with AgensGraph. |
+| **Go**      | [Go Driver](https://github.com/skaiworldwide-oss/agensgraph-golang) <br> Provides connectivity for Go applications to AgensGraph. |
 
 
 ## Documentation
@@ -110,9 +110,9 @@ AgensGraphViewer is a web-based user interface that provides visualization of gr
 - **Graph Visualization**: Provides interactive visualization tools for graph data.
 - **User-Friendly**: Intuitive interface designed for ease of use.
 - **Real-Time Interaction**: Allows for real-time data updates and interaction with graph data.
-<img src="https://github.com/bitnine-oss/agensgraph/blob/v2.15/images/g_result_1.png" alt="AgensGraphViewer Screenshot" width="400" />
+<img src="https://github.com/skaiworldwide-oss/agensgraph/blob/v2.15/images/g_result_1.png" alt="AgensGraphViewer Screenshot" width="400" />
 
-For more information and to get started with AgensGraphViewer, visit the [AgensGraphViewer GitHub repository](https://github.com/bitnine-oss/AgensGraphViewer).
+For more information and to get started with AgensGraphViewer, visit the [AgensGraphViewer GitHub repository](https://github.com/skaiworldwide-oss/AgensGraphViewer).
 
 ## License
 - [Apache License 2.0](http://www.apache.org/licenses/LICENSE-2.0)
