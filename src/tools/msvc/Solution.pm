@@ -488,7 +488,7 @@ sub GenerateFiles
 		PG_VERSION          => qq{"$package_version$extraver"},
 		PG_VERSION_NUM      => sprintf("%d%04d", $majorver, $minorver),
 		PG_VERSION_STR =>
-		  qq{"PostgreSQL $package_version$extraver, compiled by Visual C++ build " CppAsString2(_MSC_VER) ", $bits-bit"},
+		  qq{"PostgreSQL $package_version$extraver (AgensGraph $ag_version), compiled by Visual C++ build " CppAsString2(_MSC_VER) ", $bits-bit"},
 		PROFILE_PID_DIR         => undef,
 		PTHREAD_CREATE_JOINABLE => undef,
 		RELSEG_SIZE             => (1024 / $self->{options}->{blocksize}) *
