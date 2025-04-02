@@ -1143,6 +1143,10 @@ static const SchemaQuery Query_for_trigger_of_table = {
 "  FROM pg_catalog.pg_timezone_names() "\
 " WHERE pg_catalog.quote_literal(pg_catalog.lower(name)) LIKE pg_catalog.lower('%s')"
 
+#define Query_for_list_of_graphs \
+"SELECT graphname FROM pg_catalog.ag_graph "\
+" WHERE graphname LIKE '%s'"
+
 /*
  * These object types were introduced later than our support cutoff of
  * server version 9.2.  We use the VersionedQuery infrastructure so that
@@ -1218,6 +1222,9 @@ static const pgsql_thing_t words_after_create[] = {
 	{"FOREIGN DATA WRAPPER", NULL, NULL, NULL},
 	{"FOREIGN TABLE", NULL, NULL, NULL},
 	{"FUNCTION", NULL, NULL, Query_for_list_of_functions},
+	{"GRAPH", Query_for_list_of_graphs},
+	{"VLABEL", NULL, NULL, NULL},
+	{"ELABEL", NULL, NULL, NULL},
 	{"GROUP", Query_for_list_of_roles},
 	{"INDEX", NULL, NULL, &Query_for_list_of_indexes},
 	{"LANGUAGE", Query_for_list_of_languages},
@@ -1685,7 +1692,7 @@ psql_completion(const char *text, int start, int end)
 		"\\d", "\\da", "\\dA", "\\dAc", "\\dAf", "\\dAo", "\\dAp",
 		"\\db", "\\dc", "\\dconfig", "\\dC", "\\dd", "\\ddp", "\\dD",
 		"\\des", "\\det", "\\deu", "\\dew", "\\dE", "\\df",
-		"\\dF", "\\dFd", "\\dFp", "\\dFt", "\\dg", "\\di", "\\dl", "\\dL",
+		"\\dF", "\\dFd", "\\dFp", "\\dFt", "\\dg", "\\dG", "\\dGe", "\\dGi", "\\dGv", "\\di", "\\dl", "\\dL",
 		"\\dm", "\\dn", "\\do", "\\dO", "\\dp", "\\dP", "\\dPi", "\\dPt",
 		"\\drds", "\\dRs", "\\dRp", "\\ds",
 		"\\dt", "\\dT", "\\dv", "\\du", "\\dx", "\\dX", "\\dy",
@@ -3506,6 +3513,7 @@ psql_completion(const char *text, int start, int end)
 			 Matches("DROP", "EVENT", "TRIGGER", MatchAny) ||
 			 Matches("DROP", "FOREIGN", "DATA", "WRAPPER", MatchAny) ||
 			 Matches("DROP", "FOREIGN", "TABLE", MatchAny) ||
+			 Matches("DROP", "GRAPH|VLABEL|ELABEL", MatchAny) ||
 			 Matches("DROP", "TEXT", "SEARCH", "CONFIGURATION|DICTIONARY|PARSER|TEMPLATE", MatchAny))
 		COMPLETE_WITH("CASCADE", "RESTRICT");
 
