@@ -286,6 +286,48 @@ MATCH (t:Person) CALL () { RETURN 1 AS t } RETURN t;
 MATCH (p:Person {name: 'Andy'}), (q:Person {name: 'Peter'})
 CALL (p) { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name AS q } RETURN q;
 
+-- 1.7 the body may not bind one name twice ------------------------------------
+
+-- The names the body returns become bindings in the enclosing query, so each
+-- has to resolve to exactly one column.  Two columns under one name bind a
+-- later reference to the last one by position -- silently, and to the other
+-- one if the body is written in the other order.  WITH and CALL ... YIELD
+-- reject the same state; so does the SQL entry point ("column reference is
+-- ambiguous").
+
+-- the body binds one name twice
+MATCH (p:Person) CALL () { RETURN 1 AS x, 2 AS x } RETURN x;
+-- the two values need not share a type: without the check "x" would be a
+-- string here and a number with the two items written the other way round
+MATCH (p:Person) CALL () { RETURN 1 AS x, 'str' AS x } RETURN x;
+MATCH (p:Person) CALL () { RETURN 'str' AS x, 1 AS x } RETURN x;
+-- the duplicate need not be adjacent, and a third one is still one error
+MATCH (p:Person) CALL () { RETURN 1 AS x, 2 AS y, 3 AS x } RETURN x;
+MATCH (p:Person) CALL () { RETURN 1 AS x, 2 AS x, 3 AS x } RETURN x;
+-- a correlated body, where the two values differ per input row
+MATCH (p:Person) CALL (p) { RETURN p.name AS x, p.age AS x } RETURN x;
+-- an unaliased expression is labelled "?column?", and that label is reachable
+-- as a quoted identifier, so two of them are a duplicate like any other
+MATCH (p:Person) CALL () { RETURN 1, 2 } RETURN "?column?";
+MATCH (p:Person) CALL () { RETURN 1 + 1, 2 + 2 } RETURN *;
+-- written out as an alias, it is the same name
+MATCH (p:Person) CALL () { RETURN 1 AS "?column?", 2 AS "?column?" } RETURN *;
+-- an importing-WITH body is checked the same way
+MATCH (p:Person) CALL { WITH p RETURN p.name AS x, p.age AS x } RETURN x;
+-- so is an OPTIONAL CALL body
+MATCH (p:Person) OPTIONAL CALL () { RETURN 1 AS x, 2 AS x } RETURN x;
+
+-- what the check must not reject.  One unaliased expression is not a
+-- duplicate, and neither is a distinct pair.
+MATCH (p:Person {name: 'Andy'}) CALL () { RETURN 1 } RETURN "?column?";
+MATCH (p:Person {name: 'Andy'}) CALL () { RETURN 1, 2 AS z } RETURN *;
+MATCH (p:Person {name: 'Andy'}) CALL () { RETURN 1 AS x, 2 AS y } RETURN x, y;
+-- the boundary: the final RETURN of a query may repeat a name, because nothing
+-- downstream has to resolve it.  The projection position and the binding
+-- position genuinely differ, and the check belongs only to the latter.
+MATCH (p:Person {name: 'Andy'}) RETURN 1 AS x, 2 AS x;
+MATCH (p:Person {name: 'Andy'}) CALL () { RETURN 1 AS one } RETURN one AS x, 2 AS x;
+
 --
 -- 2. Nested CALL (a CALL inside another CALL's body)
 --
