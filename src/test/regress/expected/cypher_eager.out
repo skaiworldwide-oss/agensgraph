@@ -695,9 +695,90 @@ MATCH (x:never_created_label) RETURN count(x) AS should_be_0;
  0
 (1 row)
 
+-- With materialization off the write clause is the inner side of the nested
+-- loop.  It runs once, and every outer row reads its rows.
+CREATE (:rs_k {v: 1}), (:rs_k {v: 1}), (:rs_k {v: 2});
+SET enable_material = off;
+EXPLAIN (COSTS OFF)
+UNWIND range(1, 100) AS i CREATE (:rs_w {i: i})
+WITH i MATCH (k:rs_k) WHERE k.v = 1
+RETURN count(*) AS rows_joined;
+                        QUERY PLAN                         
+-----------------------------------------------------------
+ Aggregate
+   ->  Nested Loop
+         ->  Seq Scan on rs_k k
+               Filter: (properties.'v' = '1'::jsonb)
+         ->  Subquery Scan on _agens_default_s
+               ->  Graph Create
+                     ->  Subquery Scan on _agens_default_s
+                           ->  ProjectSet
+                                 ->  Result
+(9 rows)
+
+UNWIND range(1, 100) AS i CREATE (:rs_w {i: i})
+WITH i MATCH (k:rs_k) WHERE k.v = 1
+RETURN count(*) AS rows_joined;
+ rows_joined 
+-------------
+ 200
+(1 row)
+
+MATCH (w:rs_w) RETURN count(*) AS created_once;
+ created_once 
+--------------
+ 100
+(1 row)
+
+EXPLAIN (COSTS OFF)
+MATCH (w:rs_w) SET w.seen = true
+WITH w MATCH (k:rs_k) WHERE k.v = 1
+RETURN count(*) AS rows_joined;
+                     QUERY PLAN                      
+-----------------------------------------------------
+ Aggregate
+   ->  Nested Loop
+         ->  Seq Scan on rs_k k
+               Filter: (properties.'v' = '1'::jsonb)
+         ->  Subquery Scan on _agens_default_s
+               ->  Graph Set eager
+                     ->  Seq Scan on rs_w w
+(7 rows)
+
+MATCH (w:rs_w) SET w.seen = true
+WITH w MATCH (k:rs_k) WHERE k.v = 1
+RETURN count(*) AS rows_joined;
+ rows_joined 
+-------------
+ 200
+(1 row)
+
+MATCH (w:rs_w) RETURN count(w.seen) AS set_once;
+ set_once 
+----------
+ 100
+(1 row)
+
+MATCH (w:rs_w) WHERE w.i <= 10 DELETE w
+WITH 1 AS one MATCH (k:rs_k) WHERE k.v = 1
+RETURN count(*) AS rows_joined;
+ rows_joined 
+-------------
+ 20
+(1 row)
+
+MATCH (w:rs_w) RETURN count(*) AS remaining;
+ remaining 
+-----------
+ 90
+(1 row)
+
+RESET enable_material;
+MATCH (n:rs_w) DETACH DELETE n;
+MATCH (n:rs_k) DETACH DELETE n;
 -- cleanup
 DROP GRAPH eager_graph CASCADE;
-NOTICE:  drop cascades to 14 other objects
+NOTICE:  drop cascades to 16 other objects
 DETAIL:  drop cascades to sequence eager_graph.ag_label_seq
 drop cascades to vlabel ag_vertex
 drop cascades to elabel ag_edge
@@ -712,3 +793,5 @@ drop cascades to vlabel we_b
 drop cascades to vlabel we_c
 drop cascades to elabel we_rel
 drop cascades to vlabel read_after_create
+drop cascades to vlabel rs_k
+drop cascades to vlabel rs_w

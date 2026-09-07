@@ -17,6 +17,7 @@ extern bool enable_multiple_update;
 extern ModifyGraphState *ExecInitModifyGraph(ModifyGraph *mgplan,
 											 EState *estate, int eflags);
 extern void ExecEndModifyGraph(ModifyGraphState *mgstate);
+extern void ExecReScanModifyGraph(ModifyGraphState *mgstate);
 
 /* for visibility between Cypher clauses */
 typedef enum ModifyCid

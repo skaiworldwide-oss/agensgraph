@@ -42,6 +42,7 @@
 #include "executor/nodeMemoize.h"
 #include "executor/nodeMergeAppend.h"
 #include "executor/nodeMergejoin.h"
+#include "executor/nodeModifyGraph.h"
 #include "executor/nodeModifyTable.h"
 #include "executor/nodeNamedtuplestorescan.h"
 #include "executor/nodeNestloop.h"
@@ -316,6 +317,10 @@ ExecReScan(PlanState *node)
 
 		case T_GraphVLEState:
 			ExecReScanGraphVLE((GraphVLEState *) node);
+			break;
+
+		case T_ModifyGraphState:
+			ExecReScanModifyGraph((ModifyGraphState *) node);
 			break;
 
 		default:

@@ -501,6 +501,34 @@ MATCH (n:read_after_create) DETACH DELETE n;
 -- must still match nothing (the One-Time Filter optimisation is preserved).
 MATCH (x:never_created_label) RETURN count(x) AS should_be_0;
 
+-- With materialization off the write clause is the inner side of the nested
+-- loop.  It runs once, and every outer row reads its rows.
+CREATE (:rs_k {v: 1}), (:rs_k {v: 1}), (:rs_k {v: 2});
+SET enable_material = off;
+EXPLAIN (COSTS OFF)
+UNWIND range(1, 100) AS i CREATE (:rs_w {i: i})
+WITH i MATCH (k:rs_k) WHERE k.v = 1
+RETURN count(*) AS rows_joined;
+UNWIND range(1, 100) AS i CREATE (:rs_w {i: i})
+WITH i MATCH (k:rs_k) WHERE k.v = 1
+RETURN count(*) AS rows_joined;
+MATCH (w:rs_w) RETURN count(*) AS created_once;
+EXPLAIN (COSTS OFF)
+MATCH (w:rs_w) SET w.seen = true
+WITH w MATCH (k:rs_k) WHERE k.v = 1
+RETURN count(*) AS rows_joined;
+MATCH (w:rs_w) SET w.seen = true
+WITH w MATCH (k:rs_k) WHERE k.v = 1
+RETURN count(*) AS rows_joined;
+MATCH (w:rs_w) RETURN count(w.seen) AS set_once;
+MATCH (w:rs_w) WHERE w.i <= 10 DELETE w
+WITH 1 AS one MATCH (k:rs_k) WHERE k.v = 1
+RETURN count(*) AS rows_joined;
+MATCH (w:rs_w) RETURN count(*) AS remaining;
+RESET enable_material;
+MATCH (n:rs_w) DETACH DELETE n;
+MATCH (n:rs_k) DETACH DELETE n;
+
 -- cleanup
 
 DROP GRAPH eager_graph CASCADE;
