@@ -255,6 +255,16 @@ ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 	}
 
 	initGraphWRStats(mgstate, mgplan->operation);
+
+	/*
+	 * A write clause that is not the last clause is run to completion by
+	 * ExecPostprocessPlan at ExecutorFinish, however many of its rows the
+	 * plan above it read.  Later clauses are listed first and finished first.
+	 */
+	if (!mgplan->last)
+		estate->es_auxmodifytables = lcons(mgstate,
+										   estate->es_auxmodifytables);
+
 	return mgstate;
 }
 
