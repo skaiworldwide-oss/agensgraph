@@ -106,7 +106,12 @@ ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 	mgstate->modify_cid = GetCurrentCommandId(false) +
 		(mgplan->nr_modify * MODIFY_CID_MAX);
 
-	mgstate->subplan = ExecInitNode(mgplan->subplan, estate, eflags);
+	/* a parent may rescan this node: keep the output in the tuplestore */
+	if ((eflags & EXEC_FLAG_REWIND) && !mgplan->last)
+		mgstate->eagerness = true;
+
+	mgstate->subplan = ExecInitNode(mgplan->subplan, estate,
+									eflags & ~EXEC_FLAG_REWIND);
 	Assert(mgplan->operation != GWROP_MERGE ||
 		   IsA(mgstate->subplan, NestLoopState) ||
 
@@ -709,6 +714,29 @@ ExecEndModifyGraph(ModifyGraphState *mgstate)
 	{
 		CommandCounterIncrement();
 	}
+}
+
+void
+ExecReScanModifyGraph(ModifyGraphState *mgstate)
+{
+	/* a rescan with changed parameters is not supported */
+	if (mgstate->ps.chgParam != NULL)
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("a graph write cannot run once per row of an outer query")));
+
+	/* a streaming node has not kept its rows */
+	if (!mgstate->eagerness)
+	{
+		if (mgstate->predrained)
+			elog(ERROR, "graph write node cannot be rescanned");
+		return;
+	}
+
+	/* rewind the buffered output */
+	ExecClearTuple(mgstate->ps.ps_ResultTupleSlot);
+	if (mgstate->child_done)
+		tuplestore_rescan(mgstate->tuplestorestate);
 }
 
 static void

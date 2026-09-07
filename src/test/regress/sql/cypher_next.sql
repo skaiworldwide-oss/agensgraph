@@ -649,6 +649,40 @@ MATCH (n:person) RETURN n.name AS nm
 NEXT
 MATCH (m:person {name: nm}) FINISH;
 
+-- A write clause in a branch of a set operation after NEXT is refused: in
+-- either branch, reading a carried column or not, for every set operator, and
+-- nothing is written.
+RETURN 1 AS a NEXT CREATE (:refused {v: a}) RETURN 1 AS x UNION RETURN 2 AS x;
+RETURN 1 AS a NEXT RETURN 1 AS x UNION CREATE (:refused {v: a}) RETURN 2 AS x;
+RETURN 1 AS a NEXT CREATE (:refused) RETURN 1 AS x UNION ALL RETURN 2 AS x;
+RETURN 1 AS a NEXT MERGE (:refused {v: a}) RETURN 1 AS x UNION RETURN 2 AS x;
+RETURN 1 AS a NEXT MERGE (m:refused {v: 7}) ON MATCH SET m.hit = a RETURN 1 AS x
+UNION RETURN 2 AS x;
+RETURN 1 AS a NEXT MATCH (n:person) SET n.flag = a RETURN 1 AS x UNION RETURN 2 AS x;
+RETURN 1 AS a NEXT MATCH (n:person) REMOVE n.flag RETURN 1 AS x UNION RETURN 2 AS x;
+MATCH (n:person) RETURN n NEXT MATCH (n) SET n.flag = 1 RETURN 1 AS x UNION RETURN 2 AS x;
+MATCH (n:person) RETURN n NEXT MATCH (n) DELETE n RETURN 1 AS x UNION RETURN 2 AS x;
+MATCH (n:person) RETURN n NEXT CREATE (n)-[:knows]->(:refused) RETURN 1 AS x
+UNION RETURN 2 AS x;
+RETURN 1 AS a NEXT CREATE (:refused) RETURN 1 AS x INTERSECT RETURN 1 AS x;
+RETURN 1 AS a NEXT RETURN 1 AS x EXCEPT CREATE (:refused) RETURN 2 AS x;
+RETURN 1 AS a NEXT RETURN 1 AS x UNION RETURN 2 AS x UNION CREATE (:refused) RETURN 3 AS x;
+RETURN 1 AS a UNION RETURN 2 AS a NEXT CREATE (:refused {v: a}) RETURN 1 AS x
+UNION RETURN 2 AS x;
+UNWIND [1, 2] AS a RETURN a NEXT CREATE (:refused) RETURN 1 AS x UNION RETURN 2 AS x;
+MATCH (n:refused) RETURN count(*) AS refused_count;
+MATCH (n:person) RETURN count(*) AS person_count;
+
+-- A write in a branch of a set operation before NEXT runs once.
+CREATE (:leftarm {v: 1}) RETURN 1 AS a UNION RETURN 2 AS a NEXT RETURN a ORDER BY a;
+MATCH (n:leftarm) RETURN count(*) AS leftarm_count;
+
+-- A write in the linear query after a set operation after NEXT runs once per
+-- row of the union's result.
+RETURN 1 AS a NEXT RETURN a AS x UNION RETURN 2 AS x
+NEXT CREATE (:afterunion {v: x}) RETURN x ORDER BY x;
+MATCH (n:afterunion) RETURN count(*) AS afterunion_count;
+
 --
 -- 16. Row-operating clauses after NEXT (Cypher 25 parity)
 --

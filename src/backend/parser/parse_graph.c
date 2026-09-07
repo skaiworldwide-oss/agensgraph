@@ -2983,6 +2983,60 @@ cypherSetopBranchAggregates(Query *setopQuery)
 }
 
 /*
+ * cypherSetopBranchWrites
+ *		Return true if a branch of a raw Cypher set operation holds a write
+ *		clause.  The branches are the SELECT wrappers wrapCypherWithSelect()
+ *		builds around each CypherStmt.
+ */
+static bool
+cypherSetopBranchWrites(Node *node)
+{
+	if (node == NULL)
+		return false;
+
+	if (IsA(node, SelectStmt))
+	{
+		SelectStmt *stmt = (SelectStmt *) node;
+		ListCell   *lc;
+
+		if (stmt->op != SETOP_NONE)
+			return (cypherSetopBranchWrites((Node *) stmt->larg) ||
+					cypherSetopBranchWrites((Node *) stmt->rarg));
+
+		foreach(lc, stmt->fromClause)
+		{
+			Node	   *from = lfirst(lc);
+
+			if (IsA(from, RangeSubselect) &&
+				cypherSetopBranchWrites(((RangeSubselect *) from)->subquery))
+				return true;
+		}
+		return false;
+	}
+
+	if (IsA(node, CypherStmt))
+	{
+		CypherClause *clause = (CypherClause *) ((CypherStmt *) node)->last;
+
+		for (; clause != NULL; clause = (CypherClause *) clause->prev)
+		{
+			switch (cypherClauseTag(clause))
+			{
+				case T_CypherCreateClause:
+				case T_CypherMergeClause:
+				case T_CypherSetClause:
+				case T_CypherDeleteClause:
+					return true;
+				default:
+					break;
+			}
+		}
+	}
+
+	return false;
+}
+
+/*
  * transformCypherSubselectClause
  *		Transform a set-operation (UNION / UNION ALL / INTERSECT / EXCEPT)
  *		carried across a NEXT boundary.
@@ -3001,7 +3055,8 @@ cypherSetopBranchAggregates(Query *setopQuery)
  *		producing no rows for a carried row drops that row).  The output scope
  *		resets to the union's columns only.  A branch that aggregates would
  *		collapse over the whole carried table rather than per row -- a different
- *		lowering -- so it is rejected here.
+ *		lowering -- so it is rejected here.  A branch with a write clause is
+ *		rejected as well.
  */
 Query *
 transformCypherSubselectClause(ParseState *pstate, CypherClause *clause)
@@ -3018,6 +3073,11 @@ transformCypherSubselectClause(ParseState *pstate, CypherClause *clause)
 		return parse_sub_analyze(detail->query, pstate, NULL, false, true);
 
 	/* Right-operand form: correlate the union with the carried table. */
+	if (cypherSetopBranchWrites(detail->query))
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("a write clause in a set operation after NEXT is not supported")));
+
 	qry = makeNode(Query);
 	qry->commandType = CMD_SELECT;
 
