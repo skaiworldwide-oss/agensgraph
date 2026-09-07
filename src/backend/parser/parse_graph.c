@@ -2759,24 +2759,48 @@ transformCypherCallClause(ParseState *pstate, CypherClause *clause)
 										   lateral, true);
 
 	/*
-	 * A CALL subquery may not return a variable already bound in the outer
-	 * query: it would shadow the outer one for the clauses that follow the
-	 * CALL.  Reject the collision -- without this an uncorrelated body
+	 * The names the body returns become bindings in the enclosing query, so
+	 * each one has to resolve to exactly one column.  A name may not already
+	 * be bound in the outer query: it would shadow the outer one for the
+	 * clauses that follow the CALL -- without this an uncorrelated body
 	 * silently shadows the outer variable, while a correlated one fails later
-	 * with a confusing type error.  To return an imported variable the body
-	 * must alias it to a fresh name.
+	 * with a confusing type error.  Nor may the body bind the same name
+	 * twice: a later reference would resolve to the last one by position, so
+	 * reordering the body would silently change the result.  Alias to a fresh
+	 * name to resolve either collision.
+	 *
+	 * The check covers the label the parser gives an unaliased expression,
+	 * "?column?", as well as a written alias: that label is reachable as a
+	 * quoted identifier, so two of them bind a reference just as silently as
+	 * two written names would.  Only a column with no name at all is exempt,
+	 * being unreachable.  The final RETURN of a query still allows duplicates
+	 * -- nothing downstream has to resolve them.
 	 */
 	foreach(lc, nsitem->p_rte->eref->colnames)
 	{
 		char	   *colname = strVal(lfirst(lc));
+		ListCell   *lc2;
 
-		if (colname[0] != '\0' &&
-			nsItemHasColumnNamed(prev_nsitem, colname))
+		if (colname[0] == '\0')
+			continue;
+
+		if (nsItemHasColumnNamed(prev_nsitem, colname))
 			ereport(ERROR,
 					(errcode(ERRCODE_DUPLICATE_ALIAS),
 					 errmsg("variable \"%s\" returned by the CALL subquery is already bound in the outer query",
 							colname),
 					 parser_errposition(pstate, detail->location)));
+
+		for_each_cell(lc2, nsitem->p_rte->eref->colnames,
+					  lnext(nsitem->p_rte->eref->colnames, lc))
+		{
+			if (strcmp(colname, strVal(lfirst(lc2))) == 0)
+				ereport(ERROR,
+						(errcode(ERRCODE_DUPLICATE_ALIAS),
+						 errmsg("variable \"%s\" is returned more than once by the CALL subquery",
+								colname),
+						 parser_errposition(pstate, detail->location)));
+		}
 	}
 
 	qry->targetList = joinCallBody(pstate, prev_nsitem, nsitem,
