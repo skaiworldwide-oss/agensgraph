@@ -11995,3 +11995,157 @@ drop cascades to elabel t4
 drop cascades to vlabel p
 drop cascades to elabel e
 RESET graph_path;
+-- a write clause runs to completion however many of its rows the plan above
+-- it reads
+CREATE GRAPH write_done;
+SET graph_path = write_done;
+CREATE (:src {i: 1}), (:src {i: 2}), (:src {i: 3}), (:src {i: 4}), (:src {i: 5});
+CREATE VLABEL empty;
+-- a LIMIT above the write returns that many rows and writes every input row
+MATCH (a:src) CREATE (:w1) RETURN 1 AS r LIMIT 1;
+ r 
+---
+ 1
+(1 row)
+
+MATCH (n:w1) RETURN count(*) AS w1_written;
+ w1_written 
+------------
+ 5
+(1 row)
+
+MATCH (a:src) CREATE (:w2) RETURN 1 AS r LIMIT 0;
+ r 
+---
+(0 rows)
+
+MATCH (n:w2) RETURN count(*) AS w2_written;
+ w2_written 
+------------
+ 5
+(1 row)
+
+MATCH (a:src) CREATE (:w3) RETURN 1 AS r SKIP 4;
+ r 
+---
+ 1
+(1 row)
+
+MATCH (n:w3) RETURN count(*) AS w3_written;
+ w3_written 
+------------
+ 5
+(1 row)
+
+MATCH (a:src) MERGE (:w4 {i: a.i}) RETURN 1 AS r LIMIT 1;
+ r 
+---
+ 1
+(1 row)
+
+MATCH (n:w4) RETURN count(*) AS w4_written;
+ w4_written 
+------------
+ 5
+(1 row)
+
+MATCH (a:src) INSERT (:w5) RETURN 1 AS r LIMIT 1;
+ r 
+---
+ 1
+(1 row)
+
+MATCH (n:w5) RETURN count(*) AS w5_written;
+ w5_written 
+------------
+ 5
+(1 row)
+
+MATCH (a:src) CREATE (:w6b) CREATE (:w6c) RETURN 1 AS r LIMIT 1;
+ r 
+---
+ 1
+(1 row)
+
+MATCH (b:w6b) WITH count(b) AS w6b_written MATCH (c:w6c)
+RETURN w6b_written, count(c) AS w6c_written;
+ w6b_written | w6c_written 
+-------------+-------------
+ 5           | 5
+(1 row)
+
+MATCH (a:src) CREATE (m:w7) WITH m LIMIT 2 RETURN count(*) AS rows_after_limit;
+ rows_after_limit 
+------------------
+ 2
+(1 row)
+
+MATCH (n:w7) RETURN count(*) AS w7_written;
+ w7_written 
+------------
+ 5
+(1 row)
+
+MATCH (a:src) SET a.s = 1 RETURN 1 AS r LIMIT 1;
+ r 
+---
+ 1
+(1 row)
+
+MATCH (a:src) RETURN count(a.s) AS src_set;
+ src_set 
+---------
+ 5
+(1 row)
+
+-- a hash join with an empty build side reads one probe row and stops; the
+-- write on the probe side still runs for every input row
+SET enable_mergejoin = off;
+SET enable_nestloop = off;
+EXPLAIN (COSTS OFF)
+MATCH (a:src) CREATE (m:w8 {i: a.i}) WITH m MATCH (b:empty) WHERE b.i = m.i
+RETURN count(*) AS rows_joined;
+                                 QUERY PLAN                                  
+-----------------------------------------------------------------------------
+ Aggregate
+   ->  Hash Join
+         Hash Cond: ((_agens_default_s.m).properties.'i' = b.properties.'i')
+         ->  Subquery Scan on _agens_default_s
+               ->  Graph Create
+                     ->  Seq Scan on src a
+         ->  Hash
+               ->  Seq Scan on empty b
+(8 rows)
+
+MATCH (a:src) CREATE (m:w8 {i: a.i}) WITH m MATCH (b:empty) WHERE b.i = m.i
+RETURN count(*) AS rows_joined;
+ rows_joined 
+-------------
+ 0
+(1 row)
+
+RESET enable_mergejoin;
+RESET enable_nestloop;
+MATCH (n:w8) RETURN count(*) AS w8_written;
+ w8_written 
+------------
+ 5
+(1 row)
+
+DROP GRAPH write_done CASCADE;
+NOTICE:  drop cascades to 14 other objects
+DETAIL:  drop cascades to sequence write_done.ag_label_seq
+drop cascades to vlabel ag_vertex
+drop cascades to elabel ag_edge
+drop cascades to vlabel src
+drop cascades to vlabel empty
+drop cascades to vlabel w1
+drop cascades to vlabel w2
+drop cascades to vlabel w3
+drop cascades to vlabel w4
+drop cascades to vlabel w5
+drop cascades to vlabel w6b
+drop cascades to vlabel w6c
+drop cascades to vlabel w7
+drop cascades to vlabel w8
+RESET graph_path;
