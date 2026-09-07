@@ -4711,3 +4711,45 @@ MATCH (s:P) WHERE EXISTS { MATCH (s)-[:E*1..2]->() } RETURN s.k ORDER BY s.k;
 
 DROP GRAPH vle_rescan CASCADE;
 RESET graph_path;
+
+-- a write clause runs to completion however many of its rows the plan above
+-- it reads
+CREATE GRAPH write_done;
+SET graph_path = write_done;
+CREATE (:src {i: 1}), (:src {i: 2}), (:src {i: 3}), (:src {i: 4}), (:src {i: 5});
+CREATE VLABEL empty;
+
+-- a LIMIT above the write returns that many rows and writes every input row
+MATCH (a:src) CREATE (:w1) RETURN 1 AS r LIMIT 1;
+MATCH (n:w1) RETURN count(*) AS w1_written;
+MATCH (a:src) CREATE (:w2) RETURN 1 AS r LIMIT 0;
+MATCH (n:w2) RETURN count(*) AS w2_written;
+MATCH (a:src) CREATE (:w3) RETURN 1 AS r SKIP 4;
+MATCH (n:w3) RETURN count(*) AS w3_written;
+MATCH (a:src) MERGE (:w4 {i: a.i}) RETURN 1 AS r LIMIT 1;
+MATCH (n:w4) RETURN count(*) AS w4_written;
+MATCH (a:src) INSERT (:w5) RETURN 1 AS r LIMIT 1;
+MATCH (n:w5) RETURN count(*) AS w5_written;
+MATCH (a:src) CREATE (:w6b) CREATE (:w6c) RETURN 1 AS r LIMIT 1;
+MATCH (b:w6b) WITH count(b) AS w6b_written MATCH (c:w6c)
+RETURN w6b_written, count(c) AS w6c_written;
+MATCH (a:src) CREATE (m:w7) WITH m LIMIT 2 RETURN count(*) AS rows_after_limit;
+MATCH (n:w7) RETURN count(*) AS w7_written;
+MATCH (a:src) SET a.s = 1 RETURN 1 AS r LIMIT 1;
+MATCH (a:src) RETURN count(a.s) AS src_set;
+
+-- a hash join with an empty build side reads one probe row and stops; the
+-- write on the probe side still runs for every input row
+SET enable_mergejoin = off;
+SET enable_nestloop = off;
+EXPLAIN (COSTS OFF)
+MATCH (a:src) CREATE (m:w8 {i: a.i}) WITH m MATCH (b:empty) WHERE b.i = m.i
+RETURN count(*) AS rows_joined;
+MATCH (a:src) CREATE (m:w8 {i: a.i}) WITH m MATCH (b:empty) WHERE b.i = m.i
+RETURN count(*) AS rows_joined;
+RESET enable_mergejoin;
+RESET enable_nestloop;
+MATCH (n:w8) RETURN count(*) AS w8_written;
+
+DROP GRAPH write_done CASCADE;
+RESET graph_path;
