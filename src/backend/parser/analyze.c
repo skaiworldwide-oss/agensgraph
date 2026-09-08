@@ -99,6 +99,9 @@ static Query *transformCypherStmt(ParseState *pstate, CypherStmt *stmt);
 static Query *transformCypherClause(ParseState *pstate, CypherClause *clause);
 
 static void preprocess_modifiers(CypherStmt *stmt);
+static bool isCypherSetOperation(Node *stmt);
+static Oid	boxCypherSetOpColumn(ParseState *pstate, Node *arg,
+								 TargetEntry *tle, int colno, bool recursive);
 static bool is_modifier(CypherClause *clause);
 static bool parent_is_projection(CypherClause *clause);
 static void attach_modifier(CypherClause *clause, CypherClause *modifier);
@@ -2073,6 +2076,105 @@ makeSortGroupClauseForSetOp(Oid rescoltype, bool require_hash)
 }
 
 /*
+ * isCypherSetOperation
+ *		Is every arm of this raw set operation a Cypher statement?  The Cypher
+ *		grammar wraps each arm as "SELECT * FROM (<cypher>) AS <alias>".
+ */
+static bool
+isCypherSetOperation(Node *stmt)
+{
+	SelectStmt *sel;
+	RangeSubselect *rs;
+
+	if (!IsA(stmt, SelectStmt))
+		return false;
+	sel = (SelectStmt *) stmt;
+
+	if (sel->op != SETOP_NONE)
+		return (isCypherSetOperation((Node *) sel->larg) &&
+				isCypherSetOperation((Node *) sel->rarg));
+
+	if (list_length(sel->fromClause) != 1 ||
+		!IsA(linitial(sel->fromClause), RangeSubselect))
+		return false;
+	rs = (RangeSubselect *) linitial(sel->fromClause);
+
+	return (IsA(rs->subquery, CypherStmt) &&
+			rs->alias != NULL &&
+			strcmp(rs->alias->aliasname, CYPHER_SUBQUERY_ALIAS) == 0);
+}
+
+/*
+ * boxCypherSetOpColumn
+ *		Box output column colno of a transformed set-operation arm to jsonb and
+ *		return its type.  tle is the entry the parent compares: a leaf's own
+ *		target entry, which is boxed in place, or the dummy standing for a
+ *		nested set operation, whose leaves are boxed and whose column type,
+ *		collation and grouping operator are brought in line.
+ */
+static Oid
+boxCypherSetOpColumn(ParseState *pstate, Node *arg, TargetEntry *tle,
+					 int colno, bool recursive)
+{
+	if (IsA(arg, RangeTblRef))
+	{
+		RangeTblEntry *rte = rt_fetch(((RangeTblRef *) arg)->rtindex,
+									  pstate->p_rtable);
+		ListCell   *lc;
+		int			n = 0;
+
+		foreach(lc, rte->subquery->targetList)
+		{
+			TargetEntry *leaftle = (TargetEntry *) lfirst(lc);
+
+			if (leaftle->resjunk)
+				continue;
+			if (n++ == colno)
+			{
+				Assert(tle == NULL || leaftle == tle);
+				leaftle->expr = (Expr *) coerceCypherValueToJsonb(pstate,
+													  (Node *) leaftle->expr);
+				return exprType((Node *) leaftle->expr);
+			}
+		}
+		elog(ERROR, "set-operation arm has no column %d", colno);
+	}
+	else
+	{
+		SetOperationStmt *op = castNode(SetOperationStmt, arg);
+		Oid			ltype;
+		Oid			rtype;
+		Oid			type;
+
+		ltype = boxCypherSetOpColumn(pstate, op->larg, NULL, colno, recursive);
+		rtype = boxCypherSetOpColumn(pstate, op->rarg, NULL, colno, recursive);
+		type = (ltype == rtype) ? ltype : InvalidOid;
+		if (!OidIsValid(type))
+			return InvalidOid;
+
+		lfirst_oid(list_nth_cell(op->colTypes, colno)) = type;
+		lfirst_int(list_nth_cell(op->colTypmods, colno)) = -1;
+		lfirst_oid(list_nth_cell(op->colCollations, colno)) = InvalidOid;
+		if (op->groupClauses != NIL)
+			lfirst(list_nth_cell(op->groupClauses, colno)) =
+				makeSortGroupClauseForSetOp(type, recursive);
+
+		if (tle != NULL)
+		{
+			SetToDefault *dummy = castNode(SetToDefault, tle->expr);
+
+			dummy->typeId = type;
+			dummy->typeMod = -1;
+			dummy->collation = InvalidOid;
+		}
+
+		return type;
+	}
+
+	return InvalidOid;			/* keep compiler quiet */
+}
+
+/*
  * transformSetOperationTree
  *		Recursively transform leaves and internal nodes of a set-op tree
  *
@@ -2224,6 +2326,7 @@ transformSetOperationTree(ParseState *pstate, SelectStmt *stmt,
 		const char *context;
 		bool		recursive = (pstate->p_parent_cte &&
 								 pstate->p_parent_cte->cterecursive);
+		bool		cypherSetOp = isCypherSetOperation((Node *) stmt);
 
 		context = (stmt->op == SETOP_UNION ? "UNION" :
 				   (stmt->op == SETOP_INTERSECT ? "INTERSECT" :
@@ -2286,6 +2389,29 @@ transformSetOperationTree(ParseState *pstate, SelectStmt *stmt,
 			Oid			rescoltype;
 			int32		rescoltypmod;
 			Oid			rescolcoll;
+
+			/*
+			 * A Cypher set operation combines Cypher values.  Two arm columns
+			 * with no common type are boxed to jsonb.
+			 */
+			if (cypherSetOp && lcoltype != rcoltype &&
+				!OidIsValid(select_common_type(pstate,
+											   list_make2(lcolnode, rcolnode),
+											   NULL, NULL)))
+			{
+				int			colno = foreach_current_index(ltl);
+
+				if (lcoltype != JSONBOID)
+					boxCypherSetOpColumn(pstate, op->larg, ltle, colno,
+										 recursive);
+				if (rcoltype != JSONBOID)
+					boxCypherSetOpColumn(pstate, op->rarg, rtle, colno,
+										 recursive);
+				lcolnode = (Node *) ltle->expr;
+				rcolnode = (Node *) rtle->expr;
+				lcoltype = exprType(lcolnode);
+				rcoltype = exprType(rcolnode);
+			}
 
 			/* select common type, same as CASE et al */
 			rescoltype = select_common_type(pstate,
