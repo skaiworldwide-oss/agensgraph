@@ -100,6 +100,7 @@ static Query *transformCypherClause(ParseState *pstate, CypherClause *clause);
 
 static void preprocess_modifiers(CypherStmt *stmt);
 static bool is_modifier(CypherClause *clause);
+static bool projection_takes_modifiers(CypherClause *clause);
 static bool parent_is_projection(CypherClause *clause);
 static void attach_modifier(CypherClause *clause, CypherClause *modifier);
 static void attach_modifiers_to_projection(CypherClause **clause);
@@ -3841,6 +3842,31 @@ transformCypherStmt(ParseState *pstate, CypherStmt *stmt)
 		case T_CypherSubselectClause:
 			/* a set operation after NEXT produces a table */
 			break;
+		case T_CypherModifier:
+			{
+				CypherClause *prev = (CypherClause *) clause->prev;
+
+				/*
+				 * A modifier run that no projection took is never a valid
+				 * last clause.  ORDER BY / SKIP / LIMIT written after FINISH
+				 * ends up here: name the rule it breaks instead of the
+				 * generic message below.  Modifiers written out of canonical
+				 * order become one clause each, so look past them for the
+				 * FINISH.
+				 */
+				while (prev != NULL &&
+					   cypherClauseTag(prev) == T_CypherModifier)
+					prev = (CypherClause *) prev->prev;
+
+				if (prev != NULL &&
+					cypherClauseTag(prev) == T_CypherProjection &&
+					cypherProjectionKind(prev->detail) == CP_FINISH)
+					ereport(ERROR,
+							(errcode(ERRCODE_SYNTAX_ERROR),
+							 errmsg("FINISH must be at the end of the query")));
+				valid = false;
+				break;
+			}
 		default:
 			valid = false;
 			break;
@@ -3973,6 +3999,40 @@ is_modifier(CypherClause *clause)
 }
 
 /*
+ * projection_takes_modifiers
+ *		Can this clause carry a modifier run folded into it?
+ *
+ *		Only a projection that outputs rows can: its transform reads the ORDER BY
+ *		/ SKIP / LIMIT it is given, so folding one in still analyzes it.  FINISH
+ *		is parsed as a projection too, but it ends the query and returns no rows,
+ *		so its transform has no use for them and would drop them unexamined.
+ *		Leaving the run alone makes it a CypherModifier, which
+ *		transformCypherStmt() then rejects.
+ *
+ *		The kinds that take modifiers are listed rather than excluded, so a kind
+ *		added later refuses the fold -- and is reported -- until it is known to
+ *		read them.
+ */
+static bool
+projection_takes_modifiers(CypherClause *clause)
+{
+	if (cypherClauseTag(clause) != T_CypherProjection)
+		return false;
+
+	switch (cypherProjectionKind(clause->detail))
+	{
+		case CP_RETURN:
+		case CP_WITH:
+		case CP_LET:
+			return true;
+		case CP_FINISH:
+			return false;
+	}
+
+	return false;
+}
+
+/*
  * parent_is_projection
  *		Does the canonical modifier run ending at this clause (ORDER BY, then
  *		SKIP/OFFSET, then LIMIT) sit directly on top of a projection
@@ -3991,15 +4051,15 @@ parent_is_projection(CypherClause *clause)
 	switch (cypherClauseTag(clause))
 	{
 		case T_CypherOrderBy:
-			return cypherClauseTag(prev) == T_CypherProjection;
+			return projection_takes_modifiers(prev);
 		case T_CypherSkip:
-			if (cypherClauseTag(prev) == T_CypherProjection)
+			if (projection_takes_modifiers(prev))
 				return true;
 			if (cypherClauseTag(prev) == T_CypherOrderBy)
 				return parent_is_projection(prev);
 			return false;
 		case T_CypherLimit:
-			if (cypherClauseTag(prev) == T_CypherProjection)
+			if (projection_takes_modifiers(prev))
 				return true;
 			if (cypherClauseTag(prev) == T_CypherOrderBy ||
 				cypherClauseTag(prev) == T_CypherSkip)

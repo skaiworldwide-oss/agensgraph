@@ -196,6 +196,29 @@ MATCH (:person)-[r:knows]->(:person) RETURN count(r) AS knows;
 -- FINISH must be the last clause
 MATCH (n) FINISH RETURN n;
 
+-- ORDER BY / SKIP / OFFSET / LIMIT are clauses in their own right, so they are
+-- rejected after FINISH as well, in canonical order or not
+MATCH (n) FINISH ORDER BY 1;
+MATCH (n) FINISH SKIP 1;
+MATCH (n) FINISH OFFSET 1;
+MATCH (n) FINISH LIMIT 1;
+MATCH (n) FINISH ORDER BY n.name SKIP 1 LIMIT 1;
+MATCH (n) FINISH LIMIT 1 ORDER BY n.name;
+
+-- arguments that are errors on their own are rejected here as misplaced
+-- clauses: they used to reach no analysis at all
+MATCH (n) FINISH LIMIT -1;
+MATCH (n) FINISH ORDER BY nosuchvar;
+
+-- and the query is rejected before a write in it takes effect
+MATCH (n:person {name: 'A'}) CREATE (:person {name: 'H'}) FINISH LIMIT 1;
+MATCH (n:person {name: 'H'}) RETURN count(n) AS unwritten;
+
+-- modifiers before FINISH still page the query FINISH ends
+MATCH (n) ORDER BY n.name LIMIT 1 FINISH;
+MATCH (n) ORDER BY n.name LIMIT 1 CREATE (:person {name: 'I'}) FINISH;
+MATCH (n:person {name: 'I'}) RETURN count(n) AS written;
+
 -- plan structure: a read + FINISH applies LIMIT 0; a write + FINISH runs the write
 EXPLAIN (COSTS OFF) MATCH (n) FINISH;
 EXPLAIN (COSTS OFF) CREATE (:person {name: 'G'}) FINISH;

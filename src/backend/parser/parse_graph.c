@@ -1110,6 +1110,14 @@ transformCypherProjection(ParseState *pstate, CypherClause *clause)
 	{
 		ParseNamespaceItem *prev_nsitem = NULL;
 
+		/*
+		 * FINISH returns no rows, so it carries no ORDER BY / SKIP / LIMIT:
+		 * preprocess_modifiers() does not fold one into it and
+		 * transformCypherStmt() rejects one written after it.
+		 */
+		Assert(detail->order == NIL && detail->skip == NULL &&
+			   detail->limit == NULL);
+
 		if (clause->prev != NULL)
 			prev_nsitem = transformClause(pstate, clause->prev);
 
