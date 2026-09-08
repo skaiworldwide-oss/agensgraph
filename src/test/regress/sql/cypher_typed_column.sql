@@ -1201,6 +1201,56 @@ SET enable_property_promotion = off;
 MATCH ("a:b":doc) WHERE "a:b".name = 'n1' RETURN "a:b".age AS a;
 MATCH ("a:b":doc) CALL { WITH "a:b" RETURN "a:b".age AS a } RETURN a ORDER BY a;
 
+-- 11j. A set operation over a promoted arm and a plain arm.  The arms have no
+--      common type, so both are boxed to jsonb; the rows and the ordering
+--      match promotion off.  Arms that agree on a type, or that SQL unifies on
+--      its own, keep their native type.
+SET enable_property_promotion = on;
+MATCH (n:doc) RETURN n.age AS v UNION MATCH (p:plain) RETURN p.age AS v NEXT RETURN v ORDER BY v;
+MATCH (n:doc) RETURN n.age AS v UNION ALL MATCH (p:plain) RETURN p.age AS v NEXT RETURN count(*) AS c;
+MATCH (n:doc) RETURN n.age AS v INTERSECT MATCH (p:plain) RETURN p.age AS v NEXT RETURN v ORDER BY v;
+MATCH (n:doc) RETURN n.age AS v EXCEPT MATCH (p:plain) RETURN p.age AS v NEXT RETURN v ORDER BY v;
+MATCH (n:doc) RETURN n.age AS v UNION MATCH (n:doc) RETURN n.name AS v NEXT RETURN v ORDER BY v;
+MATCH (n:doc) RETURN n.age AS v UNION RETURN 99 AS v NEXT RETURN v ORDER BY v;
+MATCH (n:doc) RETURN n.age AS v UNION MATCH (o:othertype) RETURN o.age AS v NEXT RETURN v ORDER BY v;
+MATCH (n:doc) RETURN n.active AS v UNION MATCH (p:plain) RETURN p.age AS v NEXT RETURN v ORDER BY v;
+MATCH ()-[r:rel]->() RETURN r.weight AS v UNION MATCH ()-[k:knows]->() RETURN k.weight AS v NEXT RETURN v ORDER BY v;
+MATCH (n:doc) RETURN n.age AS v UNION MATCH (n:doc) RETURN n.big AS v UNION MATCH (p:plain) RETURN p.age AS v NEXT RETURN v ORDER BY v;
+MATCH (p:plain) CALL { MATCH (n:doc) RETURN n.age AS v UNION MATCH (q:plain) RETURN q.age AS v } RETURN p.name AS name, count(v) AS c ORDER BY name;
+MATCH (n:doc) RETURN n.age AS v UNION MATCH (n:doc) RETURN n.score AS v NEXT RETURN v ORDER BY v;
+MATCH (p:plain) WHERE p.age IN { MATCH (n:doc) RETURN n.age } RETURN p.name AS name ORDER BY name;
+MATCH (p:plain) WHERE NOT p.age IN { MATCH (n:doc) RETURN n.age } RETURN p.name AS name ORDER BY name;
+MATCH (n:doc) WHERE n.age IN { MATCH (p:plain) RETURN p.age } RETURN n.name AS name ORDER BY name;
+MATCH (n:doc) WHERE n.active IN { MATCH (p:plain) RETURN p.age } RETURN n.name AS name ORDER BY name;
+SET enable_property_promotion = off;
+MATCH (n:doc) RETURN n.age AS v UNION MATCH (p:plain) RETURN p.age AS v NEXT RETURN v ORDER BY v;
+MATCH (n:doc) RETURN n.age AS v UNION ALL MATCH (p:plain) RETURN p.age AS v NEXT RETURN count(*) AS c;
+MATCH (n:doc) RETURN n.age AS v INTERSECT MATCH (p:plain) RETURN p.age AS v NEXT RETURN v ORDER BY v;
+MATCH (n:doc) RETURN n.age AS v EXCEPT MATCH (p:plain) RETURN p.age AS v NEXT RETURN v ORDER BY v;
+MATCH (n:doc) RETURN n.age AS v UNION MATCH (n:doc) RETURN n.name AS v NEXT RETURN v ORDER BY v;
+MATCH (n:doc) RETURN n.age AS v UNION RETURN 99 AS v NEXT RETURN v ORDER BY v;
+MATCH (n:doc) RETURN n.age AS v UNION MATCH (o:othertype) RETURN o.age AS v NEXT RETURN v ORDER BY v;
+MATCH (n:doc) RETURN n.active AS v UNION MATCH (p:plain) RETURN p.age AS v NEXT RETURN v ORDER BY v;
+MATCH ()-[r:rel]->() RETURN r.weight AS v UNION MATCH ()-[k:knows]->() RETURN k.weight AS v NEXT RETURN v ORDER BY v;
+MATCH (n:doc) RETURN n.age AS v UNION MATCH (n:doc) RETURN n.big AS v UNION MATCH (p:plain) RETURN p.age AS v NEXT RETURN v ORDER BY v;
+MATCH (p:plain) CALL { MATCH (n:doc) RETURN n.age AS v UNION MATCH (q:plain) RETURN q.age AS v } RETURN p.name AS name, count(v) AS c ORDER BY name;
+MATCH (n:doc) RETURN n.age AS v UNION MATCH (n:doc) RETURN n.score AS v NEXT RETURN v ORDER BY v;
+MATCH (p:plain) WHERE p.age IN { MATCH (n:doc) RETURN n.age } RETURN p.name AS name ORDER BY name;
+MATCH (p:plain) WHERE NOT p.age IN { MATCH (n:doc) RETURN n.age } RETURN p.name AS name ORDER BY name;
+MATCH (n:doc) WHERE n.age IN { MATCH (p:plain) RETURN p.age } RETURN n.name AS name ORDER BY name;
+MATCH (n:doc) WHERE n.active IN { MATCH (p:plain) RETURN p.age } RETURN n.name AS name ORDER BY name;
+-- the result type: jsonb where the arms had no common type, the arms' own type
+-- where they agree or where SQL unifies them, and the box lands on the
+-- promoted arm only
+SET enable_property_promotion = on;
+SELECT pg_typeof(v) AS mixed FROM (MATCH (n:doc) RETURN n.age AS v UNION MATCH (p:plain) RETURN p.age AS v) q LIMIT 1;
+SELECT pg_typeof(v) AS same FROM (MATCH (n:doc) RETURN n.age AS v UNION MATCH (n:doc) RETURN n.age AS v) q LIMIT 1;
+SELECT pg_typeof(v) AS unified FROM (MATCH (n:doc) RETURN n.age AS v UNION MATCH (n:doc) RETURN n.big AS v) q LIMIT 1;
+EXPLAIN (VERBOSE, COSTS OFF)
+MATCH (n:doc) RETURN n.age AS v UNION MATCH (p:plain) RETURN p.age AS v;
+-- a boolean arm against a jsonb arm follows the same rule
+RETURN true AS v UNION RETURN 'x' AS v NEXT RETURN v ORDER BY v;
+
 -- ============================================================================
 -- SECTION 12 -- NULL / missing-key semantics (on == off)
 --

@@ -1841,6 +1841,7 @@ static Node *
 transformSubLink(ParseState *pstate, SubLink *sublink)
 {
 	Node	   *result = (Node *) sublink;
+	Node	   *subselect;
 	Query	   *qtree;
 	const char *err;
 
@@ -1946,6 +1947,8 @@ transformSubLink(ParseState *pstate, SubLink *sublink)
 
 	pstate->p_hasSubLinks = true;
 
+	subselect = sublink->subselect;
+
 	/*
 	 * OK, let's transform the sub-SELECT.
 	 */
@@ -1960,6 +1963,24 @@ transformSubLink(ParseState *pstate, SubLink *sublink)
 		elog(ERROR, "unexpected non-SELECT command in SubLink");
 
 	sublink->subselect = (Node *) qtree;
+
+	/*
+	 * "x IN { <cypher> }" compares x, cast to jsonb, with the body's column;
+	 * a column the body returned in its own type is boxed to jsonb here.
+	 */
+	if (sublink->subLinkType == ANY_SUBLINK && IsA(subselect, CypherStmt))
+	{
+		ListCell   *lc;
+
+		foreach(lc, qtree->targetList)
+		{
+			TargetEntry *tent = (TargetEntry *) lfirst(lc);
+
+			if (!tent->resjunk)
+				tent->expr = (Expr *) coerceCypherValueToJsonb(pstate,
+															   (Node *) tent->expr);
+		}
+	}
 
 	if (sublink->subLinkType == EXISTS_SUBLINK)
 	{

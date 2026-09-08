@@ -3358,6 +3358,20 @@ coerce_to_jsonb(ParseState *pstate, Node *expr, const char *targetname)
 	return coerce_all_to_jsonb(pstate, expr);
 }
 
+/*
+ * coerceCypherValueToJsonb
+ *		Box a Cypher value to jsonb.  A node, relationship or path is returned
+ *		as it is.
+ */
+Node *
+coerceCypherValueToJsonb(ParseState *pstate, Node *expr)
+{
+	if (is_graph_type(exprType(expr)))
+		return expr;
+
+	return coerce_all_to_jsonb(pstate, expr);
+}
+
 static bool
 is_graph_type(Oid type)
 {
