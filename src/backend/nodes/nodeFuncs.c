@@ -1138,7 +1138,7 @@ exprCollation(const Node *expr)
 
 			/* Agensgraph cases below */
 		case T_CypherTypeCast:
-			coll = InvalidOid;
+			coll = ((const CypherTypeCast *) expr)->resultcollid;
 			break;
 		case T_CypherMapExpr:
 			coll = InvalidOid;
@@ -1406,7 +1406,7 @@ exprSetCollation(Node *expr, Oid collation)
 
 			/* Agensgraph cases below */
 		case T_CypherTypeCast:
-			/* XXX: Don't care for now */
+			((CypherTypeCast *) expr)->resultcollid = collation;
 			break;
 		case T_CypherMapExpr:
 			Assert(!OidIsValid(collation));

@@ -3730,12 +3730,14 @@ eval_const_expressions_mutator(Node *node,
 				newtc->cctx = tc->cctx;
 				newtc->cform = tc->cform;
 				newtc->typcategory = tc->typcategory;
+				newtc->resultcollid = tc->resultcollid;
 				newtc->arg = (Expr *) newarg;
 				newtc->location = tc->location;
 
 				if (IsA(newarg, Const))
 					return (Node *) evaluate_expr((Expr *) newtc, newtc->type,
-												  newtc->typmod, InvalidOid);
+												  newtc->typmod,
+												  newtc->resultcollid);
 
 				return (Node *) newtc;
 			}

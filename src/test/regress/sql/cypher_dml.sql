@@ -4208,6 +4208,37 @@ RETURN collect(DISTINCT (n.name #>> '{}')) AS names, count(DISTINCT (n.city #>> 
 -- DISTINCT on two extracted-text keys with a compound ORDER BY
 MATCH (n:person)
 RETURN DISTINCT (n.name #>> '{}') AS nm, (n.city #>> '{}') AS ct ORDER BY ct, nm NULLS LAST;
+-- The cast spelling of the same extraction -- n.prop::text -- must behave
+-- identically.  It reaches the same uncollated text through CypherTypeCast, the
+-- one Cypher node whose result can be collatable, so it needs the same default
+-- collation on a comparison, sort or hash key.  (A terminal RETURN's DISTINCT /
+-- GROUP BY happened to escape the failure by boxing its keys back to jsonb; a
+-- non-terminal WITH has no such boxing, so both stages are covered here.)
+-- ORDER BY on the cast, incl. the NULL
+MATCH (n:person) RETURN n.name::text AS nm ORDER BY nm NULLS FIRST;
+-- the cast is only the sort key -- it is not projected
+MATCH (n:person) RETURN n.name AS nm ORDER BY n.name::text NULLS FIRST;
+-- a non-terminal WITH that orders by the cast
+MATCH (n:person) WITH n.name::text AS nm ORDER BY nm NULLS FIRST RETURN nm;
+-- WITH DISTINCT over the cast: a hash key, not a sort key
+MATCH (n:person) WITH DISTINCT n.name::text AS nm RETURN nm ORDER BY nm NULLS FIRST;
+-- a WITH-stage implicit GROUP BY whose key is the cast
+MATCH (n:person) WITH n.name::text AS nm, count(*) AS c ORDER BY nm NULLS FIRST RETURN nm, c;
+-- terminal RETURN DISTINCT and an implicit GROUP BY on two cast keys
+MATCH (n:person) RETURN DISTINCT n.name::text AS nm ORDER BY nm NULLS FIRST;
+MATCH (n:person)
+RETURN n.name::text AS nm, n.city::text AS ct, count(*) AS c
+ORDER BY nm NULLS FIRST, ct;
+-- min()/max() over the cast -- these already worked, and must keep working
+MATCH (n:person) RETURN min(n.name::text) AS lo, max(n.name::text) AS hi;
+-- a cast boxed back to jsonb: the outer cast folds away, leaving the text as the
+-- sort key, so this is the same case and not a workaround
+MATCH (n:person) RETURN n.name::text::jsonb AS nm ORDER BY nm NULLS FIRST;
+-- a cast of a literal folds to a Const.  A constant key is eliminated before
+-- any comparison, so this shape does not fail for want of a collation; it
+-- guards the fold path itself -- the rebuilt node must keep its fields.
+MATCH (n:person)
+RETURN DISTINCT n.name::text AS nm, 'lit'::text AS w ORDER BY nm NULLS FIRST, w;
 DROP GRAPH collate_jsonb CASCADE;
 --
 -- A terminal write carries only the elements it names

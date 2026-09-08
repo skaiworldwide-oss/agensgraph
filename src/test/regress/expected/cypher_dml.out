@@ -11123,6 +11123,119 @@ RETURN DISTINCT (n.name #>> '{}') AS nm, (n.city #>> '{}') AS ct ORDER BY ct, nm
  "bob" | "rome"
 (5 rows)
 
+-- The cast spelling of the same extraction -- n.prop::text -- must behave
+-- identically.  It reaches the same uncollated text through CypherTypeCast, the
+-- one Cypher node whose result can be collatable, so it needs the same default
+-- collation on a comparison, sort or hash key.  (A terminal RETURN's DISTINCT /
+-- GROUP BY happened to escape the failure by boxing its keys back to jsonb; a
+-- non-terminal WITH has no such boxing, so both stages are covered here.)
+-- ORDER BY on the cast, incl. the NULL
+MATCH (n:person) RETURN n.name::text AS nm ORDER BY nm NULLS FIRST;
+  nm   
+-------
+ 
+ "amy"
+ "bob"
+ "bob"
+ "cat"
+(5 rows)
+
+-- the cast is only the sort key -- it is not projected
+MATCH (n:person) RETURN n.name AS nm ORDER BY n.name::text NULLS FIRST;
+  nm   
+-------
+ 
+ "amy"
+ "bob"
+ "bob"
+ "cat"
+(5 rows)
+
+-- a non-terminal WITH that orders by the cast
+MATCH (n:person) WITH n.name::text AS nm ORDER BY nm NULLS FIRST RETURN nm;
+  nm   
+-------
+ 
+ "amy"
+ "bob"
+ "bob"
+ "cat"
+(5 rows)
+
+-- WITH DISTINCT over the cast: a hash key, not a sort key
+MATCH (n:person) WITH DISTINCT n.name::text AS nm RETURN nm ORDER BY nm NULLS FIRST;
+  nm   
+-------
+ 
+ "amy"
+ "bob"
+ "cat"
+(4 rows)
+
+-- a WITH-stage implicit GROUP BY whose key is the cast
+MATCH (n:person) WITH n.name::text AS nm, count(*) AS c ORDER BY nm NULLS FIRST RETURN nm, c;
+  nm   | c 
+-------+---
+       | 1
+ "amy" | 1
+ "bob" | 2
+ "cat" | 1
+(4 rows)
+
+-- terminal RETURN DISTINCT and an implicit GROUP BY on two cast keys
+MATCH (n:person) RETURN DISTINCT n.name::text AS nm ORDER BY nm NULLS FIRST;
+  nm   
+-------
+ 
+ "amy"
+ "bob"
+ "cat"
+(4 rows)
+
+MATCH (n:person)
+RETURN n.name::text AS nm, n.city::text AS ct, count(*) AS c
+ORDER BY nm NULLS FIRST, ct;
+  nm   |   ct   | c 
+-------+--------+---
+       | "oslo" | 1
+ "amy" | "rome" | 1
+ "bob" | "oslo" | 1
+ "bob" | "rome" | 1
+ "cat" | "oslo" | 1
+(5 rows)
+
+-- min()/max() over the cast -- these already worked, and must keep working
+MATCH (n:person) RETURN min(n.name::text) AS lo, max(n.name::text) AS hi;
+  lo   |  hi   
+-------+-------
+ "amy" | "cat"
+(1 row)
+
+-- a cast boxed back to jsonb: the outer cast folds away, leaving the text as the
+-- sort key, so this is the same case and not a workaround
+MATCH (n:person) RETURN n.name::text::jsonb AS nm ORDER BY nm NULLS FIRST;
+  nm   
+-------
+ 
+ "amy"
+ "bob"
+ "bob"
+ "cat"
+(5 rows)
+
+-- a cast of a literal folds to a Const.  A constant key is eliminated before
+-- any comparison, so this shape does not fail for want of a collation; it
+-- guards the fold path itself -- the rebuilt node must keep its fields.
+MATCH (n:person)
+RETURN DISTINCT n.name::text AS nm, 'lit'::text AS w ORDER BY nm NULLS FIRST, w;
+  nm   |   w   
+-------+-------
+       | "lit"
+ "amy" | "lit"
+ "bob" | "lit"
+ "cat" | "lit"
+(4 rows)
+
 DROP GRAPH collate_jsonb CASCADE;
 NOTICE:  drop cascades to 4 other objects
 DETAIL:  drop cascades to sequence collate_jsonb.ag_label_seq
