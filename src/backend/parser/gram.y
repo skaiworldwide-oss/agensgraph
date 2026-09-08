@@ -211,6 +211,7 @@ static void preprocess_pubobj_list(List *pubobjspec_list,
 static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 
 static Node *makeCypherSetOp(SetOperation op, bool all, Node *larg, Node *rarg);
+static Node *makeCypherGenericExpr(Node *expr);
 static Node *makeCypherNext(Node *left, Node *right);
 static Node *makeCypherProjection(CPKind kind, List *distinct, List *items,
 								  Node *where);
@@ -23007,10 +23008,10 @@ cypher_count_subquery:
 
 /*
  * COLLECT subquery: every value the single-column read subquery yields,
- * gathered into a cypher list (a jsonb array) -- order-preserving and
- * NULL-preserving, and [] (never NULL) when the subquery is empty.  Built as
- * a native ARRAY_SUBLINK whose SQL array is coerced to jsonb through the
- * standard cypher_to_jsonb path, yielding a first-class cypher list.
+ * gathered into a cypher list -- order-preserving and NULL-preserving, and []
+ * (never NULL) when the subquery is empty.  Built as a native ARRAY_SUBLINK
+ * wrapped as a Cypher expression; the transform boxes the array to jsonb
+ * unless it holds nodes, relationships or paths, which stay a list of those.
  */
 cypher_collect_subquery:
 			COLLECT '{' cypher_read_stmt '}'
@@ -23024,7 +23025,7 @@ cypher_collect_subquery:
 					n->operName = NIL;
 					n->subselect = $3;
 					n->location = @1;
-					$$ = makeTypeCast((Node *) n, SystemTypeName("jsonb"), @1);
+					$$ = makeCypherGenericExpr((Node *) n);
 				}
 			| COLLECT '{' select_no_parens '}'
 				{
@@ -23037,15 +23038,15 @@ cypher_collect_subquery:
 					n->operName = NIL;
 					n->subselect = $3;
 					n->location = @1;
-					$$ = makeTypeCast((Node *) n, SystemTypeName("jsonb"), @1);
+					$$ = makeCypherGenericExpr((Node *) n);
 				}
 		;
 
 /*
  * ARRAY subquery: the SQL/GQL-standard spelling of COLLECT -- every value the
- * single-column read subquery yields, gathered into a cypher list (a jsonb
- * array): order-preserving, NULL-preserving, and [] (never NULL) when empty.
- * Built, like COLLECT, as a native ARRAY_SUBLINK coerced to jsonb.
+ * single-column read subquery yields, gathered into a cypher list:
+ * order-preserving, NULL-preserving, and [] (never NULL) when empty.  Built,
+ * like COLLECT, as a wrapped ARRAY_SUBLINK that the transform boxes.
  */
 cypher_array_subquery:
 			ARRAY '{' cypher_read_stmt '}'
@@ -23059,7 +23060,7 @@ cypher_array_subquery:
 					n->operName = NIL;
 					n->subselect = $3;
 					n->location = @1;
-					$$ = makeTypeCast((Node *) n, SystemTypeName("jsonb"), @1);
+					$$ = makeCypherGenericExpr((Node *) n);
 				}
 			| ARRAY '{' select_no_parens '}'
 				{
@@ -23072,7 +23073,7 @@ cypher_array_subquery:
 					n->operName = NIL;
 					n->subselect = $3;
 					n->location = @1;
-					$$ = makeTypeCast((Node *) n, SystemTypeName("jsonb"), @1);
+					$$ = makeCypherGenericExpr((Node *) n);
 				}
 		;
 
@@ -24198,6 +24199,16 @@ makeCypherProjection(CPKind kind, List *distinct, List *items, Node *where)
 	n->skip = NULL;
 	n->limit = NULL;
 	n->where = where;
+
+	return (Node *) n;
+}
+
+static Node *
+makeCypherGenericExpr(Node *expr)
+{
+	CypherGenericExpr *n = makeNode(CypherGenericExpr);
+
+	n->expr = expr;
 
 	return (Node *) n;
 }
