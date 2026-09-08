@@ -62,6 +62,7 @@ static Node *transformFields(ParseState *pstate, Node *basenode, List *fields,
 							 int location);
 static Node *transformParamRef(ParseState *pstate, ParamRef *pref);
 static Node *transformTypeCast(ParseState *pstate, TypeCast *tc);
+static Oid	graphElementArrayType(Oid elemtype);
 static Node *transformCypherMapExpr(ParseState *pstate, CypherMapExpr *m);
 static Node *transformCypherListExpr(ParseState *pstate, CypherListExpr *cl);
 static Node *transformCypherListComp(ParseState *pstate, CypherListComp *clc);
@@ -168,17 +169,38 @@ transformCypherExprRecurse(ParseState *pstate, Node *expr)
 			return transformFuncCall(pstate, (FuncCall *) expr);
 		case T_CoalesceExpr:
 			return transformCoalesceExpr(pstate, (CoalesceExpr *) expr);
+		case T_CypherGenericExpr:
+			return transformCypherExprRecurse(pstate,
+											  ((CypherGenericExpr *) expr)->expr);
 		case T_SubLink:
 			{
 				SubLink    *sublink = (SubLink *) expr;
 				CypherGenericExpr *cexpr;
+				Node	   *node;
 
 				cexpr = makeNode(CypherGenericExpr);
 				cexpr->expr = sublink->testexpr;
 
 				sublink->testexpr = (Node *) cexpr;
 
-				return transformExpr(pstate, expr, pstate->p_expr_kind);
+				node = transformExpr(pstate, expr, pstate->p_expr_kind);
+
+				/*
+				 * COLLECT { } and ARRAY { } gather the body's column into a
+				 * list.  A list of nodes, relationships or paths is kept as
+				 * their array; any other list is boxed to jsonb.
+				 */
+				if (sublink->subLinkType == ARRAY_SUBLINK)
+				{
+					Oid			type = exprType(node);
+
+					if (!OidIsValid(graphElementArrayType(get_element_type(type))))
+						node = coerce_expr(pstate, node, type, JSONBOID, -1,
+										   COERCION_EXPLICIT, COERCE_EXPLICIT_CAST,
+										   exprLocation(node));
+				}
+
+				return node;
 			}
 		case T_A_Indirection:
 			return transformIndirection(pstate, (A_Indirection *) expr);
@@ -2943,7 +2965,12 @@ transformAExprIn(ParseState *pstate, A_Expr *a)
 					if (rtype == JSONBOID || type_is_array(rtype) || rtype == ANYARRAYOID)
 					{
 						/* Coerce anyarray to jsonb for containment operator */
-						if (rtype == ANYARRAYOID || type_is_array(rtype))
+						if (is_graph_type(rtype))
+							rexpr = (Node *) makeFuncExpr(F_TO_JSONB, JSONBOID,
+														  list_make1(rexpr),
+														  InvalidOid, InvalidOid,
+														  COERCE_EXPLICIT_CALL);
+						else if (rtype == ANYARRAYOID || type_is_array(rtype))
 							rexpr = coerce_to_jsonb(pstate, rexpr, "list");
 
 						result = (Node *) make_op(pstate, list_make1(makeString("@>")),

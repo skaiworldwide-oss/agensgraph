@@ -3485,6 +3485,30 @@ RETURN person.dogNames AS dogNames;
 CREATE (s:Summary {dogs: COLLECT { MATCH (d:Dog) RETURN d.name ORDER BY d.name }})
 RETURN s.dogs AS dogs;
 
+-- a COLLECT or ARRAY of nodes, relationships or paths is a list of those
+RETURN COLLECT { MATCH (d:Dog) RETURN d ORDER BY d.name } AS dogs;
+RETURN ARRAY { MATCH (d:Dog) RETURN d ORDER BY d.name } AS dogs;
+RETURN head(COLLECT { MATCH (d:Dog) RETURN d ORDER BY d.name }).name AS first_dog;
+RETURN keys(head(COLLECT { MATCH (d:Dog) RETURN d ORDER BY d.name })) AS first_keys;
+RETURN label(head(COLLECT { MATCH (d:Dog) RETURN d ORDER BY d.name })) AS first_label;
+RETURN [x IN COLLECT { MATCH (d:Dog) RETURN d ORDER BY d.name } | x.name] AS names;
+RETURN COLLECT { MATCH (:Person)-[r:HAS_DOG]->(:Dog) RETURN r ORDER BY id(r) } AS owns;
+RETURN length(head(COLLECT { MATCH p = (q:Person)-[:HAS_DOG]->(d:Dog)
+                             RETURN p ORDER BY q.name, d.name })) AS hops;
+RETURN COLLECT { MATCH (d:Dog) WHERE d.name = 'nobody' RETURN d } AS none;
+-- a property list is still a jsonb list
+RETURN COLLECT { MATCH (d:Dog) RETURN d.name ORDER BY d.name } AS names;
+-- membership in a collected element list is a test of identity
+MATCH (a:Dog), (b:Dog) WHERE id(a) <> id(b)
+RETURN a.name AS a, b.name AS b,
+       a IN COLLECT { MATCH (d:Dog) WHERE id(d) = id(b) RETURN d } AS in_other,
+       a IN COLLECT { MATCH (d:Dog) WHERE id(d) = id(a) RETURN d } AS in_self
+ORDER BY a, b;
+-- a scalar is never a member of an element list
+RETURN 1 IN COLLECT { MATCH (d:Dog) RETURN d } AS r;
+-- error: a property cannot hold a list of nodes
+MATCH (p:Person) WITH p LIMIT 1 SET p.dogs = COLLECT { MATCH (d:Dog) RETURN d };
+
 -- error: the subquery must return exactly one column (Cypher form)
 RETURN COLLECT { MATCH (p:Person)-[:HAS_DOG]->(d:Dog) RETURN p.name, d.name };
 
