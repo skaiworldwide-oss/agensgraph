@@ -2387,6 +2387,8 @@ typedef struct CypherTypeCast
 	CoercionContext cctx;
 	CoercionForm cform;
 	char		typcategory;
+	/* OID of collation, or InvalidOid if none */
+	Oid			resultcollid pg_node_attr(query_jumble_ignore);
 	Expr	   *arg;
 	ParseLoc	location;
 } CypherTypeCast;
