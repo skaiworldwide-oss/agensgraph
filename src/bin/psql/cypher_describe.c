@@ -426,13 +426,39 @@ describeOneLabelDetails(const char *graphname, const char *labelname)
 		PGresult   *result = NULL;
 		int			tuples = 0;
 
+		/*
+		 * Only an exclusion constraint of the one shape ASSERT expr IS UNIQUE
+		 * builds -- one btree column over a property, compared with = -- has a
+		 * Cypher spelling.  Any other one is shown as the SQL that made it.
+		 * pg_dump decides the same thing the same way, in getIndexes().
+		 */
 		printfPQExpBuffer(&buf,
-						  "SELECT r.conname, "
-						  "pg_catalog.ag_get_graphconstraintdef(r.oid)\n"
-						  "FROM pg_catalog.pg_constraint r, "
-						  "pg_catalog.ag_label l, pg_catalog.ag_graph g\n"
-						  "WHERE r.conrelid = l.relid AND l.graphid = g.oid AND "
-						  "l.labname = '%s' AND g.graphname = '%s' AND "
+						  "SELECT r.conname,\n"
+						  "  CASE WHEN r.contype = 'c'\n"
+						  "         OR (i.indnatts = 1\n"
+						  "             AND i.indexprs IS NOT NULL\n"
+						  "             AND i.indpred IS NULL\n"
+						  "             AND i.indcollation[0] = 0\n"
+						  "             AND i.indoption[0] = 0\n"
+						  "             AND i.indclass[0] IN (SELECT oid FROM pg_catalog.pg_opclass\n"
+						  "                                    WHERE opcdefault)\n"
+						  "             AND t.relam = (SELECT oid FROM pg_catalog.pg_am\n"
+						  "                             WHERE amname = 'btree')\n"
+						  "             AND t.reloptions IS NULL\n"
+						  "             AND NOT r.condeferrable\n"
+						  "             AND r.convalidated\n"
+						  "             AND r.conexclop <@ (SELECT pg_catalog.array_agg(oid)\n"
+						  "                                   FROM pg_catalog.pg_operator\n"
+						  "                                  WHERE oprname = '='))\n"
+						  "       THEN pg_catalog.ag_get_graphconstraintdef(r.oid)\n"
+						  "       ELSE pg_catalog.pg_get_constraintdef(r.oid)\n"
+						  "  END\n"
+						  "FROM pg_catalog.pg_constraint r\n"
+						  "  JOIN pg_catalog.ag_label l ON r.conrelid = l.relid\n"
+						  "  JOIN pg_catalog.ag_graph g ON l.graphid = g.oid\n"
+						  "  LEFT JOIN pg_catalog.pg_index i ON i.indexrelid = r.conindid\n"
+						  "  LEFT JOIN pg_catalog.pg_class t ON t.oid = r.conindid\n"
+						  "WHERE l.labname = '%s' AND g.graphname = '%s' AND "
 						  "r.contype IN ('c','x')\n"
 						  "ORDER BY 1;",
 						  labelname, graphname);
