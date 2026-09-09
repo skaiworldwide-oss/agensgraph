@@ -18503,8 +18503,16 @@ dumpConstraint(Archive *fout, const ConstraintInfo *coninfo)
 			indxinfo->ispropidx)
 		{
 			setGraphPath(q, tbinfo->dobj.namespace);
-			appendPQExpBuffer(q, "CREATE CONSTRAINT ON %s ",
-							  tbinfo->dobj.name);
+
+			/*
+			 * CREATE CONSTRAINT with no name makes one up from the label, and
+			 * names the constraint's index after it.  fmtId returns one shared
+			 * buffer, so the two names take separate calls.
+			 */
+			appendPQExpBuffer(q, "CREATE CONSTRAINT %s ",
+							  fmtId(coninfo->dobj.name));
+			appendPQExpBuffer(q, "ON %s ",
+							  fmtId(tbinfo->dobj.name));
 		}
 		else
 		{

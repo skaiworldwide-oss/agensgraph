@@ -104,6 +104,7 @@ tests += {
       't/005_pg_dump_filterfile.pl',
       't/010_dump_connstr.pl',
       't/011_promoted_columns.pl',
+      't/012_label_constraints.pl',
     ],
   },
 }
