@@ -3928,8 +3928,8 @@ RETURN ARRAY { MATCH (a:Person) DETACH DELETE a RETURN a };
 RETURN 'Fido' IN { MATCH (:Person)-[:HAS_DOG]->(d:Dog) RETURN d.name } AS yes;
 RETURN 'Rex' IN { MATCH (:Person)-[:HAS_DOG]->(d:Dog) RETURN d.name } AS no;
 
--- numeric membership (the left operand is coerced to jsonb to match the jsonb
--- column a cypher RETURN produces)
+-- numeric membership (a value and the column a cypher RETURN produces meet as
+-- jsonb)
 RETURN 35 IN { MATCH (p:Person) RETURN p.age } AS has35;
 RETURN 99 IN { MATCH (p:Person) RETURN p.age } AS has99;
 
@@ -3943,6 +3943,45 @@ RETURN toUpper('fido') IN { MATCH (d:Dog) RETURN toUpper(d.name) } AS yes;
 -- whole-vertex membership (node equality)
 MATCH (p:Person {name: 'Peter'})
 RETURN p IN { MATCH (q:Person) RETURN q } AS present;
+
+-- a node, relationship or graphid is matched by identity, as in "x IN [list]":
+-- two vertices with equal properties are still two vertices
+CREATE (:Twin {k: 1}), (:Twin {k: 1});
+MATCH (a:Twin), (b:Twin) WHERE id(a) <> id(b)
+CREATE (a)-[:TWIN_OF {w: 1}]->(b);
+MATCH (a:Twin), (b:Twin) WHERE id(a) <> id(b)
+RETURN a IN { MATCH (n:Twin) WHERE id(n) = id(b) RETURN n } AS other,
+       a IN { MATCH (n:Twin) WHERE id(n) = id(a) RETURN n } AS self,
+       a NOT IN { MATCH (n:Twin) WHERE id(n) = id(b) RETURN n } AS not_other;
+MATCH ()-[e:TWIN_OF]->() MATCH ()-[f:TWIN_OF]->() WHERE id(e) <> id(f)
+RETURN e IN { MATCH ()-[g:TWIN_OF]->() WHERE id(g) = id(f) RETURN g } AS other,
+       e IN { MATCH ()-[g:TWIN_OF]->() WHERE id(g) = id(e) RETURN g } AS self;
+-- either side may be the element or its id
+MATCH (a:Twin) WITH a ORDER BY id(a) LIMIT 1
+RETURN id(a) IN { MATCH (n:Twin) RETURN id(n) } AS id_in_ids,
+       id(a) IN { MATCH (n:Twin) RETURN n } AS id_in_nodes,
+       a IN { MATCH (n:Twin) RETURN id(n) } AS node_in_ids;
+-- in a WHERE the identity test is a semi-join on the id
+MATCH (a:Twin), (b:Twin) WHERE id(a) <> id(b)
+  AND a IN { MATCH (n:Twin) WHERE id(n) = id(b) RETURN n }
+RETURN count(*) AS none;
+EXPLAIN (VERBOSE, COSTS OFF)
+MATCH (a:Twin) RETURN a IN { MATCH (n:Twin) RETURN n } AS r;
+-- the body may be a set operation
+MATCH (a:Twin), (b:Twin) WHERE id(a) <> id(b)
+RETURN a IN { MATCH (n:Twin) WHERE id(n) = id(b) RETURN n
+              UNION MATCH (n:Twin) WHERE id(n) = id(b) RETURN n } AS other,
+       a IN { MATCH (n:Twin) WHERE id(n) = id(a) RETURN n
+              UNION ALL MATCH (n:Twin) RETURN n } AS self;
+-- an element is never a member of a set of values, nor a value of a set of
+-- elements
+MATCH (a:Twin) WITH a LIMIT 1 RETURN a IN { MATCH (n:Twin) RETURN n.k } AS r;
+RETURN 1 IN { MATCH (n:Twin) RETURN n } AS scalar, {k: 1} IN { MATCH (n:Twin) RETURN n } AS map;
+-- a path is compared whole
+MATCH p = (a:Twin)-[:TWIN_OF]->(b)
+RETURN p IN { MATCH q = (:Twin)-[:TWIN_OF]->() WHERE id(nodes(q)[0]) = id(a) RETURN q } AS same,
+       p IN { MATCH q = (:Twin)-[:TWIN_OF]->() WHERE id(nodes(q)[0]) <> id(a) RETURN q } AS other;
+MATCH (t:Twin) DETACH DELETE t;
 
 -- correlated to the outer row: who owns a dog named 'Fido'
 MATCH (person:Person)
