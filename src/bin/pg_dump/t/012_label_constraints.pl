@@ -73,6 +73,8 @@ my $graph = q{
 	-- one over a promoted column, which arrives with the label rather than after it
 	CREATE VLABEL typed (age int GENERATED);
 	ALTER TABLE g.typed ADD CONSTRAINT typed_age_chk CHECK (age IS NULL OR age >= 0);
+	-- a named NOT NULL on that column names two identifiers in one statement
+	ALTER TABLE g.typed ADD CONSTRAINT typed_age_nn NOT NULL age;
 	-- one left NOT VALID, which reaches the dump by another path
 	CREATE VLABEL nv;
 	ALTER TABLE g.nv ADD CONSTRAINT nv_chk CHECK ((properties->>'k')::int > 0) NOT VALID;

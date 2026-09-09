@@ -3904,6 +3904,30 @@ my %tests = (
 		like => { binary_upgrade => 1, },
 	},
 
+	# Both names are quoted, and each takes its own call: fmtId hands back one
+	# shared buffer, so asking for two at once loses one of them.
+	'ADD CONSTRAINT ... NOT NULL on a promoted column' => {
+		create_order => 142,
+		create_sql => 'SET graph_path = dump_test_graph;
+					   CREATE VLABEL dtg_nn (since text GENERATED);
+					   ALTER TABLE dump_test_graph.dtg_nn
+					       ADD CONSTRAINT dtg_nn_since_nn NOT NULL since;',
+		regexp =>
+		  qr/^\QALTER TABLE ONLY dump_test_graph.dtg_nn ADD CONSTRAINT dtg_nn_since_nn NOT NULL since;\E$/m,
+		like => { %full_runs, section_pre_data => 1, },
+	},
+
+	'ADD CONSTRAINT ... NOT NULL where both names need quoting' => {
+		create_order => 143,
+		create_sql => 'SET graph_path = dump_test_graph;
+					   CREATE VLABEL dtg_nnq ("Since When" text GENERATED);
+					   ALTER TABLE dump_test_graph.dtg_nnq
+					       ADD CONSTRAINT "Dtg NN" NOT NULL "Since When";',
+		regexp =>
+		  qr/^\QALTER TABLE ONLY dump_test_graph.dtg_nnq ADD CONSTRAINT "Dtg NN" NOT NULL "Since When";\E$/m,
+		like => { %full_runs, section_pre_data => 1, },
+	},
+
 	'CREATE PROPERTY INDEX' => {
 		create_order => 139,
 		create_sql => 'SET graph_path = dump_test_graph;
