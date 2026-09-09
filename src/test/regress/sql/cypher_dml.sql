@@ -2805,6 +2805,26 @@ FOR alert in ['all','some'] WITH OFFSET
 RETURN p.Id, alert AS alert_type, "offset"
 ORDER BY Id, alert_type, "offset";
 
+-- == a list of nodes, relationships or paths ==
+-- the element comes out as itself, as it does through UNWIND: a path's
+-- vertices and edges, a collected list, a list literal, a COLLECT subquery
+MATCH p = (:Person {Id: 1})-[:Owns]->(:Account)
+FOR v in vertices(p) RETURN v, pg_typeof(v);
+MATCH p = (:Person {Id: 1})-[:Owns]->(:Account)
+FOR e in edges(p) RETURN e, pg_typeof(e);
+MATCH (p:Person) WITH collect(p) AS ps FOR v in ps RETURN v.name AS name ORDER BY name;
+MATCH (p:Person {Id: 1}) FOR v in [p] RETURN v.name AS name, label(v) AS label;
+MATCH (p:Person {Id: 1}) FOR v in COLLECT { MATCH (a:Account) RETURN a } RETURN v.no AS no ORDER BY no;
+-- the element and its offset over a list of nodes
+MATCH p = (:Person {Id: 1})-[:Owns]->(:Account)
+FOR v in vertices(p) WITH OFFSET AS i RETURN i, label(v) AS label ORDER BY i;
+-- the element is usable as a node afterwards: a following MATCH from it
+MATCH p = (:Person {Id: 1})-[:Owns]->(:Account)
+FOR v in vertices(p) MATCH (v)-[:Owns]->(a:Account) RETURN a.no AS no;
+-- a list of paths
+MATCH p = (:Person)-[:Owns]->(:Account) WITH collect(p) AS ps
+FOR q in ps RETURN length(q) AS len, pg_typeof(q) ORDER BY len LIMIT 1;
+
 -- == composition / chaining ==
 -- standalone FOR, then WITH, then RETURN
 FOR x in [1,2,3] WITH x AS col RETURN col ORDER BY col;
