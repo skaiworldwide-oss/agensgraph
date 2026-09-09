@@ -134,13 +134,58 @@ DROP VLABEL piv8;
 
 CREATE VLABEL piv9;
 
-CREATE PROPERTY INDEX piv9_property_index_key1 ON piv9 (key1);
-DROP INDEX propidx.piv9_property_index_key1;
-
+-- an index that is not over properties is not the graph DDL's to drop
 CREATE INDEX piv9_index_key1 ON propidx.piv9 (properties);
 DROP PROPERTY INDEX piv9_index_key1;
+DROP INDEX propidx.piv9_index_key1;
 
 DROP VLABEL piv9;
+
+-- Plain SQL spelling of a property index
+--
+-- A property index stores properties.'key', and that is what a Cypher filter
+-- on the property compiles to.  The same spelling is accepted by a plain
+-- CREATE INDEX, so an index made either way is one the filter uses, and the
+-- definition pg_get_indexdef prints runs as written.  Either statement drops
+-- such an index; DROP PROPERTY INDEX alone is refused an index that is not
+-- over properties.
+CREATE VLABEL piv13;
+UNWIND range(1, 200) AS i CREATE (:piv13 {k: 'k' + toString(i), n: i % 10, m: {a: i}});
+ANALYZE propidx.piv13;
+
+CREATE PROPERTY INDEX piv13_prop ON piv13 (k);
+CREATE INDEX piv13_sql ON propidx.piv13 ((properties.'k'));
+CREATE INDEX piv13_two ON propidx.piv13 ((properties.'k'), (properties.'n'));
+CREATE INDEX piv13_nested ON propidx.piv13 ((properties.'m'.'a'));
+SELECT indexrelid::regclass AS index, pg_get_expr(indexprs, indrelid) AS expression
+FROM pg_index WHERE indrelid = 'propidx.piv13'::regclass AND indexprs IS NOT NULL
+ORDER BY 1;
+SELECT pg_get_indexdef('propidx.piv13_sql'::regclass);
+DROP PROPERTY INDEX piv13_prop;
+
+-- the filter uses the index written in SQL: one key, a nested key
+SET enable_seqscan = off;
+EXPLAIN (COSTS OFF) MATCH (n:piv13) WHERE n.k = 'k7' RETURN n;
+EXPLAIN (COSTS OFF) MATCH (n:piv13) WHERE n.m.a = 7 RETURN n;
+
+-- the printed definition, run under a new name, is the same index
+CREATE INDEX piv13_again ON propidx.piv13 USING btree ((properties.'k'));
+SELECT pg_get_expr(indexprs, indrelid) FROM pg_index WHERE indexrelid = 'propidx.piv13_again'::regclass;
+
+-- either statement drops an index over properties, whichever statement made it
+DROP INDEX propidx.piv13_sql;
+DROP PROPERTY INDEX piv13_again;
+CREATE PROPERTY INDEX piv13_prop ON piv13 (k);
+DROP INDEX propidx.piv13_prop;
+
+-- with the single-key indexes gone, two keys are served by the two-key index
+EXPLAIN (COSTS OFF) MATCH (n:piv13) WHERE n.k = 'k7' AND n.n = 7 RETURN n;
+RESET enable_seqscan;
+DROP INDEX propidx.piv13_two, propidx.piv13_nested;
+\dGi piv13*
+
+MATCH (n:piv13) DELETE n;
+DROP VLABEL piv13;
 
 -- Subscripted property keys
 --
