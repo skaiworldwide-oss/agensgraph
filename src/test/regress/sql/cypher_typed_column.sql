@@ -2257,12 +2257,20 @@ ALTER TABLE tc.gate ALTER COLUMN properties DROP NOT NULL;
 ALTER VLABEL gate ADD COLUMN nm text GENERATED;
 ALTER VLABEL gate DROP COLUMN nm;
 
--- 22a2. A constraint on a label is dropped by the graph's own DDL, which is
---       rewritten into an ALTER TABLE -- so what the graph itself issues has to
---       keep working while the same thing typed directly is refused.
+-- 22a2. A constraint goes on a label with ALTER TABLE and comes off the same
+--       way, the primary key included.  The graph's own DDL drops one too.
 CREATE CONSTRAINT gate_uk ON gate ASSERT age IS UNIQUE;
 ALTER TABLE tc.gate DROP CONSTRAINT gate_uk;
+CREATE CONSTRAINT gate_uk ON gate ASSERT age IS UNIQUE;
 DROP CONSTRAINT gate_uk ON gate;
+ALTER TABLE ONLY tc.gate DROP CONSTRAINT gate_pkey;
+ALTER TABLE ONLY tc.gate ADD CONSTRAINT gate_pkey PRIMARY KEY (id);
+
+-- 22a3. Naming a not-null constraint is refused the way DROP NOT NULL is, and
+--       IF EXISTS does not get past it.
+ALTER TABLE tc.gate DROP CONSTRAINT gate_properties_not_null;
+ALTER TABLE tc.gate DROP CONSTRAINT IF EXISTS gate_id_not_null;
+ALTER TABLE tc.gate DROP CONSTRAINT IF EXISTS gate_no_such_constraint;
 
 -- 22b. An ALTER TABLE that reshapes nothing is still allowed, including the ones
 --      a dump emits.
@@ -2407,12 +2415,8 @@ ALTER TABLE tc.gate DISABLE TRIGGER ALL;
 ALTER TABLE tc.gate ENABLE TRIGGER ALL;
 ALTER TABLE tc.gate REPLICA IDENTITY FULL;
 ALTER TABLE tc.gate REPLICA IDENTITY DEFAULT;
--- dropping that constraint, though, is refused -- and the graph's own DDL is how
--- it is done, which reaches ALTER TABLE as a subcommand and so is not judged
+-- and dropping it again puts the label back as it was
 ALTER TABLE tc.gate DROP CONSTRAINT gate_chk;
-SET enable_graph_ddl = on;
-ALTER TABLE tc.gate DROP CONSTRAINT gate_chk;
-RESET enable_graph_ddl;
 
 -- 22j. A table that is not a label is not affected by any of them.
 CREATE TABLE tc_ordinary (a int GENERATED ALWAYS AS (1) STORED, b int NOT NULL);
