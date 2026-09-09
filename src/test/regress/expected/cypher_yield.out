@@ -50,7 +50,9 @@
 -- matrix of a nulled column, null semantics downstream, composition with the
 -- surrounding pipeline and with the inline call form, plan shapes, the errors and
 -- placement guards it does not relax -- followed by backward compatibility of
--- "yield" as an ordinary identifier plus keyword case-folding.
+-- "yield" as an ordinary identifier plus keyword case-folding, the built-in
+-- set-returning functions as routines, and the rule that a yield item names an
+-- output column of the routine and nothing else.
 --
 -- Set up
 CREATE GRAPH cypher_yield;
@@ -91,6 +93,9 @@ $$ SELECT 1 WHERE (age #>> '{}')::int >= 30 $$;
 -- A routine whose single parameter is a plain int, used only to demonstrate the
 -- jsonb-property/int-parameter typing boundary.
 CREATE FUNCTION yc_int(n int) RETURNS TABLE(x int) LANGUAGE sql AS $$ SELECT n $$;
+-- A routine returning whole vertices, yielded as a row under the routine's name.
+CREATE FUNCTION yc_people() RETURNS SETOF vertex LANGUAGE sql STABLE AS
+$$ MATCH (p:person) RETURN p ORDER BY p.id $$;
 --
 -- 1. Multi-column TABLE routine -- every YIELD form
 --
@@ -1163,6 +1168,111 @@ SELECT value FROM jsonb_array_elements('[10, 20, 30]'::jsonb) AS value ORDER BY 
  30
 (3 rows)
 
+--
+-- 15. A yield item names an output column of the routine and nothing else
+--
+-- The variables the preceding clauses bound are not candidates: a yield item
+-- that is not an output column of the routine is an error, however the name is
+-- bound outside the call.
+-- The vertex bound by the preceding MATCH
+MATCH (p:person {id: 1}) CALL yc_table() YIELD p AS m
+RETURN m;
+ERROR:  function yc_table has no output column "p"
+LINE 1: MATCH (p:person {id: 1}) CALL yc_table() YIELD p AS m
+                                                       ^
+-- A scalar introduced by WITH, an UNWIND item, a LET binding
+MATCH (p:person {id: 1}) WITH p.age AS age CALL yc_table() YIELD age AS x
+RETURN x;
+ERROR:  function yc_table has no output column "age"
+LINE 1: ...on {id: 1}) WITH p.age AS age CALL yc_table() YIELD age AS x
+                                                               ^
+UNWIND [1, 2] AS u CALL yc_table() YIELD u
+RETURN u;
+ERROR:  function yc_table has no output column "u"
+LINE 1: UNWIND [1, 2] AS u CALL yc_table() YIELD u
+                                                 ^
+MATCH (p:person {id: 1}) LET age = p.age CALL yc_table() YIELD age
+RETURN age;
+ERROR:  function yc_table has no output column "age"
+LINE 1: ...(p:person {id: 1}) LET age = p.age CALL yc_table() YIELD age
+                                                                    ^
+-- A name bound nowhere
+MATCH (p:person {id: 1}) CALL yc_table() YIELD nosuch
+RETURN nosuch;
+ERROR:  function yc_table has no output column "nosuch"
+LINE 1: MATCH (p:person {id: 1}) CALL yc_table() YIELD nosuch
+                                                       ^
+-- The routine's own name is its whole row: a vertex for a routine returning
+-- vertices, a record for a multi-column one.  An output column of that name
+-- would come first (section 2: generate_series).
+MATCH (p:person {id: 1}) CALL yc_people() YIELD yc_people AS v
+RETURN v.name AS nm, v.age = p.age AS same_age ORDER BY nm;
+   nm    | same_age 
+---------+----------
+ "alice" | t
+ "bob"   | f
+ "carol" | f
+ "dave"  | f
+(4 rows)
+
+MATCH (p:person {id: 1}) CALL yc_table() YIELD yc_table AS row
+RETURN row ORDER BY row;
+          row           
+------------------------
+ {"a": 1, "b": "one"}
+ {"a": 2, "b": "two"}
+ {"a": 3, "b": "three"}
+(3 rows)
+
+-- ... and an outer variable of the routine's name does not take its place.
+MATCH (yc_people:person {id: 1}) CALL yc_people() YIELD yc_people AS v
+RETURN v.name AS nm ORDER BY nm;
+   nm    
+---------
+ "alice"
+ "bob"
+ "carol"
+ "dave"
+(4 rows)
+
+-- The error names the routine as it was written
+MATCH (p:person {id: 1}) CALL pg_catalog.generate_series(1, 2) YIELD p AS m
+RETURN m;
+ERROR:  function pg_catalog.generate_series has no output column "p"
+LINE 1: ... {id: 1}) CALL pg_catalog.generate_series(1, 2) YIELD p AS m
+                                                                 ^
+-- OPTIONAL CALL resolves the yield list the same way
+MATCH (p:person {id: 1}) OPTIONAL CALL yc_table() YIELD p AS m
+RETURN m;
+ERROR:  function yc_table has no output column "p"
+LINE 1: ...TCH (p:person {id: 1}) OPTIONAL CALL yc_table() YIELD p AS m
+                                                                 ^
+-- So does a yield item that is then written to
+MATCH (p:person {id: 1}) CALL yc_table() YIELD p AS m
+SET m.flag = 1;
+ERROR:  function yc_table has no output column "p"
+LINE 1: MATCH (p:person {id: 1}) CALL yc_table() YIELD p AS m
+                                                       ^
+-- The same output column may be yielded twice under two names, and the yield
+-- list sets the column order.
+MATCH (p:person {id: 1}) CALL yc_table() YIELD a AS x, a AS y
+RETURN x, y ORDER BY x;
+ x | y 
+---+---
+ 1 | 1
+ 2 | 2
+ 3 | 3
+(3 rows)
+
+MATCH (p:person {id: 1}) CALL yc_table() YIELD b, a
+RETURN b, a ORDER BY a;
+    b    | a 
+---------+---
+ "one"   | 1
+ "two"   | 2
+ "three" | 3
+(3 rows)
+
 -- Tear down
 DROP FUNCTION yc_table();
 DROP FUNCTION yc_dup(jsonb, int);
@@ -1171,6 +1281,7 @@ DROP FUNCTION yc_zero();
 DROP FUNCTION yc_ids();
 DROP FUNCTION yc_ge30(jsonb);
 DROP FUNCTION yc_int(int);
+DROP FUNCTION yc_people();
 DROP GRAPH cypher_yield CASCADE;
 NOTICE:  drop cascades to 6 other objects
 DETAIL:  drop cascades to sequence cypher_yield.ag_label_seq
