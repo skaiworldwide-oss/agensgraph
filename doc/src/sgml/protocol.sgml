@@ -1403,10 +1403,12 @@ SELCT 1/0;<!-- this typo is intentional -->
     At present there is a hard-wired set of parameters for which
     ParameterStatus will be generated.  They are:
     <simplelist type="vert" columns="2">
+     <member><varname>agversion</varname></member>
      <member><varname>application_name</varname></member>
      <member><varname>client_encoding</varname></member>
      <member><varname>DateStyle</varname></member>
      <member><varname>default_transaction_read_only</varname></member>
+     <member><varname>graph_path</varname></member>
      <member><varname>in_hot_standby</varname></member>
      <member><varname>integer_datetimes</varname></member>
      <member><varname>IntervalStyle</varname></member>
