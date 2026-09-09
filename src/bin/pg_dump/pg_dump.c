@@ -20748,6 +20748,22 @@ dumpLabelSchema(Archive *fout, const TableInfo *tblinfo)
 	}
 
 	/*
+	 * A label's own CHECK constraints.  Label DDL has no place for one, so each
+	 * is added here, after the columns it can name.
+	 */
+	for (j = 0; j < tblinfo->ncheck; j++)
+	{
+		ConstraintInfo *constr = &(tblinfo->checkexprs[j]);
+
+		if (constr->separate || !constr->conislocal)
+			continue;
+
+		appendPQExpBuffer(q, "ALTER TABLE ONLY %s\n", qualrelname);
+		appendPQExpBuffer(q, "    ADD CONSTRAINT %s %s;\n",
+						  fmtId(constr->dobj.name), constr->condef);
+	}
+
+	/*
 	 * in binary upgrade mode, update the catalog with any missing values that
 	 * might be present.
 	 */
