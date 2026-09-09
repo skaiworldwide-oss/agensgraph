@@ -4777,3 +4777,64 @@ MATCH (n:w8) RETURN count(*) AS w8_written;
 
 DROP GRAPH write_done CASCADE;
 RESET graph_path;
+
+-- a clause written between a write and FINISH does not let the write's rows
+-- out: FINISH returns no rows whatever sits above the write
+CREATE GRAPH finish_between;
+SET graph_path = finish_between;
+CREATE (:src {n: 1}), (:src {n: 2});
+
+MATCH (n:src) CREATE (:c_filter {n: n.n}) FILTER true FINISH;
+MATCH (n:src) CREATE (:c_order {n: n.n}) ORDER BY n.n FINISH;
+MATCH (n:src) CREATE (:c_limit {n: n.n}) LIMIT 1 FINISH;
+MATCH (n:src) CREATE (:c_with {n: n.n}) WITH * FINISH;
+MATCH (n:src) CREATE (:c_unwind {n: n.n}) UNWIND [1, 2, 3] AS k FINISH;
+MATCH (n:src) CREATE (:c_for {n: n.n}) FOR k IN [1, 2, 3] FINISH;
+
+-- and each of them wrote both rows: the write runs to completion at
+-- ExecutorFinish, so the LIMIT 0 above it reading no row costs it nothing
+MATCH (n) WHERE label(n) IN ['c_filter', 'c_order', 'c_limit', 'c_with',
+                             'c_unwind', 'c_for']
+RETURN label(n) AS label, count(n) AS written ORDER BY label;
+
+-- every write clause behaves the same way under an intervening clause
+MATCH (n:src) INSERT (:i_insert {n: n.n}) FILTER true FINISH;
+MATCH (n:src) SET n.seen = true FILTER true FINISH;
+MATCH (n:src) MERGE (:i_merge {n: n.n}) FILTER true FINISH;
+CREATE (:gone), (:gone);
+MATCH (n:gone) DELETE n FILTER true FINISH;
+MATCH (n:i_insert) RETURN count(n) AS inserted;
+MATCH (n:i_merge) RETURN count(n) AS merged;
+MATCH (n:src) WHERE n.seen = true RETURN count(n) AS seen;
+MATCH (n:gone) RETURN count(n) AS undeleted;
+
+-- a clause after a DELETE may still name what the DELETE carried: the query
+-- returns no rows, and the elements the write hands on are not pruned
+CREATE (:gone2), (:gone2);
+MATCH (n:gone2) DELETE n WITH n AS deleted FILTER deleted IS NOT NULL FINISH;
+MATCH (n:gone2) RETURN count(n) AS undeleted2;
+
+-- an earlier write still hands its rows to the write that reads them, one
+-- write per row
+MATCH (n:src) CREATE (:p_read {n: n.n}) WITH *
+CREATE (:p_last {n: n.n}) FILTER true FINISH;
+MATCH (n:p_read) RETURN count(n) AS read_from;
+MATCH (n:p_last) RETURN count(n) AS wrote_per_row;
+
+-- the same chain ended with RETURN still returns its rows
+MATCH (n:src) CREATE (:r_return {n: n.n}) FILTER true RETURN count(*) AS returned;
+
+-- FINISH ends the whole statement across a NEXT boundary, and the writes on
+-- either side of it still happen
+MATCH (n:src) RETURN n NEXT
+MATCH (m:src) CREATE (:x_after {n: m.n}) FILTER true FINISH;
+MATCH (n:src) CREATE (:x_before {n: n.n}) RETURN 1 AS k NEXT
+MATCH (m:src) FILTER true FINISH;
+MATCH (n) WHERE label(n) IN ['x_after', 'x_before']
+RETURN label(n) AS label, count(n) AS written ORDER BY label;
+
+-- the plan holds the Limit above the write, as a read-only FINISH holds it
+EXPLAIN (COSTS OFF) MATCH (n:src) CREATE (:c_plan {n: n.n}) FILTER true FINISH;
+
+DROP GRAPH finish_between CASCADE;
+RESET graph_path;

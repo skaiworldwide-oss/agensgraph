@@ -12394,3 +12394,180 @@ drop cascades to vlabel w6c
 drop cascades to vlabel w7
 drop cascades to vlabel w8
 RESET graph_path;
+-- a clause written between a write and FINISH does not let the write's rows
+-- out: FINISH returns no rows whatever sits above the write
+CREATE GRAPH finish_between;
+SET graph_path = finish_between;
+CREATE (:src {n: 1}), (:src {n: 2});
+MATCH (n:src) CREATE (:c_filter {n: n.n}) FILTER true FINISH;
+--
+(0 rows)
+
+MATCH (n:src) CREATE (:c_order {n: n.n}) ORDER BY n.n FINISH;
+--
+(0 rows)
+
+MATCH (n:src) CREATE (:c_limit {n: n.n}) LIMIT 1 FINISH;
+--
+(0 rows)
+
+MATCH (n:src) CREATE (:c_with {n: n.n}) WITH * FINISH;
+--
+(0 rows)
+
+MATCH (n:src) CREATE (:c_unwind {n: n.n}) UNWIND [1, 2, 3] AS k FINISH;
+--
+(0 rows)
+
+MATCH (n:src) CREATE (:c_for {n: n.n}) FOR k IN [1, 2, 3] FINISH;
+--
+(0 rows)
+
+-- and each of them wrote both rows: the write runs to completion at
+-- ExecutorFinish, so the LIMIT 0 above it reading no row costs it nothing
+MATCH (n) WHERE label(n) IN ['c_filter', 'c_order', 'c_limit', 'c_with',
+                             'c_unwind', 'c_for']
+RETURN label(n) AS label, count(n) AS written ORDER BY label;
+   label    | written 
+------------+---------
+ "c_filter" | 2
+ "c_for"    | 2
+ "c_limit"  | 2
+ "c_order"  | 2
+ "c_unwind" | 2
+ "c_with"   | 2
+(6 rows)
+
+-- every write clause behaves the same way under an intervening clause
+MATCH (n:src) INSERT (:i_insert {n: n.n}) FILTER true FINISH;
+--
+(0 rows)
+
+MATCH (n:src) SET n.seen = true FILTER true FINISH;
+--
+(0 rows)
+
+MATCH (n:src) MERGE (:i_merge {n: n.n}) FILTER true FINISH;
+--
+(0 rows)
+
+CREATE (:gone), (:gone);
+MATCH (n:gone) DELETE n FILTER true FINISH;
+--
+(0 rows)
+
+MATCH (n:i_insert) RETURN count(n) AS inserted;
+ inserted 
+----------
+ 2
+(1 row)
+
+MATCH (n:i_merge) RETURN count(n) AS merged;
+ merged 
+--------
+ 2
+(1 row)
+
+MATCH (n:src) WHERE n.seen = true RETURN count(n) AS seen;
+ seen 
+------
+ 2
+(1 row)
+
+MATCH (n:gone) RETURN count(n) AS undeleted;
+ undeleted 
+-----------
+ 0
+(1 row)
+
+-- a clause after a DELETE may still name what the DELETE carried: the query
+-- returns no rows, and the elements the write hands on are not pruned
+CREATE (:gone2), (:gone2);
+MATCH (n:gone2) DELETE n WITH n AS deleted FILTER deleted IS NOT NULL FINISH;
+--
+(0 rows)
+
+MATCH (n:gone2) RETURN count(n) AS undeleted2;
+ undeleted2 
+------------
+ 0
+(1 row)
+
+-- an earlier write still hands its rows to the write that reads them, one
+-- write per row
+MATCH (n:src) CREATE (:p_read {n: n.n}) WITH *
+CREATE (:p_last {n: n.n}) FILTER true FINISH;
+--
+(0 rows)
+
+MATCH (n:p_read) RETURN count(n) AS read_from;
+ read_from 
+-----------
+ 2
+(1 row)
+
+MATCH (n:p_last) RETURN count(n) AS wrote_per_row;
+ wrote_per_row 
+---------------
+ 2
+(1 row)
+
+-- the same chain ended with RETURN still returns its rows
+MATCH (n:src) CREATE (:r_return {n: n.n}) FILTER true RETURN count(*) AS returned;
+ returned 
+----------
+ 2
+(1 row)
+
+-- FINISH ends the whole statement across a NEXT boundary, and the writes on
+-- either side of it still happen
+MATCH (n:src) RETURN n NEXT
+MATCH (m:src) CREATE (:x_after {n: m.n}) FILTER true FINISH;
+--
+(0 rows)
+
+MATCH (n:src) CREATE (:x_before {n: n.n}) RETURN 1 AS k NEXT
+MATCH (m:src) FILTER true FINISH;
+--
+(0 rows)
+
+MATCH (n) WHERE label(n) IN ['x_after', 'x_before']
+RETURN label(n) AS label, count(n) AS written ORDER BY label;
+   label    | written 
+------------+---------
+ "x_after"  | 4
+ "x_before" | 2
+(2 rows)
+
+-- the plan holds the Limit above the write, as a read-only FINISH holds it
+EXPLAIN (COSTS OFF) MATCH (n:src) CREATE (:c_plan {n: n.n}) FILTER true FINISH;
+          QUERY PLAN           
+-------------------------------
+ Limit
+   ->  Graph Create
+         ->  Seq Scan on src n
+(3 rows)
+
+DROP GRAPH finish_between CASCADE;
+NOTICE:  drop cascades to 20 other objects
+DETAIL:  drop cascades to sequence finish_between.ag_label_seq
+drop cascades to vlabel ag_vertex
+drop cascades to elabel ag_edge
+drop cascades to vlabel src
+drop cascades to vlabel c_filter
+drop cascades to vlabel c_order
+drop cascades to vlabel c_limit
+drop cascades to vlabel c_with
+drop cascades to vlabel c_unwind
+drop cascades to vlabel c_for
+drop cascades to vlabel i_insert
+drop cascades to vlabel i_merge
+drop cascades to vlabel gone
+drop cascades to vlabel gone2
+drop cascades to vlabel p_read
+drop cascades to vlabel p_last
+drop cascades to vlabel r_return
+drop cascades to vlabel x_after
+drop cascades to vlabel x_before
+drop cascades to vlabel c_plan
+RESET graph_path;
