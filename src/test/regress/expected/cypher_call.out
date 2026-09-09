@@ -532,6 +532,29 @@ RETURN dog;
 ERROR:  variable does not exist
 LINE 2: ...H p MATCH (p)-[:HAS_DOG]->(d:Dog) WHERE d.name <> other.name...
                                                              ^
+-- error: an imported variable cannot be rebound in the body, by LET or by UNWIND
+MATCH (p:Person {name: 'Andy'})
+CALL (p) { LET p = 1 RETURN 1 AS x }
+RETURN x;
+ERROR:  variable "p" already exists
+LINE 2: CALL (p) { LET p = 1 RETURN 1 AS x }
+                       ^
+HINT:  LET cannot redefine an existing variable; use a different name.
+MATCH (p:Person {name: 'Andy'})
+CALL (p) { UNWIND [1] AS p RETURN 1 AS x }
+RETURN x;
+ERROR:  duplicate variable "p"
+LINE 2: CALL (p) { UNWIND [1] AS p RETURN 1 AS x }
+                          ^
+-- a variable that is not imported is free for the body to bind
+MATCH (p:Person {name: 'Andy'})
+CALL () { UNWIND [1] AS p RETURN p AS x }
+RETURN p.name AS name, x;
+  name  | x 
+--------+---
+ "Andy" | 1
+(1 row)
+
 -- a variable reused inside the body shadows nothing of the outer (uncorrelated)
 MATCH (p:Person {name: 'Andy'})
 CALL () { MATCH (p:Person {name: 'Peter'})-[:HAS_DOG]->(d:Dog) RETURN d.name AS dog }

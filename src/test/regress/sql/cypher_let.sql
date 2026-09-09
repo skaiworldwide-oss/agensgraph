@@ -166,6 +166,49 @@ MATCH (n:person {id: 1})
 LET z = 1, z = 2
 RETURN z;
 
+-- Rebinding a variable of the enclosing query inside the body of a subquery
+-- expression: the body reads the outer variable, so the name is taken.  Every
+-- body form, a leading and a following LET, a body in WHERE, two levels down.
+MATCH (n:person {id: 1})
+RETURN COUNT { LET n = 1 RETURN n } AS c;
+MATCH (n:person {id: 1})
+RETURN EXISTS { MATCH (m:person) LET n = 1 RETURN m } AS e;
+MATCH (n:person {id: 1})
+RETURN COLLECT { LET n = 1 RETURN n } AS l;
+MATCH (n:person {id: 1})
+RETURN VALUE { LET n = 1 RETURN n } AS v;
+MATCH (n:person {id: 1})
+RETURN ARRAY { LET n = 1 RETURN n } AS a;
+MATCH (n:person {id: 1})
+RETURN 1 IN { LET n = 1 RETURN n } AS i;
+MATCH (n:person {id: 1})
+WHERE COUNT { LET n = 1 RETURN n } > 0
+RETURN n.name;
+MATCH (n:person {id: 1})
+RETURN COUNT { MATCH (m:person) RETURN COUNT { LET n = 1 RETURN n } } AS nested;
+
+-- An edge, a path and a WITH-bound name are taken as well.
+MATCH (a:person)-[k:knows]->(b:person)
+RETURN COUNT { LET k = 1 RETURN k } AS c;
+MATCH p = (a:person)-[:knows]->(b:person)
+RETURN COUNT { LET p = 1 RETURN p } AS c;
+MATCH (a:person {id: 1}) WITH a.name AS nm
+RETURN COUNT { LET nm = 1 RETURN nm } AS c;
+
+-- A CALL body that imports the variable cannot rebind it either ...
+MATCH (n:person {id: 1})
+CALL (n) { LET n = 1 RETURN 1 AS x }
+RETURN x;
+-- ... while one that does not import it may use the name.
+MATCH (n:person {id: 1})
+CALL () { LET n = 1 RETURN n AS x }
+RETURN n.name AS name, x;
+
+-- Inside a body, a bound reference to the outer variable and a fresh name are
+-- fine.
+MATCH (n:person {id: 1})
+RETURN COUNT { MATCH (n)-[:knows]->(m) LET d = m.age * 2 RETURN d } AS c;
+
 -- A plain aggregate in LET.
 MATCH (n:person)
 LET c = count(*)

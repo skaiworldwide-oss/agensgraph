@@ -3024,6 +3024,25 @@ MATCH (person:Person)
 WHERE COUNT { (person)-[:HAS_DOG]->(:Dog) } > 1
 RETURN person.name AS name ORDER BY name;
 
+-- a body cannot bind a name the enclosing query has in scope: the outer
+-- variable stays readable inside, so the new one would hide it
+MATCH (person:Person {name: 'Peter'})
+RETURN COUNT { UNWIND [1, 2] AS person RETURN person } AS c;
+MATCH (person:Person {name: 'Peter'})
+RETURN COUNT { FOR person IN [1, 2] RETURN person } AS c;
+MATCH (person:Person {name: 'Peter'})
+RETURN COUNT { MATCH (d:Dog) WITH d AS person RETURN person } AS c;
+MATCH (person:Person {name: 'Peter'})
+RETURN COUNT { MATCH (d:Dog) WITH d.name AS person RETURN person } AS c;
+MATCH (person:Person {name: 'Peter'})
+RETURN COUNT { CALL () { RETURN 1 AS person } RETURN person } AS c;
+-- a bound reference to the outer variable, passing it on under its own name,
+-- WITH *, and a RETURN alias bind nothing new
+MATCH (person:Person {name: 'Peter'})
+RETURN COUNT { MATCH (person)-[:HAS_DOG]->(d:Dog) WITH person, d RETURN d } AS bound,
+       COUNT { MATCH (person)-[:HAS_DOG]->(d:Dog) WITH * RETURN d } AS star,
+       COUNT { MATCH (d:Dog) RETURN d AS person } AS alias;
+
 -- inner WHERE referencing both outer and inner variables
 MATCH (person:Person)
 RETURN person.name AS name,
