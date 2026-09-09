@@ -1,0 +1,281 @@
+<!--
+doc/src/sgml/ref/cypher_insert.sgml
+PostgreSQL documentation
+-->
+
+<refentry id="cypher-insert">
+ <indexterm zone="cypher-insert">
+  <primary>INSERT</primary>
+ </indexterm>
+
+ <refmeta>
+  <refentrytitle>INSERT</refentrytitle>
+  <manvolnum>7</manvolnum>
+  <refmiscinfo>Cypher - Language Statements</refmiscinfo>
+ </refmeta>
+
+ <refnamediv>
+  <refname>INSERT</refname>
+  <refpurpose>create the vertices and edges a pattern describes</refpurpose>
+ </refnamediv>
+
+ <refsynopsisdiv>
+<synopsis>
+INSERT [ <replaceable class="parameter">path_variable</replaceable> = ] <replaceable class="parameter">pattern</replaceable> [, [ <replaceable class="parameter">path_variable</replaceable> = ] <replaceable class="parameter">pattern</replaceable> ] ...
+</synopsis>
+ </refsynopsisdiv>
+
+ <refsect1 id="cypher-insert-description">
+  <title>Description</title>
+
+  <para>
+   <command>INSERT</command> and <xref linkend="cypher-create"/> are the same clause under two
+   names. The parser builds an identical tree for both, so they accept the same patterns, raise
+   the same errors and produce the same plan.
+  </para>
+
+  <para>
+   Every element in the pattern is created, except an element already bound to a variable in
+   scope. Such an element is reused as an endpoint and is not duplicated. An
+   <command>INSERT</command> runs once per input row, and with no clause before it, it runs
+   once.
+  </para>
+
+  <para>
+   The variables the pattern binds are visible to the clauses that follow, and to later
+   patterns in the same <command>INSERT</command>. Every edge needs exactly one label and a
+   direction. Labels have to exist already, unless <varname>enable_graph_ddl</varname> is on,
+   in which case they are created implicitly.
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-insert-parameters">
+  <title>Parameters</title>
+
+  <variablelist>
+   <varlistentry>
+    <term><replaceable class="parameter">path_variable</replaceable></term>
+    <listitem>
+     <para>
+      Optional name bound to the whole path the pattern created. Returning it yields a
+      <type>graphpath</type> value listing the new vertices and edges in order.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><replaceable class="parameter">pattern</replaceable></term>
+    <listitem>
+     <para>
+      A vertex pattern or a path pattern, as described in <xref linkend="cypher-path"/>. A
+      property map may be written inline, as in <literal>{title: 'Tenet'}</literal>, or
+      supplied whole with <literal>=</literal> from an expression, including a SQL subquery.
+     </para>
+    </listitem>
+   </varlistentry>
+  </variablelist>
+ </refsect1>
+
+ <refsect1 id="cypher-insert-examples">
+  <title>Examples</title>
+
+  <para>
+   These examples use the graph in <xref linkend="agensgraph-example-data"/>.
+  </para>
+
+  <para>
+   Add one film:
+<programlisting>
+INSERT (:movie {title: 'Tenet', year: 2020, genre: 'Action'});
+
+UPDATE 1
+</programlisting>
+  </para>
+
+  <para>
+   The same statement written with <command>CREATE</command> creates the same vertex, and both
+   plan identically:
+<programlisting>
+EXPLAIN (COSTS OFF) INSERT (:movie {title: 'Tenet'});
+
+  QUERY PLAN
+--------------
+ Graph Create
+   -&gt;  Result
+(2 rows)
+</programlisting>
+  </para>
+
+  <para>
+   <command>INSERT</command> binds its variables like any other clause, so a following
+   <command>RETURN</command> can report them:
+<programlisting>
+INSERT (p:person {name: 'John David Washington', born: 1984}) RETURN p.name AS person;
+
+         person
+-------------------------
+ "John David Washington"
+(1 row)
+</programlisting>
+  </para>
+
+  <para>
+   A variable bound by a preceding <command>MATCH</command> is an endpoint, not a new vertex,
+   so only the edge is created:
+<programlisting>
+MATCH (p:person {name: 'Christopher Nolan'}), (m:movie {title: 'Tenet'})
+INSERT (p)-[:directed]-&gt;(m)
+RETURN count(*) AS edges;
+
+ edges
+-------
+ 1
+(1 row)
+</programlisting>
+  </para>
+
+  <para>
+   Patterns are separated by commas and may refer to variables that earlier patterns bound:
+<programlisting>
+MATCH (m:movie {title: 'Tenet'})
+INSERT (a:person {name: 'Robert Pattinson', born: 1986}),
+       (b:person {name: 'Elizabeth Debicki', born: 1990}),
+       (a)-[:acted_in {role: 'Neil'}]-&gt;(m),
+       (b)-[:acted_in {role: 'Kat'}]-&gt;(m);
+
+UPDATE 4
+</programlisting>
+   The tag counts the four elements the one clause created:
+<programlisting>
+MATCH (p:person)-[r:acted_in]-&gt;(:movie {title: 'Tenet'})
+RETURN p.name AS actor, r.role AS role ORDER BY actor;
+
+        actor        |  role
+---------------------+--------
+ "Elizabeth Debicki" | "Kat"
+ "Robert Pattinson"  | "Neil"
+(2 rows)
+</programlisting>
+  </para>
+
+  <para>
+   The <literal>= <replaceable class="parameter">expression</replaceable></literal> form
+   supplies the whole map at once. Use it to load properties out of a table:
+<programlisting>
+INSERT (:movie = (SELECT jsonb_build_object('title', 'Dunkirk', 'year', 2017)));
+
+UPDATE 1
+</programlisting>
+<programlisting>
+MATCH (m:movie {title: 'Dunkirk'}) RETURN m.year AS year;
+
+ year
+------
+ 2017
+(1 row)
+</programlisting>
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-insert-notes">
+  <title>Notes</title>
+
+  <para>
+   The clause reports the ordinary graph write command tag, <literal>UPDATE n</literal>, rather
+   than a <command>CREATE</command> tag. Pair it with <xref linkend="cypher-finish"/> to write
+   without projecting anything.
+  </para>
+
+  <para>
+   Refusals name <command>CREATE</command> even when the query said
+   <command>INSERT</command>, because both spellings build the same clause. The ones worth
+   knowing are these.
+  </para>
+
+  <informaltable>
+   <tgroup cols="2">
+    <thead>
+     <row>
+      <entry>Pattern</entry>
+      <entry>Error</entry>
+     </row>
+    </thead>
+    <tbody>
+     <row>
+      <entry><literal>INSERT ()-[]-&gt;()</literal></entry>
+      <entry><literal>only one relationship type is allowed for CREATE</literal></entry>
+     </row>
+     <row>
+      <entry><literal>INSERT ()-[:acted_in|directed]-&gt;()</literal></entry>
+      <entry><literal>only one relationship type is allowed for CREATE</literal></entry>
+     </row>
+     <row>
+      <entry><literal>INSERT ()-[:directed]-()</literal></entry>
+      <entry><literal>only directed relationships are allowed in CREATE</literal></entry>
+     </row>
+     <row>
+      <entry><literal>INSERT (:ag_vertex)</literal></entry>
+      <entry><literal>specifying default label is not allowed</literal></entry>
+     </row>
+     <row>
+      <entry><literal>INSERT ()-[:ag_edge]-&gt;()</literal></entry>
+      <entry><literal>cannot create edge on default label</literal></entry>
+     </row>
+     <row>
+      <entry><literal>INSERT (:directed)</literal></entry>
+      <entry><literal>label "directed" is edge label</literal></entry>
+     </row>
+     <row>
+      <entry><literal>INSERT ()-[:movie]-&gt;()</literal></entry>
+      <entry><literal>label "movie" is vertex label</literal></entry>
+     </row>
+     <row>
+      <entry><literal>INSERT (m)</literal>, where <literal>m</literal> is already bound</entry>
+      <entry><literal>there must be at least one relationship</literal></entry>
+     </row>
+    </tbody>
+   </tgroup>
+  </informaltable>
+
+  <para>
+   <literal>insert</literal> became a reserved keyword in 2.18. It is still accepted unquoted
+   wherever that leaves the grammar unambiguous, as a variable name in
+   <literal>MATCH (insert:person)</literal> and as a label name in
+   <literal>MATCH (n:insert)</literal>. It is not accepted as a
+   <command>CREATE VLABEL</command> name, as an <command>ORDER BY</command> key naming a
+   <command>RETURN</command> alias, or as a SQL table or column name. Write
+   <literal>"insert"</literal> in those places, or rename.
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-insert-compatibility">
+  <title>Compatibility</title>
+
+  <para>
+   <command>INSERT</command> implements the GQL INSERT statement of ISO/IEC 39075:2024, section
+   13.2, over the insert graph pattern of section 16.5. Inserting nodes and edges, several
+   patterns per statement, reusing a bound element as an endpoint, inline property maps and a
+   path variable over the inserted pattern are all supported. The typed graph checks of section
+   18 are not, because they require a graph type. AgensGraph graphs are untyped, so an insert is
+   validated against the labels that exist rather than against a declared node type or edge
+   type.
+  </para>
+
+  <para>
+   openCypher spells this clause <command>CREATE</command>, which AgensGraph accepts as a
+   synonym. The <command>INSERT</command> name comes from GQL and from SQL, where it does the
+   same job on a table.
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-insert-see-also">
+  <title>See Also</title>
+  <simplelist type="inline">
+   <member><xref linkend="cypher-create"/></member>
+   <member><xref linkend="cypher-merge"/></member>
+   <member><xref linkend="cypher-for"/></member>
+   <member><xref linkend="cypher-finish"/></member>
+   <member><xref linkend="cypher-path"/></member>
+  </simplelist>
+ </refsect1>
+</refentry>

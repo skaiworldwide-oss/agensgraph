@@ -1,5 +1,5 @@
 <!--
-doc/src/sgml/ref/create_constraint.sgml
+doc/src/sgml/ref/cypher_create_constraint.sgml
 PostgreSQL documentation
 -->
 
@@ -11,150 +11,310 @@ PostgreSQL documentation
  <refmeta>
   <refentrytitle>CREATE CONSTRAINT</refentrytitle>
   <manvolnum>7</manvolnum>
-  <refmiscinfo>SQL - Language Statements</refmiscinfo>
+  <refmiscinfo>Cypher - Language Statements</refmiscinfo>
  </refmeta>
 
  <refnamediv>
   <refname>CREATE CONSTRAINT</refname>
-  <refpurpose>define a new constraint to vertex/edge label</refpurpose>
+  <refpurpose>require a value of a label to be unique, or to satisfy a condition</refpurpose>
  </refnamediv>
 
  <refsynopsisdiv>
 <synopsis>
-CREATE [ OR REPLACE ] CONSTRAINT [ <replaceable class="parameter">constraint_name</replaceable> ] ON <replaceable class="parameter">label_name</replaceable> ASSERT <replaceable class="parameter">expression</replaceable> [ IS UNIQUE ]
+CREATE CONSTRAINT [ <replaceable class="parameter">constraint_name</replaceable> ] ON <replaceable class="parameter">label_name</replaceable> ASSERT <replaceable class="parameter">expression</replaceable> IS UNIQUE
+CREATE CONSTRAINT [ <replaceable class="parameter">constraint_name</replaceable> ] ON <replaceable class="parameter">label_name</replaceable> ASSERT <replaceable class="parameter">condition</replaceable>
 </synopsis>
  </refsynopsisdiv>
- <refsect1>
+
+ <refsect1 id="cypher-createconstraint-description">
   <title>Description</title>
+
   <para>
-   <command>CREATE CONSTRAINT</command> defines a new constraint to the vertex/edge label
+   There are two forms, and they become two different things on disk.
+  </para>
+
+  <para>
+   <literal>ASSERT <replaceable class="parameter">expression</replaceable> IS
+   UNIQUE</literal> becomes an exclusion constraint over the property read, such as
+   <literal>EXCLUDE USING btree ((properties.'title') WITH =)</literal>. A write whose value
+   already exists is rejected as a conflict.
+  </para>
+
+  <para>
+   <literal>ASSERT <replaceable class="parameter">condition</replaceable></literal> becomes a
+   check constraint over the same kind of read, such as
+   <literal>CHECK ((properties.'age')::integer &gt; 9)</literal>. A write whose row fails the
+   condition is rejected.
+  </para>
+
+  <para>
+   The name is optional in both forms. Left out, one is derived:
+   <literal><replaceable class="parameter">label_name</replaceable>_unique_constraint</literal>
+   for the unique form and
+   <literal><replaceable class="parameter">label_name</replaceable>_properties_check</literal>
+   for the check form, with a numeric suffix added if that name is taken. A name that is
+   supplied has to be free in the graph's schema, because the unique form creates an index of
+   that name.
+  </para>
+
+  <para>
+   The label is looked up in the graph named by <varname>graph_path</varname>, and its name
+   cannot be qualified. Both forms work on a vertex label and on an edge label. Neither works
+   on <literal>ag_vertex</literal> or <literal>ag_edge</literal>, which refuse the change with
+   <literal>ALTER base vertex label is prohibited</literal>.
+  </para>
+
+  <para>
+   A constraint is created over the rows already in the label, so an existing row that
+   violates it makes the statement fail. A check constraint is a SQL check
+   constraint, so a missing property satisfies it. The
+   condition evaluates to unknown for an absent property, and a check constraint accepts
+   unknown. Use the constraint to restrict values, not to require a key.
+  </para>
+
+  <para>
+   There is no replace. <literal>CREATE OR REPLACE CONSTRAINT</literal> is parsed and then
+   refused with <literal>CREATE OR REPLACE CONSTRAINT is not supported</literal>. To change a
+   constraint, drop it and create it again.
   </para>
  </refsect1>
 
- <refsect1>
+ <refsect1 id="cypher-createconstraint-parameters">
   <title>Parameters</title>
-   <variablelist>
-    <varlistentry>
-     <term><literal>OR REPLACE</literal></term>
-     <listitem>
-      <para>
-       The <literal>OR REPLACE</literal> will either define a new
-       constraint or replace an existing definition.
-      </para>
-     </listitem>
-    </varlistentry>
 
-    <varlistentry>
-     <term><replaceable class="parameter">constraint_name</replaceable></term>
-     <listitem>
-      <para>
-       The <replaceable class="parameter">constraint_name</replaceable> is the name of this constraint. It can be omitted.
-        <note>
-          <para>
-            Creating a constraint to the label is similar to creating the <literal>CHECK</literal> to the table.
-            Agensgraph will handle the label also table structure. Therefore, If you want to check the constraint of the label, 
-            You can use the <command>\d graph_name.label_name</command> command in the psql client.
-<programlisting>
-postgres=# CREATE CONSTRAINT ON senior ASSERT age &gt; 60 AND age &lt; 200;
-CREATE CONSTRAINT
-postgres=# \d g.senior;
-                                                       Table "g.senior"
-   Column   |  Type   | Collation | Nullable |                                     Default                                     
-------------+---------+-----------+----------+---------------------------------------------------------------------------------
- id         | graphid |           | not null | graphid(graph_labid('g.senior'::cstring), nextval('g.senior_id_seq'::regclass))
- properties | jsonb   |           | not null | jsonb_build_object()
-Indexes:
-    "senior_pkey" PRIMARY KEY, btree (id)
-Check constraints:
-    "senior_properties_check" CHECK ((properties.'age'::text) &gt; cypher_to_jsonb(60) AND (properties.'age'::text) &lt; cypher_to_jsonb(200))
-Inherits: g.ag_vertex
-</programlisting>    
-          </para>
-        </note>
-      </para>
-     </listitem>
-    </varlistentry>
+  <variablelist>
+   <varlistentry>
+    <term><replaceable class="parameter">constraint_name</replaceable></term>
+    <listitem>
+     <para>
+      Name for the constraint. Optional. For the unique form it also names the index, so it
+      must not collide with an existing relation in the graph.
+     </para>
+    </listitem>
+   </varlistentry>
 
-    <varlistentry>
-     <term><replaceable class="parameter">label_name</replaceable></term>
-     <listitem>
-      <para>
-       The label name that constraint to be applied.
-      </para>
-     </listitem>
-    </varlistentry>
- 
-    <varlistentry>
-     <term><replaceable class="parameter">expression</replaceable></term>
-     <listitem>
-      <para>
-       Basic expression of the cypher query.
-       See <xref linkend="cypher-expr"/> for more details.
-      </para>
-     </listitem>
-    </varlistentry>
+   <varlistentry>
+    <term><replaceable class="parameter">label_name</replaceable></term>
+    <listitem>
+     <para>
+      Label the constraint applies to, in the graph named by <varname>graph_path</varname>.
+     </para>
+    </listitem>
+   </varlistentry>
 
-    <varlistentry>
-     <term><literal>IS UNIQUE</literal></term>
-     <listitem>
-      <para>
-       The <literal>IS UNIQUE</literal> restricts the value of a field to be unique in that label. 
-      </para>
-     </listitem>
-    </varlistentry>
+   <varlistentry>
+    <term><replaceable class="parameter">expression</replaceable></term>
+    <listitem>
+     <para>
+      The value that has to be unique. Usually one property, written the way Cypher writes
+      it: <literal>title</literal>, or <literal>name.first</literal> for a key inside a
+      nested map. Any Cypher expression over the label's properties is accepted, so
+      <literal>ASSERT toLower(trim(id)) IS UNIQUE</literal> makes the folded value unique
+      rather than the stored one. See <xref linkend="cypher-expr"/>.
+     </para>
+    </listitem>
+   </varlistentry>
 
-   </variablelist>
-
+   <varlistentry>
+    <term><replaceable class="parameter">condition</replaceable></term>
+    <listitem>
+     <para>
+      A Cypher condition over the label's properties. It is evaluated once for each written
+      element. A subquery is refused with
+      <literal>cannot use subquery in check constraint</literal>, and so is a parameter.
+     </para>
+    </listitem>
+   </varlistentry>
+  </variablelist>
  </refsect1>
 
- <refsect1>
+ <refsect1 id="cypher-createconstraint-examples">
   <title>Examples</title>
 
   <para>
-   To provides unique constraints on properties:
+   These examples do not use the graph in <xref linkend="agensgraph-example-data"/>. They
+   build a graph of their own and drop it at the end:
 <programlisting>
-
--- Create UNIQUE constraint to the vertex label
-CREATE CONSTRAINT ON person ASSERT id IS UNIQUE;
-
--- Input first id
-CREATE (E:person {id: 1, name: 'Edward', nickname: 'Ed'});
-UPDATE 1
-
--- Error on create
-CREATE (E:person {id: 1, name: 'Edward', nickname: 'Ed'});
-ERROR:  conflicting key value violates exclusion constraint "person_unique_constraint"
-DETAIL:  Key ((properties.'id'::text))=(1) conflicts with existing key ((properties.'id'::text))=(1).
-
+CREATE GRAPH constrain;
+SET graph_path = constrain;
+CREATE VLABEL film;
+CREATE ELABEL rated;
 </programlisting>
   </para>
 
   <para>
-   To Provides the ability to control data by setting constraints on properties:
+   Require a property to be unique:
 <programlisting>
+CREATE CONSTRAINT film_title_uniq ON film ASSERT title IS UNIQUE;
 
-CREATE VLABEL senior;
-
--- Create constraint to the vertex label
-CREATE CONSTRAINT ON senior ASSERT age &gt; 60 AND age &lt; 200;
-
--- Input 
-MERGE (s:senior {name: 'David', age: 70});
-UPDATE 1
-
--- Error on create
-CREATE (s:senior {name: 'Nick', age: 22});
-ERROR:  new row for relation "senior" violates check constraint "senior_properties_check"
-DETAIL:  Failing row contains (17.2, {"age": 22, "name": "Nick"}).
+CREATE CONSTRAINT
 </programlisting>
   </para>
- </refsect1>
- <refsect1>
-  <title>See Also</title>
 
+  <para>
+   The first write goes in. The second one carries the same title, and the message names the
+   constraint and the value:
+<programlisting>
+CREATE (:film {title: 'Arrival', year: 2016});
+CREATE (:film {title: 'Arrival', year: 2021});
+
+ERROR:  conflicting key value violates exclusion constraint "film_title_uniq"
+DETAIL:  Key ((properties.'title'))=("Arrival") conflicts with existing key ((properties.'title'))=("Arrival").
+</programlisting>
+  </para>
+
+  <para>
+   Leave the name out and one is derived. This second constraint on
+   <literal>film</literal> is called <literal>film_unique_constraint</literal>:
+<programlisting>
+CREATE CONSTRAINT ON film ASSERT year IS UNIQUE;
+
+CREATE CONSTRAINT
+</programlisting>
+  </para>
+
+  <para>
+   Restrict what a property may hold. The cast makes the comparison an integer one:
+<programlisting>
+CREATE VLABEL teen;
+CREATE CONSTRAINT teen_age ON teen ASSERT (10 &lt;= age::int AND age::int &lt;= 19);
+
+CREATE CONSTRAINT
+</programlisting>
+  </para>
+
+  <para>
+   A row inside the range is written. One outside it is not:
+<programlisting>
+CREATE (:teen {name: 'Kim', age: 15});
+CREATE (:teen {name: 'Lee', age: 20});
+
+ERROR:  new row for relation "teen" violates check constraint "teen_age"
+DETAIL:  Failing row contains (5.2, {"age": 20, "name": "Lee"}).
+</programlisting>
+  </para>
+
+  <para>
+   A vertex with no <literal>age</literal> at all is accepted, because the condition is
+   unknown rather than false:
+<programlisting>
+CREATE (:teen {name: 'Bo'});
+MATCH (t:teen) RETURN t.name AS name, t.age AS age ORDER BY name;
+
+ name  | age 
+-------+-----
+ "Bo"  | 
+ "Kim" | 15
+(2 rows)
+</programlisting>
+  </para>
+
+  <para>
+   An edge label takes either form on its own properties:
+<programlisting>
+CREATE CONSTRAINT rated_pair ON rated ASSERT source IS UNIQUE;
+
+CREATE CONSTRAINT
+</programlisting>
+  </para>
+
+  <para>
+   The constraint is checked against the rows that are already there, so it cannot be created
+   over rows that break it. The unique form reports the pair it found, and the check form
+   reports only that some row failed:
+<programlisting>
+CREATE VLABEL rerun;
+CREATE (:rerun {title: 'Arrival'}), (:rerun {title: 'Arrival'});
+CREATE CONSTRAINT rerun_t ON rerun ASSERT title IS UNIQUE;
+
+ERROR:  could not create exclusion constraint "rerun_t"
+DETAIL:  Key ((properties.'title'))=("Arrival") conflicts with key ((properties.'title'))=("Arrival").
+</programlisting>
+  </para>
+
+  <para>
+   Two refusals worth recognizing. There is no replace, and a unique constraint's name is an
+   index name, so reusing one raises
+   <literal>relation "film_title_uniq" already exists</literal>:
+<programlisting>
+CREATE OR REPLACE CONSTRAINT film_title_uniq ON film ASSERT title IS UNIQUE;
+
+ERROR:  CREATE OR REPLACE CONSTRAINT is not supported
+</programlisting>
+  </para>
+
+  <para>
+   And the label has to exist. This statement does not create one the way
+   <literal>CREATE (:film)</literal> does:
+<programlisting>
+CREATE CONSTRAINT c ON nosuch ASSERT a IS UNIQUE;
+
+ERROR:  label "nosuch" does not exist
+</programlisting>
+  </para>
+
+  <para>
+   <literal>DROP GRAPH constrain CASCADE</literal> drops the graph the examples built.
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-createconstraint-notes">
+  <title>Notes</title>
+
+  <para>
+   A unique constraint is an exclusion constraint, not a unique index, so it is not
+   interchangeable with <literal>CREATE UNIQUE PROPERTY INDEX</literal>. Both reject a
+   duplicate. The error differs:
+   <literal>conflicting key value violates exclusion constraint</literal> against
+   <literal>duplicate key value violates unique constraint</literal>. So does the statement
+   that removes it. A constraint is dropped by <xref linkend="cypher-dropconstraint"/>, a
+   unique index by <xref linkend="cypher-droppropertyindex"/>.
+  </para>
+
+  <para>
+   The two forms differ over label inheritance. A check constraint is inherited, so a child
+   label created after it carries the constraint and is checked by it. A unique constraint is
+   not. A child label gets no exclusion constraint, so the same value can be written once
+   through the parent and once through the child, and a <command>MATCH</command> on the
+   parent then returns both. To make a value unique across a hierarchy, create the constraint
+   on each label in it. Nothing makes one value unique across several labels, because a
+   constraint, like the index behind it, covers one table.
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-createconstraint-compatibility">
+  <title>Compatibility</title>
+
+  <para>
+   ISO/IEC 39075:2024 has no constraint DDL. It constrains a graph with a graph type, created
+   by the statement in clause 12.6, which declares the labels and properties a graph's
+   elements may have. A graph type has no rule for the uniqueness of one property and no
+   check condition, and a graph is constrained at all only if it references a graph type.
+   AgensGraph graphs are open, so <command>CREATE CONSTRAINT</command> is an AgensGraph
+   extension.
+  </para>
+
+  <para>
+   The check form corresponds to
+   <literal>ALTER TABLE ... ADD CONSTRAINT ... CHECK</literal>, and the unique form to
+   <literal>ALTER TABLE ... ADD CONSTRAINT ... EXCLUDE USING btree (... WITH =)</literal>. It
+   does not correspond to <literal>UNIQUE</literal>, which cannot be written over an
+   expression. The condition is a Cypher expression rather than a SQL one, so
+   <literal>age</literal> means the property, not a column.
+   <literal>NOT NULL</literal>, <literal>PRIMARY KEY</literal>,
+   <literal>FOREIGN KEY</literal>, <literal>DEFERRABLE</literal> and
+   <literal>NOT VALID</literal>, which <literal>ADD CONSTRAINT</literal> offers, have no
+   spelling here.
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-createconstraint-see-also">
+  <title>See Also</title>
   <simplelist type="inline">
    <member><xref linkend="cypher-dropconstraint"/></member>
-   <member><xref linkend="ddl-constraints-check-constraints"/></member>
+   <member><xref linkend="cypher-createpropertyindex"/></member>
+   <member><xref linkend="cypher-createvlabel"/></member>
+   <member><xref linkend="cypher-expr"/></member>
   </simplelist>
  </refsect1>
 </refentry>

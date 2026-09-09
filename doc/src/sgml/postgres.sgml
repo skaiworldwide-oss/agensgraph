@@ -285,6 +285,7 @@ break is not needed in a wider output rendering.
   &glossary;
   &color;
   &obsolete;
+  &agensgraph;
   &cypherPath;
 
  </part>

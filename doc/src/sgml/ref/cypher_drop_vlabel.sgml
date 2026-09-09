@@ -1,5 +1,5 @@
 <!--
-doc/src/sgml/ref/drop_vlabel.sgml
+doc/src/sgml/ref/cypher_drop_vlabel.sgml
 PostgreSQL documentation
 -->
 
@@ -11,35 +11,65 @@ PostgreSQL documentation
  <refmeta>
   <refentrytitle>DROP VLABEL</refentrytitle>
   <manvolnum>7</manvolnum>
-  <refmiscinfo>SQL - Language Statements</refmiscinfo>
+  <refmiscinfo>Cypher - Language Statements</refmiscinfo>
  </refmeta>
 
  <refnamediv>
   <refname>DROP VLABEL</refname>
-  <refpurpose>drop the vertex label</refpurpose>
+  <refpurpose>remove a vertex label</refpurpose>
  </refnamediv>
 
  <refsynopsisdiv>
 <synopsis>
-DROP VLABEL [ IF EXISTS ] <replaceable class="parameter">label_name</replaceable> [ , ... ] [ CASCADE | RESTRICT ]
+DROP VLABEL [ IF EXISTS ] <replaceable class="parameter">label_name</replaceable> [, ...] [ CASCADE | RESTRICT ]
 </synopsis>
  </refsynopsisdiv>
 
- <refsect1>
+ <refsect1 id="cypher-dropvlabel-description">
   <title>Description</title>
+
   <para>
-   <command>DROP VLABEL</command> statement drops the target vertex label.
+   <command>DROP VLABEL</command> removes a vertex label. The table behind it goes too, along
+   with its id sequence, its indexes and its constraints. The label is looked up in the graph
+   named by <varname>graph_path</varname>, and the name cannot carry the graph. Several names
+   may be given in one statement.
+  </para>
+
+  <para>
+   <literal>RESTRICT</literal>, which is the default, has two things to object to. A label that
+   still holds vertices is refused with
+   <literal>cannot drop <replaceable class="parameter">label_name</replaceable> because it is
+   not empty.</literal> That is stricter than the dependency check PostgreSQL applies to a
+   table, which does not care how many rows there are. A label that has a child label is
+   refused as well, and the message names the child.
+  </para>
+
+  <para>
+   <literal>CASCADE</literal> overrides both. It drops the label whatever it holds, and it
+   deletes the edges attached to the label's vertices, whatever labels those edges have. The
+   edge labels themselves survive, empty. So read <literal>CASCADE</literal> here as "and the
+   graph data that depends on it", not only as "and the dependent catalog objects".
+  </para>
+
+  <para>
+   The base label <literal>ag_vertex</literal> cannot be dropped, and
+   <command>DROP VLABEL</command> refuses an edge label; the statement for one is
+   <xref linkend="cypher-dropelabel"/>. The table behind a label cannot be dropped on its own
+   either: <command>DROP TABLE</command> on it is refused and points here. To empty a graph
+   without dropping its labels, write <literal>MATCH (n) DETACH DELETE n</literal> instead.
   </para>
  </refsect1>
 
- <refsect1>
+ <refsect1 id="cypher-dropvlabel-parameters">
   <title>Parameters</title>
+
   <variablelist>
    <varlistentry>
     <term><literal>IF EXISTS</literal></term>
     <listitem>
      <para>
-      Do not throw an error if the vertex label does not exist.
+      Issue a notice instead of an error for a label that does not exist. Other names in the
+      same statement are still dropped.
      </para>
     </listitem>
    </varlistentry>
@@ -48,7 +78,8 @@ DROP VLABEL [ IF EXISTS ] <replaceable class="parameter">label_name</replaceable
     <term><replaceable class="parameter">label_name</replaceable></term>
     <listitem>
      <para>
-      The name of the vertex label that to be dropped.
+      Name of the vertex label to drop, in the graph named by <varname>graph_path</varname>.
+      Several names may be given, separated by commas.
      </para>
     </listitem>
    </varlistentry>
@@ -57,8 +88,8 @@ DROP VLABEL [ IF EXISTS ] <replaceable class="parameter">label_name</replaceable
     <term><literal>CASCADE</literal></term>
     <listitem>
      <para>
-      Automatically drop edges that is connected to this vertex.
-      And other dependent objects too.
+      Drop the label along with its vertices and its child labels, and delete the edges
+      attached to those vertices.
      </para>
     </listitem>
    </varlistentry>
@@ -67,36 +98,156 @@ DROP VLABEL [ IF EXISTS ] <replaceable class="parameter">label_name</replaceable
     <term><literal>RESTRICT</literal></term>
     <listitem>
      <para>
-      Drop fails if any dependent objects exist to the vertex label.
-      This is the default.
+      Refuse if the label holds any vertices or has a child label. This is the default.
      </para>
     </listitem>
    </varlistentry>
   </variablelist>
  </refsect1>
 
- <refsect1>
+ <refsect1 id="cypher-dropvlabel-examples">
   <title>Examples</title>
+
   <para>
-   To drop the vertex label:
+   These examples do not use the graph in <xref linkend="agensgraph-example-data"/>, but build a
+   graph of their own and drop it at the end. An empty label goes without comment, because
+   nothing else was affected:
 <programlisting>
-DROP VLABEL vlabelName;
+CREATE GRAPH dropvdemo;
+SET graph_path = dropvdemo;
+CREATE VLABEL film;
+CREATE VLABEL person;
+CREATE ELABEL directed;
+CREATE (:person {name: 'Denis Villeneuve'})-[:directed]-&gt;(:film {title: 'Arrival'});
+CREATE VLABEL draft;
+DROP VLABEL draft;
+
+DROP VLABEL
 </programlisting>
   </para>
 
   <para>
-   To drop the multiple vertex labels:
+   <literal>film</literal> has a vertex in it, so the default refuses:
 <programlisting>
-DROP VLABEL IF EXISTS vlabel1,vlabel2,vlabel3;
+DROP VLABEL film;
+
+ERROR:  cannot drop film because it is not empty.
 </programlisting>
+   <literal>CASCADE</literal> takes the label, its vertex, and the <literal>directed</literal>
+   edge that pointed at it. The edge is gone but its label is not:
+<programlisting>
+DROP VLABEL film CASCADE;
+MATCH ()-[e:directed]-&gt;() RETURN count(e) AS directed_edges;
+
+ directed_edges
+----------------
+ 0
+(1 row)
+</programlisting>
+  </para>
+
+  <para>
+   A label with a child is refused too, and <literal>CASCADE</literal> names the child it takes
+   with it:
+<programlisting>
+CREATE VLABEL work;
+CREATE VLABEL documentary INHERITS (work);
+DROP VLABEL work;
+
+ERROR:  cannot drop vlabel work because other objects depend on it
+DETAIL:  vlabel documentary depends on vlabel work
+HINT:  Use DROP ... CASCADE to drop the dependent objects too.
+</programlisting>
+<programlisting>
+DROP VLABEL work CASCADE;
+
+NOTICE:  drop cascades to vlabel documentary
+DROP VLABEL
+</programlisting>
+  </para>
+
+  <para>
+   Several labels can be named at once, and <literal>IF EXISTS</literal> passes over the ones
+   that are already gone:
+<programlisting>
+CREATE VLABEL a;
+CREATE VLABEL b;
+DROP VLABEL IF EXISTS a, b, c;
+
+NOTICE:  vlabel "c" does not exist, skipping
+DROP VLABEL
+</programlisting>
+  </para>
+
+  <para>
+   Refusals worth recognizing. Each statement drops one kind of label, the base labels stay, and
+   the table cannot be dropped out from under the label:
+<programlisting>
+DROP ELABEL person;
+
+ERROR:  DROP ELABEL cannot DROP vertex label
+</programlisting>
+<programlisting>
+DROP VLABEL ag_vertex;
+
+ERROR:  DROP base vertex label is prohibited
+</programlisting>
+<programlisting>
+DROP TABLE dropvdemo.person;
+
+ERROR:  cannot drop table dropvdemo.person because vlabel person requires it
+HINT:  You can drop vlabel person instead.
+</programlisting>
+   <literal>DROP GRAPH dropvdemo CASCADE</literal> drops the graph the examples built.
   </para>
  </refsect1>
 
- <refsect1>
+ <refsect1 id="cypher-dropvlabel-notes">
+  <title>Notes</title>
+
+  <para>
+   An edge whose endpoint vertex is deleted is deleted with it, both here and in
+   <literal>DETACH DELETE</literal>. <structfield>start</structfield> and
+   <structfield>end</structfield> are plain <type>graphid</type> columns rather than foreign
+   keys, so it is the graph write path that does this, not a referential action on the table.
+  </para>
+
+  <para>
+   <varname>cypher_allow_unsafe_ddl</varname> switches off the kind check and the base label
+   check, so with it on <command>DROP ELABEL</command> will drop a vertex label and
+   <literal>ag_vertex</literal> can be dropped. It exists to repair a graph whose catalog is
+   already wrong. Leave it off otherwise. See <xref linkend="agensgraph-config"/>.
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-dropvlabel-compatibility">
+  <title>Compatibility</title>
+
+  <para>
+   ISO/IEC 39075:2024 has no statement that drops a label. Element types belong to a graph type,
+   which is dropped whole by the drop graph type statement of clause 12.7, and dropping one
+   deletes no data.
+  </para>
+
+  <para>
+   <command>DROP VLABEL</command> corresponds to <command>DROP TABLE</command>, and
+   <literal>IF EXISTS</literal>, the name list and <literal>CASCADE</literal> or
+   <literal>RESTRICT</literal> behave as they do there. Two things have no
+   <command>DROP TABLE</command> counterpart. A label that is not empty is refused unless
+   <literal>CASCADE</literal> is written, where <command>DROP TABLE</command> does not care how
+   many rows a table has. And <literal>CASCADE</literal> also deletes edges that live in other
+   labels, which is graph data rather than a dependent catalog object.
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-dropvlabel-see-also">
   <title>See Also</title>
   <simplelist type="inline">
+   <member><xref linkend="cypher-dropelabel"/></member>
    <member><xref linkend="cypher-createvlabel"/></member>
    <member><xref linkend="cypher-altervlabel"/></member>
+   <member><xref linkend="cypher-dropgraph"/></member>
+   <member><xref linkend="cypher-delete"/></member>
   </simplelist>
  </refsect1>
 </refentry>

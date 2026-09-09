@@ -883,13 +883,13 @@ autovacuum_worker_slots = 16	# autovacuum worker slots to allocate
 #------------------------------------------------------------------------------
 
 #eager_mem = 4MB			# min 1MB
-#enable_eager = off
+#enable_eager = on
 #auto_gather_graphmeta = off
 #cypher_allow_unsafe_ddl = off
 #enable_graph_dml = off
 #enable_graph_ddl = off
 #allow_null_properties = off
-#enable_multiple_update = off
+#enable_multiple_update = on
 #graph_path = ''                    # graph/schema names
 
 #------------------------------------------------------------------------------

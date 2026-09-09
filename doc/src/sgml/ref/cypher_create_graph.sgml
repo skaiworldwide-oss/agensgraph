@@ -1,5 +1,5 @@
 <!--
-doc/src/sgml/ref/create_graph.sgml
+doc/src/sgml/ref/cypher_create_graph.sgml
 PostgreSQL documentation
 -->
 
@@ -11,41 +11,75 @@ PostgreSQL documentation
  <refmeta>
   <refentrytitle>CREATE GRAPH</refentrytitle>
   <manvolnum>7</manvolnum>
-  <refmiscinfo>SQL - Language Statements</refmiscinfo>
+  <refmiscinfo>Cypher - Language Statements</refmiscinfo>
  </refmeta>
 
  <refnamediv>
   <refname>CREATE GRAPH</refname>
-  <refpurpose>create the graph</refpurpose>
+  <refpurpose>create a graph</refpurpose>
  </refnamediv>
 
  <refsynopsisdiv>
 <synopsis>
+CREATE GRAPH [ IF NOT EXISTS ] <replaceable class="parameter">graph_name</replaceable> [ AUTHORIZATION <replaceable class="parameter">role_specification</replaceable> ]
+CREATE GRAPH ONLY <replaceable class="parameter">graph_name</replaceable>
 
-CREATE GRAPH [IF NOT EXISTS] <replaceable class="parameter">graph_name</replaceable> [ option [ ... ] ]
+<phrase>where <replaceable class="parameter">role_specification</replaceable> can be:</phrase>
 
-where option can be:
-
-    AUTHORIZATION <replaceable class="parameter">role_specification</replaceable> 
-
+    <replaceable class="parameter">user_name</replaceable>
+  | CURRENT_ROLE
+  | CURRENT_USER
+  | SESSION_USER
 </synopsis>
  </refsynopsisdiv>
 
- <refsect1>
+ <refsect1 id="cypher-creategraph-description">
   <title>Description</title>
+
   <para>
-   <command>CREATE GRAPH</command> is used for graph creation and is similar to a schema structure in the postgresql. Caution: graph names must be unique.
+   A graph is a schema. <command>CREATE GRAPH</command> creates that schema and puts three
+   objects in it: <literal>ag_vertex</literal>, the base vertex label,
+   <literal>ag_edge</literal>, the base edge label, and <literal>ag_label_seq</literal>, the
+   sequence that hands out label ids.
+  </para>
+
+  <para>
+   Every label created afterwards inherits from <literal>ag_vertex</literal> or from
+   <literal>ag_edge</literal>. That inheritance is what gives an unlabelled pattern such as
+   <literal>MATCH (n)</literal> its meaning.
+  </para>
+
+  <para>
+   The name has to be free as a graph name and as a schema name, because the graph owns a
+   schema of that name.
+  </para>
+
+  <para>
+   If the session has no <varname>graph_path</varname> yet, <command>CREATE GRAPH</command>
+   sets it to the new graph. A <varname>graph_path</varname> that is already set is left
+   alone.
+  </para>
+
+  <para>
+   <command>CREATE GRAPH ONLY</command> creates the schema and the catalog row and nothing
+   else. It is the form <application>pg_dump</application> emits, so that a restore can
+   recreate the base labels itself and keep their original label ids. A graph created this
+   way cannot hold a label until those base labels exist, and it does not touch
+   <varname>graph_path</varname>. The form takes no
+   <literal>IF NOT EXISTS</literal> and no <literal>AUTHORIZATION</literal>.
   </para>
  </refsect1>
 
- <refsect1>
+ <refsect1 id="cypher-creategraph-parameters">
   <title>Parameters</title>
+
   <variablelist>
    <varlistentry>
     <term><literal>IF NOT EXISTS</literal></term>
     <listitem>
      <para>
-      Do not throw an error if a graph with the same name already exists.
+      Issue a notice instead of an error when a graph of that name already exists. Nothing
+      is created and nothing existing is changed. This is not a create or replace.
      </para>
     </listitem>
    </varlistentry>
@@ -54,7 +88,7 @@ where option can be:
     <term><replaceable class="parameter">graph_name</replaceable></term>
     <listitem>
      <para>
-      The name of the graph that will be created.
+      Name of the graph to create.
      </para>
     </listitem>
    </varlistentry>
@@ -63,50 +97,161 @@ where option can be:
     <term><literal>AUTHORIZATION</literal> <replaceable class="parameter">role_specification</replaceable></term>
     <listitem>
      <para>
-      If the <literal>AUTHORIZATION</literal> clause is used,
-      all the created objects will be owned by that user.
+      Role that owns the graph and the objects created with it. Write a role name,
+      <literal>CURRENT_ROLE</literal>, <literal>CURRENT_USER</literal> or
+      <literal>SESSION_USER</literal>. Without this clause the graph belongs to the role
+      that runs the statement.
      </para>
+    </listitem>
+   </varlistentry>
 
+   <varlistentry>
+    <term><literal>ONLY</literal></term>
+    <listitem>
      <para>
-      <phrase>where <replaceable class="parameter">role_specification</replaceable> can be:</phrase>
-      <replaceable class="parameter">user_name</replaceable>
-      | CURRENT_ROLE
-      | CURRENT_USER
-      | SESSION_USER
+      Create the schema and the catalog row without <literal>ag_vertex</literal>,
+      <literal>ag_edge</literal> or <literal>ag_label_seq</literal>.
      </para>
     </listitem>
    </varlistentry>
   </variablelist>
  </refsect1>
 
- <refsect1>
+ <refsect1 id="cypher-creategraph-examples">
   <title>Examples</title>
+
   <para>
-   To create graph:
+   These examples do not use the graph in <xref linkend="agensgraph-example-data"/>. They
+   build graphs of their own and drop them at the end.
+  </para>
+
+  <para>
+   Create a graph:
 <programlisting>
-CREATE GRAPH sample_graph;
+CREATE GRAPH boxoffice;
+
+CREATE GRAPH
 </programlisting>
   </para>
 
   <para>
-   To create graph only if does not exists:
+   In a session that had no <varname>graph_path</varname> yet, the new graph claims it:
 <programlisting>
-CREATE GRAPH IF NOT EXISTS sample_graph;
+SHOW graph_path;
+
+ graph_path
+------------
+ boxoffice
+(1 row)
 </programlisting>
   </para>
 
   <para>
-   To create graph with specific rolespecs:
+   A second create of the same name reports the graph that is already there and leaves it
+   untouched:
 <programlisting>
-CREATE GRAPH guest_graph AUTHORIZATION guest;
+CREATE GRAPH IF NOT EXISTS boxoffice;
+
+NOTICE:  graph "boxoffice" already exists, skipping
+CREATE GRAPH
+</programlisting>
+  </para>
+
+  <para>
+   Give the graph to another role. The role has to exist, so
+   <literal>CREATE ROLE curator</literal> runs first:
+<programlisting>
+CREATE GRAPH festival AUTHORIZATION curator;
+
+CREATE GRAPH
+</programlisting>
+  </para>
+
+  <para>
+   <literal>ONLY</literal> creates the schema and the catalog row and stops there:
+<programlisting>
+CREATE GRAPH ONLY skeleton;
+
+CREATE GRAPH
+</programlisting>
+  </para>
+
+  <para>
+   The graph holds nothing, so a label cannot be created in it. There is no
+   <literal>ag_vertex</literal> to inherit from:
+<programlisting>
+SET graph_path = skeleton;
+CREATE VLABEL film;
+
+ERROR:  relation "skeleton.ag_vertex" does not exist
+</programlisting>
+  </para>
+
+  <para>
+   Drop what the examples built. <literal>skeleton</literal> needs no
+   <literal>CASCADE</literal> because nothing was created inside it, and a graph made by the
+   plain form always does:
+<programlisting>
+DROP GRAPH boxoffice CASCADE;
+DROP GRAPH festival CASCADE;
+DROP GRAPH skeleton;
+DROP ROLE curator;
 </programlisting>
   </para>
  </refsect1>
 
-  <refsect1>
+ <refsect1 id="cypher-creategraph-notes">
+  <title>Notes</title>
+
+  <para>
+   <varname>graph_path</varname> names the graph that unqualified label names belong to. It
+   is a session setting, so set it in each new session, or attach it to a database or a role
+   with <literal>ALTER DATABASE <replaceable class="parameter">dbname</replaceable> SET
+   graph_path = boxoffice</literal>. See <xref linkend="agensgraph-config"/>.
+  </para>
+
+  <para>
+   Two more statements act on a graph as a whole, and neither has an
+   <literal>IF EXISTS</literal> form:
+   <literal>ALTER GRAPH <replaceable class="parameter">graph_name</replaceable> RENAME TO
+   <replaceable class="parameter">new_name</replaceable></literal> and
+   <literal>ALTER GRAPH <replaceable class="parameter">graph_name</replaceable> OWNER TO
+   <replaceable class="parameter">role_specification</replaceable></literal>. A rename moves
+   the underlying schema with the graph, and a <varname>graph_path</varname> that named the
+   old name follows it.
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-creategraph-compatibility">
+  <title>Compatibility</title>
+
+  <para>
+   ISO/IEC 39075:2024 defines the create graph statement in clause 12.4 as
+   <literal>CREATE [PROPERTY] GRAPH</literal> with either <literal>ANY</literal> content or a
+   graph type that constrains the node types, edge types and properties a graph may hold.
+   AgensGraph graphs are always open, so no graph type is written and none can be. The
+   <literal>PROPERTY</literal> spelling is not accepted, and neither is the standard's
+   <literal>OR REPLACE</literal> form. <literal>AUTHORIZATION</literal> and
+   <literal>ONLY</literal> are AgensGraph extensions.
+  </para>
+
+  <para>
+   <command>CREATE GRAPH</command> corresponds to <command>CREATE SCHEMA</command>, and
+   <literal>IF NOT EXISTS</literal> and <literal>AUTHORIZATION</literal> mean there what they
+   mean here. The contents differ. <command>CREATE SCHEMA</command> creates an empty schema.
+   <command>CREATE GRAPH</command> also creates the base labels and the label id sequence,
+   and registers the schema in <literal>ag_graph</literal> so that Cypher can find it. A
+   plain <command>CREATE SCHEMA</command> does not produce a graph.
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-creategraph-see-also">
   <title>See Also</title>
   <simplelist type="inline">
    <member><xref linkend="cypher-dropgraph"/></member>
+   <member><xref linkend="cypher-createvlabel"/></member>
+   <member><xref linkend="cypher-createelabel"/></member>
+   <member><xref linkend="agensgraph-catalogs"/></member>
   </simplelist>
  </refsect1>
 </refentry>

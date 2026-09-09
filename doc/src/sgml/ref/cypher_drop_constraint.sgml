@@ -1,5 +1,5 @@
 <!--
-doc/src/sgml/ref/drop_constraint.sgml
+doc/src/sgml/ref/cypher_drop_constraint.sgml
 PostgreSQL documentation
 -->
 
@@ -11,12 +11,12 @@ PostgreSQL documentation
  <refmeta>
   <refentrytitle>DROP CONSTRAINT</refentrytitle>
   <manvolnum>7</manvolnum>
-  <refmiscinfo>SQL - Language Statements</refmiscinfo>
+  <refmiscinfo>Cypher - Language Statements</refmiscinfo>
  </refmeta>
 
  <refnamediv>
   <refname>DROP CONSTRAINT</refname>
-  <refpurpose>drop a constraint of vertex/edge label</refpurpose>
+  <refpurpose>remove a constraint from a label</refpurpose>
  </refnamediv>
 
  <refsynopsisdiv>
@@ -25,51 +25,239 @@ DROP CONSTRAINT <replaceable class="parameter">constraint_name</replaceable> ON 
 </synopsis>
  </refsynopsisdiv>
 
- <refsect1>
+ <refsect1 id="cypher-dropconstraint-description">
   <title>Description</title>
+
   <para>
-   <command>DROP CONSTRAINT</command> drop a constraint of the vertex/edge
+   <command>DROP CONSTRAINT</command> removes one constraint from one label. It takes both
+   forms that <xref linkend="cypher-createconstraint"/> creates: the exclusion constraint
+   behind <literal>IS UNIQUE</literal>, and the check constraint behind a condition. It also
+   drops the index that a unique constraint owns.
+  </para>
+
+  <para>
+   The statement is a small one. The synopsis above is the whole of it.
+  </para>
+
+  <para>
+   The name is required. There is no way to name a property and drop whatever constraint is
+   on it, so <literal>DROP CONSTRAINT ON film</literal> is a syntax error at
+   <literal>ON</literal>.
+  </para>
+
+  <para>
+   There is no <literal>IF EXISTS</literal>.
+   <literal>DROP CONSTRAINT IF EXISTS ...</literal> is a syntax error, so a constraint that
+   is not there is always an error.
+  </para>
+
+  <para>
+   There is no <literal>CASCADE</literal> and no <literal>RESTRICT</literal>, and no name
+   list. One statement drops one constraint.
+  </para>
+
+  <para>
+   Neither name can be qualified. The label is looked up in the graph named by
+   <varname>graph_path</varname>.
+  </para>
+
+  <para>
+   The statement reaches any named constraint on the label's table, not only the ones Cypher
+   created. The label's primary key is one of them. Read the name before running it.
+  </para>
+
+  <para>
+   A property index is not a constraint. Drop one with
+   <xref linkend="cypher-droppropertyindex"/>.
   </para>
  </refsect1>
 
- <refsect1>
+ <refsect1 id="cypher-dropconstraint-parameters">
   <title>Parameters</title>
-   <variablelist>
-    <varlistentry>
-     <term><replaceable class="parameter">constraint_name</replaceable></term>
-     <listitem>
-      <para>
-       The <replaceable class="parameter">constraint_name</replaceable> should be provided for dropping.
-      </para>
-     </listitem>
-    </varlistentry>
 
-    <varlistentry>
-     <term><replaceable class="parameter">label_name</replaceable></term>
-     <listitem>
-      <para>
-       The <replaceable class="parameter">label_name</replaceable> is the target label to be dropped the constraint.
-      </para>
-     </listitem>
-    </varlistentry>
-   </variablelist>
+  <variablelist>
+   <varlistentry>
+    <term><replaceable class="parameter">constraint_name</replaceable></term>
+    <listitem>
+     <para>
+      Name of the constraint to drop, unqualified. The psql commands
+      <literal>\dGv</literal> and <literal>\dGe</literal> report it, and so does the
+      <literal>pg_constraint</literal> catalog.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><replaceable class="parameter">label_name</replaceable></term>
+    <listitem>
+     <para>
+      Label the constraint is on, in the graph named by <varname>graph_path</varname>.
+     </para>
+    </listitem>
+   </varlistentry>
+  </variablelist>
  </refsect1>
 
- <refsect1>
+ <refsect1 id="cypher-dropconstraint-examples">
   <title>Examples</title>
+
   <para>
-   To drop the label constraints:
+   These examples do not use the graph in <xref linkend="agensgraph-example-data"/>. They
+   build a graph of their own and drop it at the end. Four constraints are created, two of
+   them unnamed:
 <programlisting>
--- Drop constraint to the vertex label
-DROP CONSTRAINT id_unique_constraint ON person;
+CREATE GRAPH rulebooks;
+SET graph_path = rulebooks;
+CREATE VLABEL film;
+CREATE CONSTRAINT film_title_uniq ON film ASSERT title IS UNIQUE;
+CREATE CONSTRAINT ON film ASSERT year IS UNIQUE;
+CREATE VLABEL teen;
+CREATE CONSTRAINT teen_age ON teen ASSERT (10 &lt;= age::int AND age::int &lt;= 19);
+CREATE CONSTRAINT ON teen ASSERT age &gt; 9;
 </programlisting>
   </para>
+
+  <para>
+   Drop a unique constraint. The constraint and its index both go, and the unnamed one
+   created after it stays:
+<programlisting>
+DROP CONSTRAINT film_title_uniq ON film;
+
+DROP CONSTRAINT
+</programlisting>
+  </para>
+
+  <para>
+   Running it a second time is an error, because there is no
+   <literal>IF EXISTS</literal> to soften it:
+<programlisting>
+DROP CONSTRAINT film_title_uniq ON film;
+
+ERROR:  constraint "film_title_uniq" of relation "film" does not exist
+</programlisting>
+  </para>
+
+  <para>
+   And the softer spelling does not parse:
+<programlisting>
+DROP CONSTRAINT IF EXISTS film_title_uniq ON film;
+
+ERROR:  syntax error at or near "EXISTS"
+LINE 1: DROP CONSTRAINT IF EXISTS film_title_uniq ON film;
+                           ^
+</programlisting>
+  </para>
+
+  <para>
+   A constraint created without a name has a derived one.
+   <literal>pg_constraint</literal> lists every constraint on the label's table:
+<programlisting>
+SELECT conname FROM pg_constraint WHERE conrelid = 'rulebooks.teen'::regclass ORDER BY conname;
+
+         conname          
+--------------------------
+ teen_age
+ teen_id_not_null
+ teen_pkey
+ teen_properties_check
+ teen_properties_not_null
+(5 rows)
+</programlisting>
+  </para>
+
+  <para>
+   <literal>teen_age</literal> is the named check constraint and
+   <literal>teen_properties_check</literal> the derived one. The other three belong to the
+   label's own shape. Both check constraints are dropped by name:
+<programlisting>
+DROP CONSTRAINT teen_properties_check ON teen;
+DROP CONSTRAINT teen_age ON teen;
+
+DROP CONSTRAINT
+DROP CONSTRAINT
+</programlisting>
+  </para>
+
+  <para>
+   A property index is not a constraint, whatever it is named:
+<programlisting>
+CREATE PROPERTY INDEX film_year_idx ON film (year);
+DROP CONSTRAINT film_year_idx ON film;
+
+ERROR:  constraint "film_year_idx" of relation "film" does not exist
+</programlisting>
+  </para>
+
+  <para>
+   And the name cannot carry the graph:
+<programlisting>
+DROP CONSTRAINT rulebooks.film_unique_constraint ON film;
+
+ERROR:  syntax error at or near "."
+LINE 1: DROP CONSTRAINT rulebooks.film_unique_constraint ON film;
+                                 ^
+</programlisting>
+  </para>
+
+  <para>
+   <literal>DROP GRAPH rulebooks CASCADE</literal> drops the graph the examples built.
+  </para>
  </refsect1>
 
- <refsect1>
+ <refsect1 id="cypher-dropconstraint-notes">
+  <title>Notes</title>
+
+  <para>
+   <command>DROP CONSTRAINT</command> takes any named constraint on the label's table, and a
+   label's primary key is one of them.
+   <literal>DROP CONSTRAINT film_pkey ON film</literal> succeeds and leaves the label without
+   its primary key on <literal>id</literal>, and no statement puts that back. Check the name
+   against <literal>\dGv</literal> or <literal>pg_constraint</literal> first, and keep to the
+   names <xref linkend="cypher-createconstraint"/> produced.
+  </para>
+
+  <para>
+   To change a constraint, drop it and create it again.
+   <literal>CREATE OR REPLACE CONSTRAINT</literal> is refused.
+  </para>
+
+  <para>
+   A check constraint that a child label inherited can only be dropped from the label that
+   declares it. Given
+   <literal>CREATE VLABEL feature INHERITS (work)</literal>, naming the child is refused with
+   <literal>cannot drop inherited constraint "work_y" of relation "feature"</literal>.
+   Dropping the constraint from <literal>work</literal> removes it from the whole family.
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-dropconstraint-compatibility">
+  <title>Compatibility</title>
+
+  <para>
+   ISO/IEC 39075:2024 has no constraint DDL, so nothing there corresponds to this statement.
+   Its way of constraining a graph is a graph type, which is dropped whole by the statement
+   in clause 12.7.
+  </para>
+
+  <para>
+   <literal>DROP CONSTRAINT ... ON <replaceable class="parameter">label_name</replaceable></literal>
+   corresponds to
+   <literal>ALTER TABLE ... DROP CONSTRAINT ...</literal>, with the label name after the
+   constraint name instead of before it. It offers less: no <literal>IF EXISTS</literal>, no
+   <literal>CASCADE</literal> or <literal>RESTRICT</literal>, and no way to drop several
+   constraints in one statement. It reaches exactly as far, though, since any named
+   constraint on the label's table is the same set <command>ALTER TABLE</command> would
+   reach.
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-dropconstraint-see-also">
   <title>See Also</title>
   <simplelist type="inline">
    <member><xref linkend="cypher-createconstraint"/></member>
+   <member><xref linkend="cypher-droppropertyindex"/></member>
+   <member><xref linkend="cypher-altervlabel"/></member>
+   <member><xref linkend="cypher-alterelabel"/></member>
   </simplelist>
  </refsect1>
 </refentry>

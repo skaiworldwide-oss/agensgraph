@@ -1,0 +1,844 @@
+<!--
+doc/src/sgml/ref/cypher_call.sgml
+PostgreSQL documentation
+-->
+
+<refentry id="cypher-call">
+ <indexterm zone="cypher-call">
+  <primary>CALL</primary>
+ </indexterm>
+
+ <refmeta>
+  <refentrytitle>CALL</refentrytitle>
+  <manvolnum>7</manvolnum>
+  <refmiscinfo>Cypher - Language Statements</refmiscinfo>
+ </refmeta>
+
+ <refnamediv>
+  <refname>CALL</refname>
+  <refpurpose>run a routine or a subquery inside a query pipeline</refpurpose>
+ </refnamediv>
+
+ <refsynopsisdiv>
+<synopsis>
+[ OPTIONAL ] CALL <replaceable class="parameter">function</replaceable> ( [ <replaceable class="parameter">argument</replaceable> [, <replaceable class="parameter">argument</replaceable> ] ... ] ) YIELD *
+[ OPTIONAL ] CALL <replaceable class="parameter">function</replaceable> ( [ <replaceable class="parameter">argument</replaceable> [, <replaceable class="parameter">argument</replaceable> ] ... ] ) YIELD <replaceable class="parameter">column</replaceable> [ AS <replaceable class="parameter">alias</replaceable> ] [, <replaceable class="parameter">column</replaceable> [ AS <replaceable class="parameter">alias</replaceable> ] ] ...
+
+[ OPTIONAL ] CALL { <replaceable class="parameter">subquery</replaceable> }
+[ OPTIONAL ] CALL ( ) { <replaceable class="parameter">subquery</replaceable> }
+[ OPTIONAL ] CALL ( <replaceable class="parameter">variable</replaceable> [, <replaceable class="parameter">variable</replaceable> ] ... ) { <replaceable class="parameter">subquery</replaceable> }
+[ OPTIONAL ] CALL ( * ) { <replaceable class="parameter">subquery</replaceable> }
+[ OPTIONAL ] CALL { WITH <replaceable class="parameter">variable</replaceable> [, <replaceable class="parameter">variable</replaceable> ] ... <replaceable class="parameter">subquery</replaceable> }
+</synopsis>
+ </refsynopsisdiv>
+
+ <refsect1 id="cypher-call-description">
+  <title>Description</title>
+
+  <para>
+   <command>CALL</command> runs a routine from inside a query pipeline. The token after
+   the keyword decides which form you get. A name is the named routine form: it invokes a
+   function and adds the columns named in the mandatory <literal>YIELD</literal> list to
+   the working row. A <literal>(</literal> or a <literal>{</literal> is the subquery form:
+   it runs the query written between the braces.
+  </para>
+
+  <para>
+   <literal>OPTIONAL</literal> may prefix either form. It keeps an input row whose routine
+   or subquery produced no rows, binding to null everything the call would have returned.
+  </para>
+
+  <refsect2 id="cypher-call-what-it-invokes">
+   <title>What CALL Invokes</title>
+
+   <para>
+    In GQL the thing <command>CALL</command> invokes is a procedure. AgensGraph has no
+    procedure catalog of its own. <literal>CALL ... YIELD</literal> resolves the name
+    against ordinary PostgreSQL functions, and a stock installation registers no
+    procedures at all. Any function works, and its shape decides what
+    <literal>YIELD</literal> can name.
+   </para>
+
+   <variablelist>
+    <varlistentry>
+     <term>A scalar function, such as <literal>length(text)</literal></term>
+     <listitem>
+      <para>One column, named after the function.</para>
+     </listitem>
+    </varlistentry>
+
+    <varlistentry>
+     <term>A set returning function, such as <literal>generate_series(int, int)</literal></term>
+     <listitem>
+      <para>One column named after the function, and one row per element.</para>
+     </listitem>
+    </varlistentry>
+
+    <varlistentry>
+     <term>A composite or <literal>RETURNS TABLE</literal> function, such as
+      <literal>jsonb_each_text(jsonb)</literal></term>
+     <listitem>
+      <para>One column per output field, under the field names.</para>
+     </listitem>
+    </varlistentry>
+
+    <varlistentry>
+     <term>Any of these, named by the function itself</term>
+     <listitem>
+      <para>
+       The whole row, when no output column carries that name. A function declared
+       <literal>RETURNS SETOF vertex</literal> yields vertices this way.
+      </para>
+     </listitem>
+    </varlistentry>
+   </variablelist>
+
+   <para>
+    A yield item is one of these and nothing else. A name the function does not return is
+    refused, even when a variable of that name is bound earlier in the query.
+   </para>
+
+   <para>
+    PostgreSQL's own <command>CALL</command> statement is a different thing. It is a top
+    level SQL statement, it requires a real procedure, and it is not a Cypher clause. The
+    two do not overlap, and each rejects the other's target.
+   </para>
+  </refsect2>
+
+  <refsect2 id="cypher-call-named-form">
+   <title>The Named Routine Form</title>
+
+   <para>
+    The clause becomes a function scan joined onto the rows the preceding clause produced,
+    like a lateral <literal>SELECT * FROM function(arguments)</literal>. The
+    <literal>YIELD</literal> list picks from that result. A yield item is resolved against
+    the function's result and nothing else.
+   </para>
+
+   <itemizedlist>
+    <listitem>
+     <para>
+      <literal>YIELD</literal> is mandatory. <literal>CALL f(x)</literal> with no
+      <literal>YIELD</literal> is a syntax error.
+     </para>
+    </listitem>
+    <listitem>
+     <para>
+      The clause can neither open a query nor end one. <literal>CALL</literal> at the start
+      of a statement is read as PostgreSQL's SQL <command>CALL</command>, so a leading
+      <literal>CALL f() YIELD ...</literal> is a syntax error.
+     </para>
+    </listitem>
+    <listitem>
+     <para>
+      When the arguments reference variables bound earlier the call is correlated and runs
+      once per input row. With constant arguments the function runs once and its rows cross
+      join onto the pipeline.
+     </para>
+    </listitem>
+    <listitem>
+     <para>
+      Yielded columns are ordinary bindings afterwards. Filter them, aggregate them, order
+      by them, or feed them to a following <xref linkend="cypher-match"/>.
+     </para>
+    </listitem>
+    <listitem>
+     <para>
+      An input row for which the function yields no rows is dropped, exactly as an inner
+      join drops it. <literal>OPTIONAL</literal> keeps it.
+     </para>
+    </listitem>
+   </itemizedlist>
+  </refsect2>
+
+  <refsect2 id="cypher-call-subquery-form">
+   <title>The Subquery Form</title>
+
+   <para>
+    <literal>CALL { ... }</literal> evaluates the subquery and joins its result onto the
+    working table. The import list decides entirely what the body can see. A bare
+    <literal>CALL { ... }</literal> imports nothing. A pattern inside the braces declares
+    its variable names, so an outer variable's name written in the body binds a fresh
+    variable of the same name rather than referring to the outer one. Name the variables
+    the body needs.
+   </para>
+
+   <variablelist>
+    <varlistentry>
+     <term><literal>CALL { ... }</literal></term>
+     <listitem><para>The body sees nothing.</para></listitem>
+    </varlistentry>
+    <varlistentry>
+     <term><literal>CALL ( ) { ... }</literal></term>
+     <listitem><para>The body sees nothing.</para></listitem>
+    </varlistentry>
+    <varlistentry>
+     <term><literal>CALL (v, w) { ... }</literal></term>
+     <listitem><para>The body sees <literal>v</literal> and <literal>w</literal>.</para></listitem>
+    </varlistentry>
+    <varlistentry>
+     <term><literal>CALL (*) { ... }</literal></term>
+     <listitem><para>The body sees every variable in scope.</para></listitem>
+    </varlistentry>
+    <varlistentry>
+     <term><literal>CALL { WITH v, w ... }</literal></term>
+     <listitem><para>The body sees <literal>v</literal> and <literal>w</literal>.</para></listitem>
+    </varlistentry>
+   </variablelist>
+
+   <para>
+    A scope clause and an importing <literal>WITH</literal> may be combined.
+    <literal>CALL (v) { WITH w ... }</literal> imports both. An import list is a plain list
+    of names in either spelling, and <literal>AS</literal> is not accepted in it. Three
+    near misses are syntax errors rather than alternatives:
+    <literal>CALL (*) { WITH v ... }</literal>, <literal>CALL (*, v) { ... }</literal>, and
+    an importing <literal>WITH</literal> that is not a plain list of names, which rules out
+    both <literal>WITH *</literal> and <literal>WITH v AS x</literal>.
+   </para>
+
+   <para>
+    With an import list the body runs once per input row, with those variables bound, and
+    the rows it returns are joined to that row. With no imports the body is uncorrelated:
+    it runs once and its result cross joins onto every input row. An input row for which
+    the body returns nothing is dropped, and <literal>OPTIONAL</literal> keeps it.
+   </para>
+
+   <para>
+    The body is read only and must end with <xref linkend="cypher-return"/>. Write clauses
+    are rejected at parse time, as a syntax error at the write keyword, one for each of
+    <literal>CREATE</literal>, <literal>INSERT</literal>, <literal>MERGE</literal>,
+    <literal>SET</literal>, <literal>REMOVE</literal>, <literal>DELETE</literal> and
+    <literal>DETACH DELETE</literal>. A body ending in <literal>FINISH</literal> raises
+    <literal>CALL subquery must RETURN at least one variable</literal>.
+   </para>
+
+   <para>
+    The names the body returns become bindings in the enclosing query. A name already bound
+    outside is rejected rather than shadowed, with
+    <literal>variable "name" returned by the CALL subquery is already bound in the outer
+    query</literal>. Alias it in the body's <literal>RETURN</literal>. The body may not bind
+    one output name twice either, and neither may a <literal>YIELD</literal> list.
+   </para>
+
+   <para>
+    A binding inside the body that would hide an outer name is refused as well. That covers
+    a <xref linkend="cypher-let"/>, an <xref linkend="cypher-unwind"/>, a
+    <xref linkend="cypher-for"/>, a renaming <xref linkend="cypher-with"/> and a nested
+    <command>CALL</command> whose result carries the name. Imported variables keep their
+    names for the whole body.
+   </para>
+
+   <para>
+    The body may use <command>MATCH</command>, <literal>OPTIONAL MATCH</literal>,
+    <command>WITH</command>, <command>LET</command>, <command>UNWIND</command>,
+    <command>FOR</command>, <command>LOAD FROM</command>, a nested <command>CALL</command>,
+    <literal>DISTINCT</literal>, <literal>ORDER BY</literal>, <literal>SKIP</literal>,
+    <literal>LIMIT</literal> and the set operators. <xref linkend="cypher-next"/> is not
+    accepted. Neither is a SQL <literal>SELECT</literal>: the body is a Cypher read
+    statement. <literal>CALL ... PER (...)</literal> is not supported. How often the body
+    runs is decided by the import list alone.
+   </para>
+  </refsect2>
+
+  <refsect2 id="cypher-call-optional">
+   <title>OPTIONAL</title>
+
+   <para>
+    A plain <command>CALL</command> joins the call's rows onto the pipeline, so an input row
+    that produced none drops out. <literal>OPTIONAL CALL</literal> lowers to a left join
+    instead, which keeps that row. The result is one row, carrying the input row's own
+    values, with every variable the call would have bound set to null.
+   </para>
+
+   <itemizedlist>
+    <listitem>
+     <para>
+      Preservation is decided per input row. A correlated call that finds nothing for one
+      row nulls only that row and leaves the others alone.
+     </para>
+    </listitem>
+    <listitem>
+     <para>
+      Every variable the call would have bound is nulled together, whatever its type:
+      vertex, edge, path, list, map or scalar.
+     </para>
+    </listitem>
+    <listitem>
+     <para>
+      The binding is a real SQL null, not a jsonb null, so <literal>IS NULL</literal> is the
+      way to test it.
+     </para>
+    </listitem>
+    <listitem>
+     <para>
+      <literal>OPTIONAL</literal> preserves rows, it does not invent them. An empty input
+      still produces no output.
+     </para>
+    </listitem>
+    <listitem>
+     <para>
+      A preserved row is an ordinary row afterwards, so a later clause multiplies it like
+      any other.
+     </para>
+    </listitem>
+   </itemizedlist>
+
+   <para>
+    <literal>OPTIONAL</literal> relaxes nothing else. A write clause in the body is still a
+    syntax error, a body that returns an outer name is still rejected, and a bare
+    <literal>OPTIONAL CALL { ... }</literal> still imports nothing.
+   </para>
+
+   <para>
+    Some bodies always produce at least one row, and for those <literal>OPTIONAL</literal>
+    changes nothing. An ungrouped aggregate is the common case: a person with no credits
+    gets <literal>0</literal>, not null.
+   </para>
+  </refsect2>
+ </refsect1>
+
+ <refsect1 id="cypher-call-parameters">
+  <title>Parameters</title>
+
+  <variablelist>
+   <varlistentry>
+    <term><replaceable class="parameter">function</replaceable></term>
+    <listitem>
+     <para>
+      Name of the function to invoke, schema qualified if <varname>search_path</varname>
+      does not reach it. The parentheses are required even with no arguments. A procedure is
+      refused with <literal>name() is a procedure</literal> and the hint
+      <literal>To call a procedure, use CALL</literal>.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><replaceable class="parameter">argument</replaceable></term>
+    <listitem>
+     <para>
+      A value expression, evaluated per input row. An argument that references a variable
+      bound earlier makes the call correlated. A property access produces
+      <type>jsonb</type>, so a function whose parameter is another type needs an explicit
+      cast.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><replaceable class="parameter">column</replaceable></term>
+    <listitem>
+     <para>
+      An output column of the function, or the function's own name for the whole row.
+      <literal>YIELD *</literal> takes all of them. Any other name is refused with
+      <literal>function f has no output column "x"</literal>.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><replaceable class="parameter">alias</replaceable></term>
+    <listitem>
+     <para>
+      New name for the yielded column. It is required when the column's own name is already
+      bound in the query, because a yielded name that collides is rejected rather than
+      shadowing: <literal>variable "m" yielded by CALL is already bound in the outer
+      query</literal>.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><replaceable class="parameter">variable</replaceable></term>
+    <listitem>
+     <para>
+      A variable bound in the enclosing query, made visible inside the braces. One that does
+      not exist raises <literal>variable "name" to import into CALL does not exist</literal>.
+      A scope clause with no preceding clause raises
+      <literal>CALL has no preceding clause to import variables from</literal>.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><replaceable class="parameter">subquery</replaceable></term>
+    <listitem>
+     <para>
+      A read only Cypher query ending in <command>RETURN</command>.
+     </para>
+    </listitem>
+   </varlistentry>
+  </variablelist>
+ </refsect1>
+
+ <refsect1 id="cypher-call-examples">
+  <title>Examples</title>
+
+  <para>
+   These examples use the graph in <xref linkend="agensgraph-example-data"/>.
+  </para>
+
+  <para>
+   Expand one film's properties into rows. <literal>jsonb_each_text</literal> returns two
+   columns, and <literal>YIELD</literal> names both:
+<programlisting>
+MATCH (m:movie {title: 'The Matrix'})
+CALL jsonb_each_text(jsonb_build_object('title', m.title, 'year', m.year, 'genre', m.genre))
+     YIELD key, value
+RETURN key AS property, value ORDER BY property;
+
+ property |    value
+----------+--------------
+ "genre"  | "Action"
+ "title"  | "The Matrix"
+ "year"   | "1999"
+(3 rows)
+</programlisting>
+  </para>
+
+  <para>
+   <literal>AS</literal> renames a yielded column for every clause that follows. Yielding a
+   subset is allowed, so <literal>value</literal> is not bound here:
+<programlisting>
+MATCH (m:movie {title: 'The Matrix'})
+CALL jsonb_each_text(properties(m)) YIELD key AS property
+RETURN property ORDER BY property;
+
+  property
+-------------
+ "embedding"
+ "genre"
+ "plot"
+ "title"
+ "year"
+(5 rows)
+</programlisting>
+  </para>
+
+  <para>
+   <literal>YIELD *</literal> takes every column. The arguments here are constants, so
+   <literal>generate_series</literal> runs once and its two rows cross join onto the film:
+<programlisting>
+MATCH (m:movie) WHERE m.genre = 'Adventure'
+CALL generate_series(1, 2) YIELD *
+RETURN m.title AS film, generate_series AS n ORDER BY n;
+
+      film       | n
+-----------------+---
+ "Jurassic Park" | 1
+ "Jurassic Park" | 2
+(2 rows)
+</programlisting>
+  </para>
+
+  <para>
+   Pass a value from the row and the function runs per row. <literal>m.year</literal> is
+   <type>jsonb</type>, so it needs a cast:
+<programlisting>
+MATCH (m:movie {title: 'The Matrix'})
+CALL generate_series(1, (m.year)::int) YIELD generate_series AS n
+RETURN count(n) AS years;
+
+ years
+-------
+ 1999
+(1 row)
+</programlisting>
+  </para>
+
+  <para>
+   Without the cast the function cannot be resolved:
+<programlisting>
+MATCH (m:movie {title: 'The Matrix'})
+CALL generate_series(1, m.year) YIELD generate_series AS n
+RETURN count(n);
+
+ERROR:  function generate_series(integer, jsonb) does not exist
+LINE 2: CALL generate_series(1, m.year) YIELD generate_series AS n
+        ^
+HINT:  No function matches the given name and argument types. You might need to add explicit type casts.
+</programlisting>
+  </para>
+
+  <para>
+   A second call may correlate on the first one's yielded column:
+<programlisting>
+MATCH (m:movie {title: 'The Matrix'})
+CALL generate_series(1, 2) YIELD generate_series AS n
+CALL generate_series(1, n) YIELD generate_series AS k
+RETURN n, k ORDER BY n, k;
+
+ n | k
+---+---
+ 1 | 1
+ 2 | 1
+ 2 | 2
+(3 rows)
+</programlisting>
+  </para>
+
+  <para>
+   When no output column carries the function's own name, that name stands for the whole
+   row:
+<programlisting>
+MATCH (m:movie {title: 'The Matrix'})
+CALL jsonb_each_text(jsonb_build_object('title', m.title, 'year', m.year))
+     YIELD jsonb_each_text AS pair
+RETURN pair ORDER BY pair;
+
+                  pair
+-----------------------------------------
+ {"key": "title", "value": "The Matrix"}
+ {"key": "year", "value": "1999"}
+(2 rows)
+</programlisting>
+  </para>
+
+  <para>
+   The subquery form needs its import list. Written without one, this query answers a
+   different question. Every film reports the same cast size, which is the number of
+   <literal>acted_in</literal> edges in the whole graph:
+<programlisting>
+MATCH (d:person)-[:directed]-&gt;(m:movie)
+CALL { MATCH (a:person)-[:acted_in]-&gt;(m) RETURN count(a) AS cast_size }
+RETURN m.title AS film, cast_size ORDER BY film LIMIT 4;
+
+        film         | cast_size
+---------------------+-----------
+ "Avatar"            | 25
+ "Blade Runner"      | 25
+ "Blade Runner 2049" | 25
+ "Elysium"           | 25
+(4 rows)
+</programlisting>
+  </para>
+
+  <para>
+   The <literal>m</literal> inside the braces is not the <literal>m</literal> matched
+   outside. It is a new variable that the body's own pattern declares, constrained only by
+   the <literal>acted_in</literal> edge. Naming the import asks the question that was
+   intended. <literal>CALL (*) { ... }</literal> and <literal>CALL { WITH m ... }</literal>
+   give the same numbers:
+<programlisting>
+MATCH (d:person)-[:directed]-&gt;(m:movie)
+CALL (m) { MATCH (a:person)-[:acted_in]-&gt;(m) RETURN count(a) AS cast_size }
+RETURN m.title AS film, cast_size ORDER BY film LIMIT 4;
+
+        film         | cast_size
+---------------------+-----------
+ "Avatar"            | 1
+ "Blade Runner"      | 1
+ "Blade Runner 2049" | 2
+ "Elysium"           | 1
+(4 rows)
+</programlisting>
+  </para>
+
+  <para>
+   Nothing is reported for the first query because only expressions reference a variable,
+   while patterns declare one. The same mistake inside a <xref linkend="cypher-where"/> is
+   caught:
+<programlisting>
+MATCH (d:person)-[:directed]-&gt;(m:movie)
+CALL { MATCH (a:person) WHERE a.name = m.title RETURN count(a) AS n }
+RETURN n;
+
+ERROR:  variable does not exist
+LINE 2: CALL { MATCH (a:person) WHERE a.name = m.title RETURN count(...
+                                               ^
+</programlisting>
+  </para>
+
+  <para>
+   An aggregating body returns exactly one row for every input row, even when the value it
+   computes is zero, so the outer row count is unchanged:
+<programlisting>
+MATCH (p:person) WHERE p.name IN ['Keanu Reeves', 'Christopher Nolan']
+CALL (p) { MATCH (p)-[:acted_in]-&gt;(m:movie) RETURN count(m) AS films }
+RETURN p.name AS person, films ORDER BY person;
+
+       person        | films
+---------------------+-------
+ "Christopher Nolan" | 0
+ "Keanu Reeves"      | 4
+(2 rows)
+</programlisting>
+  </para>
+
+  <para>
+   An empty scope clause states plainly that the body is uncorrelated. Write it when the
+   body is a constant of the query:
+<programlisting>
+MATCH (p:person {name: 'Keanu Reeves'})
+CALL () { MATCH (m:movie) RETURN count(m) AS movies }
+RETURN p.name AS person, movies;
+
+     person     | movies
+----------------+--------
+ "Keanu Reeves" | 18
+(1 row)
+</programlisting>
+  </para>
+
+  <para>
+   Every named variable is visible, and the body may use only some of them:
+<programlisting>
+MATCH (p:person {name: 'Keanu Reeves'}), (q:person {name: 'Carrie-Anne Moss'})
+CALL (p, q) { MATCH (p)-[:acted_in]-&gt;(m:movie)&lt;-[:acted_in]-(q) RETURN count(m) AS shared }
+RETURN shared;
+
+ shared
+--------
+ 2
+(1 row)
+</programlisting>
+  </para>
+
+  <para>
+   Keanu Reeves has four acting credits, Ryan Gosling one and Christopher Nolan none.
+   <literal>OPTIONAL CALL</literal> keeps the director:
+<programlisting>
+MATCH (p:person) WHERE p.name IN ['Keanu Reeves', 'Ryan Gosling', 'Christopher Nolan']
+OPTIONAL CALL (p) { MATCH (p)-[:acted_in]-&gt;(m:movie) RETURN m.title AS film }
+RETURN p.name AS person, film ORDER BY person, film;
+
+       person        |            film
+---------------------+----------------------------
+ "Christopher Nolan" |
+ "Keanu Reeves"      | "The Matrix"
+ "Keanu Reeves"      | "The Matrix Reloaded"
+ "Keanu Reeves"      | "The Matrix Resurrections"
+ "Keanu Reeves"      | "The Matrix Revolutions"
+ "Ryan Gosling"      | "Blade Runner 2049"
+(6 rows)
+</programlisting>
+  </para>
+
+  <para>
+   Drop the <literal>OPTIONAL</literal> and the same body loses that row entirely, while the
+   other two people are unaffected:
+<programlisting>
+MATCH (p:person) WHERE p.name IN ['Keanu Reeves', 'Ryan Gosling', 'Christopher Nolan']
+CALL (p) { MATCH (p)-[:acted_in]-&gt;(m:movie) RETURN m.title AS film }
+RETURN p.name AS person, film ORDER BY person, film;
+
+     person     |            film
+----------------+----------------------------
+ "Keanu Reeves" | "The Matrix"
+ "Keanu Reeves" | "The Matrix Reloaded"
+ "Keanu Reeves" | "The Matrix Resurrections"
+ "Keanu Reeves" | "The Matrix Revolutions"
+ "Ryan Gosling" | "Blade Runner 2049"
+(5 rows)
+</programlisting>
+  </para>
+
+  <para>
+   <literal>OPTIONAL</literal> sits in the same place on the named form.
+   <literal>generate_series(1, 0)</literal> is empty, so Avatar's row survives with
+   <literal>n</literal> null:
+<programlisting>
+MATCH (m:movie) WHERE m.title IN ['The Matrix', 'Avatar']
+OPTIONAL CALL generate_series(1, CASE WHEN m.title = 'Avatar' THEN 0 ELSE 2 END)
+         YIELD generate_series AS n
+RETURN m.title AS film, n ORDER BY film, n;
+
+     film     | n
+--------------+---
+ "Avatar"     |
+ "The Matrix" | 1
+ "The Matrix" | 2
+(3 rows)
+</programlisting>
+  </para>
+
+  <para>
+   Every variable the body would have returned is null on a preserved row, and it is a SQL
+   null:
+<programlisting>
+MATCH (p:person {name: 'Christopher Nolan'})
+OPTIONAL CALL (p) { MATCH (p)-[:acted_in]-&gt;(m:movie) RETURN m.title AS film, m.year AS year }
+RETURN film IS NULL AS film_is_null, year IS NULL AS year_is_null;
+
+ film_is_null | year_is_null
+--------------+--------------
+ t            | t
+(1 row)
+</programlisting>
+  </para>
+
+  <para>
+   With no input row there is nothing to preserve:
+<programlisting>
+MATCH (p:person {name: 'Nobody'})
+OPTIONAL CALL (p) { MATCH (p)-[:acted_in]-&gt;(m:movie) RETURN m.title AS film }
+RETURN p.name AS person, film;
+
+ person | film
+--------+------
+(0 rows)
+</programlisting>
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-call-notes">
+  <title>Notes</title>
+
+  <para>
+   The lexer decides between the two forms by looking one token ahead. That keeps
+   <literal>call</literal> usable as an ordinary identifier:
+   <literal>MATCH (call:movie) RETURN count(call)</literal> still works, and so does the SQL
+   statement <literal>CALL myproc()</literal>.
+  </para>
+
+  <para>
+   The named routine form is a middle clause: it cannot open a query and cannot end one. The
+   subquery form may open a query, but only without a scope clause.
+  </para>
+
+  <para>
+   A procedure is the one routine kind <literal>CALL ... YIELD</literal> will not take:
+<programlisting>
+CREATE PROCEDURE noop() LANGUAGE sql AS 'SELECT 1';
+MATCH (m:movie) CALL noop() YIELD * RETURN count(*);
+
+CREATE PROCEDURE
+
+ERROR:  noop() is a procedure
+LINE 1: MATCH (m:movie) CALL noop() YIELD * RETURN count(*);
+                        ^
+HINT:  To call a procedure, use CALL.
+</programlisting>
+  </para>
+
+  <para>
+   A yield item that is not an output column of the function is refused even when a variable
+   of that name is bound earlier. The earlier binding is never what <literal>YIELD</literal>
+   means:
+<programlisting>
+MATCH (m:movie {title: 'The Matrix'})
+CALL generate_series(1, 2) YIELD m AS n
+RETURN n;
+
+ERROR:  function generate_series has no output column "m"
+LINE 2: CALL generate_series(1, 2) YIELD m AS n
+                                         ^
+</programlisting>
+  </para>
+
+  <para>
+   A function returning the pseudo type <type>record</type> cannot be called. The clause has
+   nowhere to put the column definition list PostgreSQL requires, so
+   <literal>CALL jsonb_to_recordset(...) YIELD *</literal> raises
+   <literal>a column definition list is required for functions returning "record"</literal>.
+   Wrap such a call in a SQL subquery instead.
+  </para>
+
+  <para>
+   The plan shows which execution shape you got. A correlated call is a
+   <literal>Nested Loop</literal> whose inner side is the function scan, and
+   <literal>OPTIONAL</literal> makes it a <literal>Nested Loop Left Join</literal> with the
+   function scan on the nullable side:
+<programlisting>
+EXPLAIN (COSTS OFF)
+MATCH (m:movie) CALL generate_series(1, (m.year)::int) YIELD generate_series AS n
+RETURN m.title, n;
+
+               QUERY PLAN
+----------------------------------------
+ Nested Loop
+   -&gt;  Seq Scan on movie m
+   -&gt;  Function Scan on generate_series
+(3 rows)
+</programlisting>
+  </para>
+
+  <para>
+   A correlated subquery body is not always a per row subquery in the plan. The planner
+   pulls up a body it can flatten, so a body of plain patterns plans as the same join an
+   inline pattern would produce. Only a body the planner cannot flatten, such as an
+   aggregating one, stays a per row lateral join.
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-call-compatibility">
+  <title>Compatibility</title>
+
+  <para>
+   <command>CALL</command> implements the GQL call procedure statement and procedure call of
+   ISO/IEC 39075:2024 section 15.1, in the query position of section 14.5. Both procedure
+   call forms the standard defines are accepted: the inline call of section 15.2 and the
+   named call of section 15.3, each with the optional <literal>OPTIONAL</literal> prefix.
+   The <literal>YIELD</literal> list follows section 16.14, including syntax rule 7, which
+   says that a yield item names a column of the procedure's result, and syntax rule 6, which
+   refuses a duplicate alias.
+  </para>
+
+  <para>
+   The call data modifying procedure statement of section 13.6 is not implemented. A called
+   routine or subquery may not write to the graph. Neither is a catalog of GQL procedures: a
+   procedure reference of section 17.5 resolves to a PostgreSQL function, and the standard's
+   <literal>QUERY PROCEDURE</literal> indication has no counterpart here.
+   <literal>CALL ... PER (...)</literal> is not accepted.
+  </para>
+
+  <para>
+   There are two deviations. Section 15.3 makes the <literal>YIELD</literal> clause optional
+   on a named call, and AgensGraph requires it, because the clause has to contribute columns
+   to the working table. Section 15.2 syntax rule 3 says that an absent variable scope clause
+   is rewritten as a scope clause listing every field of the incoming working record, which
+   makes a bare <literal>CALL { ... }</literal> import everything under the standard.
+   AgensGraph treats an absent scope clause as importing nothing, like
+   <literal>CALL ( ) { ... }</literal>.
+  </para>
+
+  <para>
+   AgensGraph goes beyond the standard in two places. <literal>(*)</literal> is not in the
+   standard's binding variable reference list, and neither is the importing
+   <literal>WITH</literal>. Both come from openCypher. And because a name resolves to a
+   PostgreSQL function, <literal>CALL ... YIELD</literal> may invoke any PostgreSQL table
+   function, not only a graph routine: a set returning function, a composite returning
+   function and a function declared <literal>RETURNS TABLE</literal> all work. A SQL
+   <literal>SELECT</literal> is not accepted as a <command>CALL</command> body. It is
+   accepted as the body of a subquery expression, for which see
+   <xref linkend="cypher-subqueryexpressions"/>.
+  </para>
+
+  <para>
+   openCypher writes the named clause the same way but resolves the name against a procedure
+   registry, such as <literal>db.labels()</literal> or <literal>dbms.components()</literal>,
+   and allows <literal>CALL proc()</literal> with no <literal>YIELD</literal> as a standalone
+   statement. Neither exists here. There is no <literal>db</literal> or
+   <literal>dbms</literal> namespace, and <literal>YIELD</literal> is required. Read the
+   label catalogs instead.
+  </para>
+
+  <para>
+   openCypher requires the same import list on the subquery form, but it reports the absence
+   of one: referring to an undeclared outer variable inside
+   <literal>CALL { }</literal> is an error there, not a silent rebinding. Code moved from
+   openCypher keeps working, because <literal>CALL (v) { }</literal>,
+   <literal>CALL (*) { }</literal> and <literal>CALL { WITH v ... }</literal> all mean what
+   they do there. A bare <literal>CALL { }</literal> that openCypher rejected will run here
+   and answer differently.
+  </para>
+
+  <para>
+   <literal>OPTIONAL CALL</literal> is a GQL construct. openCypher has only
+   <literal>OPTIONAL MATCH</literal>. The two agree wherever both can express the same thing,
+   because the standard defines <literal>OPTIONAL MATCH p</literal> as an
+   <literal>OPTIONAL CALL</literal> over a body that matches <literal>p</literal>.
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-call-see-also">
+  <title>See Also</title>
+  <simplelist type="inline">
+   <member><xref linkend="cypher-subqueryexpressions"/></member>
+   <member><xref linkend="cypher-match"/></member>
+   <member><xref linkend="cypher-with"/></member>
+   <member><xref linkend="cypher-return"/></member>
+   <member><xref linkend="cypher-next"/></member>
+  </simplelist>
+ </refsect1>
+</refentry>

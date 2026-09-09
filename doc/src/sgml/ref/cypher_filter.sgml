@@ -1,0 +1,217 @@
+<!--
+doc/src/sgml/ref/cypher_filter.sgml
+PostgreSQL documentation
+-->
+
+<refentry id="cypher-filter">
+ <indexterm zone="cypher-filter">
+  <primary>FILTER</primary>
+ </indexterm>
+
+ <refmeta>
+  <refentrytitle>FILTER</refentrytitle>
+  <manvolnum>7</manvolnum>
+  <refmiscinfo>Cypher - Language Statements</refmiscinfo>
+ </refmeta>
+
+ <refnamediv>
+  <refname>FILTER</refname>
+  <refpurpose>keep only the rows that satisfy a condition</refpurpose>
+ </refnamediv>
+
+ <refsynopsisdiv>
+<synopsis>
+FILTER [ WHERE ] <replaceable class="parameter">condition</replaceable>
+</synopsis>
+ </refsynopsisdiv>
+
+ <refsect1 id="cypher-filter-description">
+  <title>Description</title>
+
+  <para>
+   <command>FILTER</command> discards every row whose condition is not true. It changes
+   nothing else. The columns in scope before it are exactly the columns in scope after it.
+  </para>
+
+  <para>
+   The <literal>WHERE</literal> keyword is optional and means nothing on its own.
+   <literal>FILTER x &gt; 1</literal> and <literal>FILTER WHERE x &gt; 1</literal> are the
+   same clause.
+  </para>
+
+  <para>
+   <command>FILTER</command> applies to whatever the clause before it produced, including the
+   output of an aggregating <command>WITH</command>. That makes it the Cypher equivalent of
+   SQL's <literal>HAVING</literal>. Two of them in a row apply in order, and the second sees
+   only the rows the first kept. A row whose condition evaluates to null is discarded, as it
+   would be in SQL.
+  </para>
+
+  <para>
+   <command>FILTER</command> is a middle clause. It cannot open a query and it cannot end one.
+   The single exception is after <xref linkend="cypher-next"/>, where it may come first
+   because it acts on the table carried across the boundary.
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-filter-parameters">
+  <title>Parameters</title>
+
+  <variablelist>
+   <varlistentry>
+    <term><replaceable class="parameter">condition</replaceable></term>
+    <listitem>
+     <para>
+      Any expression over the variables in scope that evaluates to
+      <type>boolean</type>. This includes a subquery value expression such as
+      <literal>EXISTS { }</literal> or <literal>COUNT { }</literal>.
+     </para>
+     <para>
+      The condition has to be a boolean. A bare number is rejected with
+      <literal>argument of FILTER must be type boolean, not type integer</literal>, and a bare
+      property with <literal>cannot cast jsonb to boolean</literal>. Compare explicitly
+      instead, or add an explicit cast.
+     </para>
+    </listitem>
+   </varlistentry>
+  </variablelist>
+ </refsect1>
+
+ <refsect1 id="cypher-filter-examples">
+  <title>Examples</title>
+
+  <para>
+   These examples use the graph in <xref linkend="agensgraph-example-data"/>.
+  </para>
+
+  <para>
+   Keep the films from 2014 onwards:
+<programlisting>
+MATCH (m:movie)
+FILTER m.year &gt;= 2014
+RETURN m.title AS film, m.year AS year ORDER BY year;
+
+            film            | year
+----------------------------+------
+ "Interstellar"             | 2014
+ "Blade Runner 2049"        | 2017
+ "The Matrix Resurrections" | 2021
+(3 rows)
+</programlisting>
+  </para>
+
+  <para>
+   A <literal>WHERE</literal> attached to the pattern is the same test and produces the same
+   plan. Use <command>FILTER</command> when the condition belongs to the pipeline rather than
+   to one pattern.
+  </para>
+
+  <para>
+   Test an aggregate. <literal>WHERE</literal> cannot follow an aggregating
+   <command>RETURN</command>, and attaching it to a <command>WITH</command> means restating
+   the projection. <command>FILTER</command> tests the aggregate directly:
+<programlisting>
+MATCH (p:person)-[:acted_in]-&gt;(m:movie)
+WITH p.name AS actor, count(m) AS films
+FILTER films &gt;= 3
+RETURN actor, films ORDER BY actor;
+
+          actor          | films
+-------------------------+-------
+ "Arnold Schwarzenegger" | 3
+ "Keanu Reeves"          | 4
+(2 rows)
+</programlisting>
+  </para>
+
+  <para>
+   Narrow the rows in two stages. The second <command>FILTER</command> sees only what the
+   first one kept:
+<programlisting>
+MATCH (m:movie)
+FILTER m.genre = 'Sci-Fi'
+FILTER m.year &lt; 1998
+RETURN m.title AS film ORDER BY film;
+
+        film
+---------------------
+ "Blade Runner"
+ "Gattaca"
+ "The Fifth Element"
+ "Total Recall"
+(4 rows)
+</programlisting>
+  </para>
+
+  <para>
+   A <command>FILTER</command> after a write runs the write first, then decides which rows
+   flow on. Here <command>SET</command> updates the film and <command>FILTER</command> decides
+   whether the row is reported:
+<programlisting>
+MATCH (m:movie {title: 'The Matrix'})
+SET m.reviewed = true
+FILTER m.year = 1999
+RETURN m.title AS film, m.reviewed AS reviewed;
+
+     film     | reviewed
+--------------+----------
+ "The Matrix" | true
+(1 row)
+</programlisting>
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-filter-notes">
+  <title>Notes</title>
+
+  <para>
+   Because <command>FILTER</command> cannot open a query, a statement that starts with it is a
+   syntax error rather than a placement error:
+<programlisting>
+FILTER true;
+
+ERROR:  syntax error at or near "FILTER"
+LINE 1: FILTER true;
+        ^
+</programlisting>
+  </para>
+
+  <para>
+   Ending a query on <command>FILTER</command> raises
+   <literal>Cypher query must end with RETURN, FINISH or update clause</literal>.
+  </para>
+
+  <para>
+   <literal>filter</literal> is an unreserved keyword, so it stays available as a variable, a
+   label or a property name.
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-filter-compatibility">
+  <title>Compatibility</title>
+
+  <para>
+   <command>FILTER</command> implements the GQL filter statement of ISO/IEC 39075:2024,
+   feature GQ08. Both spellings the standard defines are accepted, in every position the
+   standard allows.
+  </para>
+
+  <para>
+   openCypher has no <command>FILTER</command> statement. The equivalent there is a
+   <literal>WHERE</literal> attached to <command>MATCH</command> or to
+   <command>WITH</command>, and AgensGraph accepts both of those unchanged. The unrelated
+   openCypher list function <literal>filter(x IN list WHERE predicate)</literal> is not
+   accepted. Write a list comprehension instead, such as
+   <literal>[x IN m.embedding WHERE x &gt; 0]</literal>.
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-filter-see-also">
+  <title>See Also</title>
+  <simplelist type="inline">
+   <member><xref linkend="cypher-where"/></member>
+   <member><xref linkend="cypher-with"/></member>
+   <member><xref linkend="cypher-next"/></member>
+  </simplelist>
+ </refsect1>
+</refentry>

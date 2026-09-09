@@ -1,5 +1,5 @@
 <!--
-doc/src/sgml/ref/drop_elabel.sgml
+doc/src/sgml/ref/cypher_drop_elabel.sgml
 PostgreSQL documentation
 -->
 
@@ -11,36 +11,68 @@ PostgreSQL documentation
  <refmeta>
   <refentrytitle>DROP ELABEL</refentrytitle>
   <manvolnum>7</manvolnum>
-  <refmiscinfo>SQL - Language Statements</refmiscinfo>
+  <refmiscinfo>Cypher - Language Statements</refmiscinfo>
  </refmeta>
 
  <refnamediv>
   <refname>DROP ELABEL</refname>
-  <refpurpose>drop the edge label</refpurpose>
+  <refpurpose>remove an edge label</refpurpose>
  </refnamediv>
 
  <refsynopsisdiv>
 <synopsis>
-
-DROP ELABEL [ IF EXISTS ] <replaceable class="parameter">label_name</replaceable> [ , ... ] [ CASCADE | RESTRICT ]
+DROP ELABEL [ IF EXISTS ] <replaceable class="parameter">label_name</replaceable> [, ...] [ CASCADE | RESTRICT ]
 </synopsis>
  </refsynopsisdiv>
 
- <refsect1>
+ <refsect1 id="cypher-dropelabel-description">
   <title>Description</title>
+
   <para>
-   <command>DROP ELABEL</command> statement drops the target edge label.
+   <command>DROP ELABEL</command> removes an edge label. The table behind it goes too, along
+   with its id sequence, its three indexes and its constraints. The label is looked up in the
+   graph named by <varname>graph_path</varname>, and the name cannot carry the graph. Several
+   names may be given in one statement.
+  </para>
+
+  <para>
+   <literal>RESTRICT</literal>, which is the default, has two things to object to. A label that
+   still holds edges is refused with
+   <literal>cannot drop <replaceable class="parameter">label_name</replaceable> because it is
+   not empty.</literal> That is stricter than the dependency check PostgreSQL applies to a
+   table, which does not care how many rows there are. A label that has a child label is
+   refused as well, and the message names the child.
+  </para>
+
+  <para>
+   <literal>CASCADE</literal> overrides both. It drops the label whatever it holds, and deletes
+   the label's own edges. The vertices those edges connected are untouched, and so is every
+   other edge label. Dropping a <emphasis>vertex</emphasis> label with
+   <literal>CASCADE</literal> is the case that reaches further, because it deletes the edges
+   attached to that label's vertices whatever labels they have. See
+   <xref linkend="cypher-dropvlabel"/>.
+  </para>
+
+  <para>
+   The base label <literal>ag_edge</literal> cannot be dropped, and
+   <command>DROP ELABEL</command> refuses a vertex label; the statement for one is
+   <xref linkend="cypher-dropvlabel"/>. The table behind a label cannot be dropped on its own
+   either: <command>DROP TABLE</command> on it is refused and points here. To remove a label's
+   edges without dropping the label, write <literal>MATCH ()-[e:<replaceable
+   class="parameter">label_name</replaceable>]-&gt;() DELETE e</literal> instead.
   </para>
  </refsect1>
 
- <refsect1>
+ <refsect1 id="cypher-dropelabel-parameters">
   <title>Parameters</title>
+
   <variablelist>
    <varlistentry>
     <term><literal>IF EXISTS</literal></term>
     <listitem>
      <para>
-      Do not throw an error if the edge label does not exist.
+      Issue a notice instead of an error for a label that does not exist. Other names in the
+      same statement are still dropped.
      </para>
     </listitem>
    </varlistentry>
@@ -49,7 +81,8 @@ DROP ELABEL [ IF EXISTS ] <replaceable class="parameter">label_name</replaceable
     <term><replaceable class="parameter">label_name</replaceable></term>
     <listitem>
      <para>
-      The name of the edge label that to be created.
+      Name of the edge label to drop, in the graph named by <varname>graph_path</varname>.
+      Several names may be given, separated by commas.
      </para>
     </listitem>
    </varlistentry>
@@ -58,8 +91,8 @@ DROP ELABEL [ IF EXISTS ] <replaceable class="parameter">label_name</replaceable
     <term><literal>CASCADE</literal></term>
     <listitem>
      <para>
-      Automatically drop vertices that have relationship on this edge.
-      And other dependent objects too.
+      Drop the label along with its edges and its child labels. The vertices those edges
+      connected are left alone.
      </para>
     </listitem>
    </varlistentry>
@@ -68,37 +101,161 @@ DROP ELABEL [ IF EXISTS ] <replaceable class="parameter">label_name</replaceable
     <term><literal>RESTRICT</literal></term>
     <listitem>
      <para>
-      Drop fails if any dependent objects exist to the edge label.
-      This is the default.
+      Refuse if the label holds any edges or has a child label. This is the default.
      </para>
     </listitem>
    </varlistentry>
   </variablelist>
  </refsect1>
 
- <refsect1>
+ <refsect1 id="cypher-dropelabel-examples">
   <title>Examples</title>
+
   <para>
-   To drop the edge label:
+   These examples do not use the graph in <xref linkend="agensgraph-example-data"/>, but build a
+   graph of their own and drop it at the end. An empty label goes without comment, because
+   nothing else was affected:
 <programlisting>
-DROP ELABEL elabelName;
+CREATE GRAPH dropedemo;
+SET graph_path = dropedemo;
+CREATE VLABEL person;
+CREATE VLABEL film;
+CREATE ELABEL directed;
+CREATE ELABEL unused;
+CREATE (:person {name: 'Denis Villeneuve'})-[:directed]-&gt;(:film {title: 'Arrival'});
+DROP ELABEL unused;
+
+DROP ELABEL
 </programlisting>
   </para>
 
   <para>
-   To drop the multiple edge labels:
+   <literal>directed</literal> has an edge in it, so the default refuses:
 <programlisting>
-DROP ELABEL IF EXISTS elabel1,elabel2,elabel3;
+DROP ELABEL directed;
+
+ERROR:  cannot drop directed because it is not empty.
 </programlisting>
+   <literal>CASCADE</literal> takes the label and its edge. Both vertices are still there:
+<programlisting>
+DROP ELABEL directed CASCADE;
+MATCH (n) RETURN count(n) AS vertices;
+
+ vertices
+----------
+ 2
+(1 row)
+</programlisting>
+  </para>
+
+  <para>
+   A label with a child is refused too, and <literal>CASCADE</literal> names the child it takes
+   with it:
+<programlisting>
+CREATE ELABEL worked_on;
+CREATE ELABEL acted_in INHERITS (worked_on);
+DROP ELABEL worked_on;
+
+ERROR:  cannot drop elabel worked_on because other objects depend on it
+DETAIL:  elabel acted_in depends on elabel worked_on
+HINT:  Use DROP ... CASCADE to drop the dependent objects too.
+</programlisting>
+<programlisting>
+DROP ELABEL worked_on CASCADE;
+
+NOTICE:  drop cascades to elabel acted_in
+DROP ELABEL
+</programlisting>
+  </para>
+
+  <para>
+   Several labels can be named at once, and <literal>IF EXISTS</literal> passes over the ones
+   that are already gone:
+<programlisting>
+CREATE ELABEL a;
+CREATE ELABEL b;
+DROP ELABEL IF EXISTS a, b, c;
+
+NOTICE:  elabel "c" does not exist, skipping
+DROP ELABEL
+</programlisting>
+  </para>
+
+  <para>
+   Refusals worth recognizing. Each statement drops one kind of label, the base labels stay, and
+   the table cannot be dropped out from under the label:
+<programlisting>
+CREATE ELABEL kept;
+DROP VLABEL kept;
+
+ERROR:  DROP VLABEL cannot DROP edge label
+</programlisting>
+<programlisting>
+DROP ELABEL person;
+
+ERROR:  DROP ELABEL cannot DROP vertex label
+</programlisting>
+<programlisting>
+DROP ELABEL ag_edge;
+
+ERROR:  DROP base edge label is prohibited
+</programlisting>
+<programlisting>
+DROP TABLE dropedemo.kept;
+
+ERROR:  cannot drop table dropedemo.kept because elabel kept requires it
+HINT:  You can drop elabel kept instead.
+</programlisting>
+   <literal>DROP GRAPH dropedemo CASCADE</literal> drops the graph the examples built.
   </para>
  </refsect1>
 
- <refsect1>
+ <refsect1 id="cypher-dropelabel-notes">
+  <title>Notes</title>
+
+  <para>
+   Dropping an edge label leaves nothing dangling. An edge points at its endpoints and never the
+   other way round, so no vertex holds a reference to a removed edge.
+   <structfield>start</structfield> and <structfield>end</structfield> are plain
+   <type>graphid</type> columns rather than foreign keys, and it is the graph write path, not a
+   referential action on the table, that keeps the two sides in step.
+  </para>
+
+  <para>
+   <varname>cypher_allow_unsafe_ddl</varname> switches off the kind check and the base label
+   check, so with it on <command>DROP ELABEL</command> will drop a vertex label and
+   <literal>ag_edge</literal> can be dropped. It exists to repair a graph whose catalog is
+   already wrong. Leave it off otherwise. See <xref linkend="agensgraph-config"/>.
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-dropelabel-compatibility">
+  <title>Compatibility</title>
+
+  <para>
+   ISO/IEC 39075:2024 has no statement that drops a label. Element types belong to a graph type,
+   which is dropped whole by the drop graph type statement of clause 12.7, and dropping one
+   deletes no data.
+  </para>
+
+  <para>
+   <command>DROP ELABEL</command> corresponds to <command>DROP TABLE</command>, and
+   <literal>IF EXISTS</literal>, the name list and <literal>CASCADE</literal> or
+   <literal>RESTRICT</literal> behave as they do there. The one addition has no
+   <command>DROP TABLE</command> counterpart: a label that is not empty is refused unless
+   <literal>CASCADE</literal> is written, where <command>DROP TABLE</command> does not care how
+   many rows a table has.
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-dropelabel-see-also">
   <title>See Also</title>
   <simplelist type="inline">
+   <member><xref linkend="cypher-dropvlabel"/></member>
    <member><xref linkend="cypher-createelabel"/></member>
    <member><xref linkend="cypher-alterelabel"/></member>
+   <member><xref linkend="cypher-dropgraph"/></member>
+   <member><xref linkend="cypher-delete"/></member>
   </simplelist>
  </refsect1>
-
 </refentry>

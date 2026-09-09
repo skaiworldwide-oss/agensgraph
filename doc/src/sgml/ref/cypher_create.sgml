@@ -5,114 +5,267 @@ PostgreSQL documentation
 
 <refentry id="cypher-create">
  <indexterm zone="cypher-create">
-  <primary>CYPHER CREATE</primary>
+  <primary>CREATE</primary>
  </indexterm>
 
  <refmeta>
   <refentrytitle>CREATE</refentrytitle>
   <manvolnum>7</manvolnum>
-  <refmiscinfo>SQL - Language Statements</refmiscinfo>
+  <refmiscinfo>Cypher - Language Statements</refmiscinfo>
  </refmeta>
 
  <refnamediv>
   <refname>CREATE</refname>
-  <refpurpose>create the cypher elements</refpurpose>
+  <refpurpose>add the vertices and edges of a pattern to the graph</refpurpose>
  </refnamediv>
 
  <refsynopsisdiv>
 <synopsis>
-CREATE <replaceable class="parameter">path_pattern</replaceable>
+CREATE [ <replaceable class="parameter">path_variable</replaceable> = ] <replaceable class="parameter">pattern</replaceable> [, [ <replaceable class="parameter">path_variable</replaceable> = ] <replaceable class="parameter">pattern</replaceable> ] ...
+
+MATCH <replaceable class="parameter">pattern</replaceable>
+CREATE [ <replaceable class="parameter">path_variable</replaceable> = ] <replaceable class="parameter">pattern</replaceable> [, [ <replaceable class="parameter">path_variable</replaceable> = ] <replaceable class="parameter">pattern</replaceable> ] ...
 </synopsis>
  </refsynopsisdiv>
 
- <refsect1>
+ <refsect1 id="cypher-create-description">
   <title>Description</title>
+
   <para>
-   The <command>CREATE</command> clause is a clause that creates graph elements such as vertices and edges.
-When you want to create a vertex, you need to write a vertex-related pattern in the CREATE clause. 
-You may create each element separately, but you may also create a pattern you want
-at a time by listing the path in the CREATE clause. Be careful when creating a path at once. 
-If it is not used with the MATCH clause like the first query, it creates a new data
-even if there is the same data as the corresponding pattern (i.e. duplicate data).
-You can use the <command>CREATE</command> command both standalone statement and clause that working with of another clause.
+   <command>CREATE</command> writes its pattern into the graph. The pattern syntax is the one
+   <xref linkend="cypher-match"/> reads with, described in <xref linkend="cypher-path"/>, but
+   every element is built rather than looked for.
+  </para>
+
+  <para>
+   <command>CREATE</command> always creates. It does not check whether an identical vertex or
+   edge is already there. To create only what is missing, use <xref linkend="cypher-merge"/>.
+  </para>
+
+  <para>
+   An element that names a variable already in scope is reused, not rebuilt. That is how an
+   edge is attached to vertices a <command>MATCH</command> found: the endpoints are bound
+   variables, so only the edge is new. An element that names a new variable, or none, is
+   created. One pattern can therefore create a vertex and its edge in one step.
+  </para>
+
+  <para>
+   Every element needs enough information to be built. An edge needs exactly one label and a
+   direction. A vertex without a label becomes a vertex of the graph's base label
+   <literal>ag_vertex</literal>. Labels have to exist already, unless
+   <varname>enable_graph_ddl</varname> is on, in which case they are created implicitly.
+  </para>
+
+  <para>
+   A property map may be written inline, as in <literal>{title: 'Tenet'}</literal>, supplied as
+   a query parameter, or supplied whole with <literal>=</literal> from an expression that
+   yields a <type>jsonb</type> object. That last form is how a whole table row becomes a
+   property bag. See <xref linkend="cypher-load"/>.
+  </para>
+
+  <para>
+   <command>CREATE</command> runs once per incoming row. With no clause in front of it, it runs
+   once. It may lead a query, follow another clause, and end one. Add a
+   <xref linkend="cypher-return"/> to see what it built.
+  </para>
+
+  <para>
+   <xref linkend="cypher-insert"/> is an exact synonym, the spelling ISO/IEC 39075 uses.
   </para>
  </refsect1>
 
- <refsect1>
+ <refsect1 id="cypher-create-parameters">
   <title>Parameters</title>
-  <refsect2>
-   <title><literal>path_pattern</literal></title>
-   <para>
-    Representation about the cypher path pattern that you want to create
-    See <xref linkend="cypher-path"/> for more examples.
-   </para>
-  </refsect2>
+
+  <variablelist>
+   <varlistentry>
+    <term><replaceable class="parameter">path_variable</replaceable></term>
+    <listitem>
+     <para>
+      Optional name bound to the whole path the pattern created. Returning it yields a
+      <type>graphpath</type> value listing the new vertices and edges in order.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><replaceable class="parameter">pattern</replaceable></term>
+    <listitem>
+     <para>
+      A vertex pattern or a path pattern in <xref linkend="cypher-match"/> syntax. Several may
+      be listed, separated by commas. They are created in order, and a later pattern may use a
+      variable an earlier one bound.
+     </para>
+    </listitem>
+   </varlistentry>
+  </variablelist>
  </refsect1>
 
- <refsect1>
+ <refsect1 id="cypher-create-examples">
   <title>Examples</title>
+
   <para>
-   To create vertex:
+   These examples use the graph in <xref linkend="agensgraph-example-data"/>.
+  </para>
+
+  <para>
+   Create one vertex:
 <programlisting>
--- Create empty vertex
-CREATE ( );
+CREATE (:movie {title: 'Tenet', year: 2020, genre: 'Action'});
 
--- Assign vertex label "person"
-CREATE (:person);
+UPDATE 1
+</programlisting>
+   A graph write reports the number of graph elements it touched under the
+   <literal>UPDATE</literal> tag, whatever the clause was.
+  </para>
 
--- Assign property key "name", property value "Edward"
-CREATE (:person {name: 'Edward'});
+  <para>
+   Bind a variable to see what was built:
+<programlisting>
+CREATE (p:person {name: 'John David Washington', born: 1984})
+RETURN p.name AS person, p.born AS born;
 
--- Assign property key "name", property value 20
-CREATE (:person {name: 'Alice', age: 20});
-
--- Create two vertices and assign the variable name a and b
-CREATE (a {name:'Alice'}), (b {name:a.name})
+         person          | born
+-------------------------+------
+ "John David Washington" | 1984
+(1 row)
 </programlisting>
   </para>
 
   <para>
-   To create edge:
+   Find both endpoints first, then create only the edge:
 <programlisting>
--- Create two vertices with its edge which is named 'likes'
--- It also have direction, start from E to A.
-MATCH (E:person {name: 'Edward'}), (A:person {name: 'Alice'})
-CREATE (E)-[:likes]->(A);
+MATCH (d:person {name: 'Christopher Nolan'}), (m:movie {title: 'Tenet'})
+CREATE (d)-[r:directed]-&gt;(m)
+RETURN d.name AS director, label(r) AS edge, m.title AS film;
 
--- Create edge with property key and value
-MATCH (E:person {name: 'Edward'}), (A:person {name: 'Alice'})
-CREATE (E)-[:likes {why: 'She is lovely'}]->(A);
+      director       |    edge    |  film
+---------------------+------------+---------
+ "Christopher Nolan" | "directed" | "Tenet"
+(1 row)
+</programlisting>
+   <literal>d</literal> and <literal>m</literal> are already bound, so they are reused. Had the
+   pattern written <literal>(d:person {name: 'Christopher Nolan'})</literal> again inside the
+   <command>CREATE</command>, a second Christopher Nolan would have been created.
+  </para>
 
--- Create edge. It has same start and end vertex id
-MATCH (E:person {name: 'Edward'})
-CREATE (E)-[:IS_PROUD_OF]->(E);
+  <para>
+   Anything in the pattern that is not already bound is built, so a vertex and its edge can be
+   created together:
+<programlisting>
+MATCH (m:movie {title: 'Tenet'})
+CREATE (a:person {name: 'Elizabeth Debicki', born: 1990})-[r:acted_in {role: 'Kat'}]-&gt;(m)
+RETURN a.name AS actor, r.role AS role, m.title AS film;
+
+        actor        | role  |  film
+---------------------+-------+---------
+ "Elizabeth Debicki" | "Kat" | "Tenet"
+(1 row)
 </programlisting>
   </para>
 
   <para>
-   To create path:
+   Patterns separated by commas are built in one clause and may share variables:
 <programlisting>
--- Create vertices and edge.
-CREATE (E:person {name: 'Edward'})-[:likes]->(A:person {name: 'Alice'});
+MATCH (p:person {name: 'John David Washington'}), (m:movie {title: 'Tenet'})
+CREATE (p)-[:acted_in {role: 'The Protagonist'}]-&gt;(m),
+       (m)-[:related_to {weight: 2}]-&gt;(:movie {title: 'Memento', year: 2000, genre: 'Thriller'});
 
--- Only if MATCH clause found the person 'Edward', create 'Alice' and edge
-MATCH (E:person {name: 'Edward'})
-CREATE (E)-[:likes]->(A:person {name: 'Alice'});
-
--- Only if MATCH clause found the person 'Edward' and 'Alice', create the edge between them
-MATCH (E:person {name: 'Edward'}), (A:person {name: 'Alice'})
-CREATE (E)-[:likes]->(A);
+UPDATE 3
 </programlisting>
+   Three elements: one <literal>acted_in</literal> edge, one <literal>related_to</literal> edge
+   and the <literal>Memento</literal> vertex. <literal>Tenet</literal> now has four edges:
+<programlisting>
+MATCH (m:movie {title: 'Tenet'})-[r]-(x)
+RETURN label(r) AS edge, label(x) AS other, coalesce(x.name, x.title) AS name
+ORDER BY edge, name;
+
+     edge     |  other   |          name
+--------------+----------+-------------------------
+ "acted_in"   | "person" | "Elizabeth Debicki"
+ "acted_in"   | "person" | "John David Washington"
+ "directed"   | "person" | "Christopher Nolan"
+ "related_to" | "movie"  | "Memento"
+(4 rows)
+</programlisting>
+  </para>
+
+  <para>
+   Nothing about <command>CREATE</command> is idempotent:
+<programlisting>
+CREATE (:person {name: 'Duplicate', born: 1}), (:person {name: 'Duplicate', born: 1});
+
+UPDATE 2
+</programlisting>
+<programlisting>
+MATCH (p:person {name: 'Duplicate'}) RETURN count(*) AS rows;
+
+ rows
+------
+ 2
+(1 row)
+</programlisting>
+   Running the first statement again would make four. Use <xref linkend="cypher-merge"/>, or a
+   unique constraint, when a key has to stay unique.
   </para>
  </refsect1>
 
-  <refsect1>
+ <refsect1 id="cypher-create-notes">
+  <title>Notes</title>
+
+  <para>
+   A vertex id is assigned from the label's own sequence, so the number a new vertex gets
+   depends on what has been created in that label before. Read it with
+   <literal>id(v)</literal>. Do not depend on a particular value.
+  </para>
+
+  <para>
+   <literal>CREATE ()</literal> is legal and produces a vertex of the base label
+   <literal>ag_vertex</literal>. Such a vertex is invisible to every
+   <literal>MATCH (n:label)</literal> and easy to lose track of. Give every vertex a label.
+   Naming the base label explicitly is refused:
+   <literal>CREATE (:ag_vertex)</literal> raises
+   <literal>specifying default label is not allowed</literal>, and
+   <literal>CREATE ()-[:ag_edge]-&gt;()</literal> raises
+   <literal>cannot create edge on default label</literal>.
+  </para>
+
+  <para>
+   An edge pattern with no label, or with more than one, raises
+   <literal>only one relationship type is allowed for CREATE</literal>. An undirected edge
+   pattern raises <literal>only directed relationships are allowed in CREATE</literal>. A
+   pattern whose single element is a variable already bound raises
+   <literal>there must be at least one relationship</literal>.
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-create-compatibility">
+  <title>Compatibility</title>
+
+  <para>
+   ISO/IEC 39075:2024 names this statement <command>INSERT</command>, in section 13.2.
+   AgensGraph accepts both spellings for the same clause and builds the same tree for each, so
+   the standard conformance of the clause is described under <xref linkend="cypher-insert"/>.
+   The SQL statements that begin with the same word, such as <command>CREATE GRAPH</command>
+   and <command>CREATE VLABEL</command>, are separate statements and are unaffected.
+  </para>
+
+  <para>
+   <command>CREATE</command> is the openCypher spelling, and AgensGraph accepts openCypher
+   create patterns unchanged.
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-create-see-also">
   <title>See Also</title>
   <simplelist type="inline">
+   <member><xref linkend="cypher-insert"/></member>
+   <member><xref linkend="cypher-merge"/></member>
    <member><xref linkend="cypher-match"/></member>
+   <member><xref linkend="cypher-set"/></member>
+   <member><xref linkend="cypher-delete"/></member>
+   <member><xref linkend="cypher-load"/></member>
+   <member><xref linkend="cypher-path"/></member>
   </simplelist>
  </refsect1>
 </refentry>
-
-
-
