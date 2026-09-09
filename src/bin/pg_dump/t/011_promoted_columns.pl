@@ -9,9 +9,10 @@
 # Two round-trips are exercised: a plain (logical) dump/restore, and the
 # --binary-upgrade dump (the path pg_upgrade uses) re-loaded into a fresh
 # binary-upgrade-mode cluster.  Both cover a label with a DROPPED promoted
-# column (an attnum gap) and an inheritance hierarchy; the binary-upgrade path
-# additionally preserves the dropped-column attnum gap and reconstructs a child's
-# inherited promoted columns.
+# column (an attnum gap) and an inheritance hierarchy.
+#
+# That the dump writes each of these is checked in 002_pg_dump.pl, against every
+# dump mode.  This file is for what needs a running server.
 #
 # Scalar promoted types only (int / text / numeric), so this needs no external
 # extension (the vector column is exercised by the pg_regress vector suite).
@@ -91,14 +92,6 @@ my $dumpfile = "${PostgreSQL::Test::Utils::tmp_check}/promoted_dump.sql";
 $node->command_ok(
 	[ 'pg_dump', '-f', $dumpfile, '-d', $node->connstr('agsrc') ],
 	'pg_dump of a graph with promoted columns succeeds');
-
-my $dump = slurp_file($dumpfile);
-like($dump, qr/GENERATED ALWAYS AS .*STORED/s,
-	'dump carries the STORED generated column definitions');
-like($dump, qr/CREATE INDEX \w+ ON gg\.\w+ USING btree \(age\)/,
-	'dump carries the typed property index as a btree on the promoted column');
-like($dump, qr/rank integer GENERATED ALWAYS AS/,
-	'dump carries the ALTER-added promoted column (doc.rank)');
 
 # ---------------------------------------------------------------------------
 # Restore into a fresh database.
@@ -203,42 +196,16 @@ is( $node->safe_psql(
 	'a read of a promoted column added after a dropped-column gap resolves after restore (dropcol.rank/age)');
 
 # ---------------------------------------------------------------------------
-# The --binary-upgrade dump (the path pg_upgrade uses) must additionally
-# preserve the dropped-column attnum gap so the restored layout matches the old
-# cluster byte-for-byte, and it must reconstruct inherited promoted columns on a
-# child label.  Unlike a plain dump, it lists each dropped column as a dummy
-# placeholder INSIDE the CREATE VLABEL column list (exactly as a normal table's
-# binary-upgrade dump does), so the recreation block that marks it dropped has a
-# column to operate on and the dump is restorable.
+# The --binary-upgrade dump (the path pg_upgrade uses) must preserve the
+# dropped-column attnum gap, so the restored layout matches the old cluster
+# byte for byte, and must reconstruct a child label's inherited promoted
+# columns.  What it writes is checked in 002_pg_dump.pl; what a cluster makes
+# of it is checked here.
 # ---------------------------------------------------------------------------
 my $budumpfile = "${PostgreSQL::Test::Utils::tmp_check}/promoted_binary_upgrade.sql";
 $node->command_ok(
 	[ 'pg_dump', '--binary-upgrade', '-f', $budumpfile, '-d', $node->connstr('agsrc') ],
 	'pg_dump --binary-upgrade of a graph with promoted columns succeeds');
-
-my $budump = slurp_file($budumpfile);
-like($budump, qr/rank integer GENERATED ALWAYS AS/,
-	'binary-upgrade dump carries the surviving ALTER-added promoted column (dropcol.rank)');
-
-# The CREATE VLABEL for the dropped-column label (identified by its surviving
-# "rank" promoted column) must carry the dropped column as a dummy INTEGER
-# placeholder in its column list, so the subsequent recreation block has a target
-# and the attnum gap is preserved through restore.
-my ($dropcol_create) =
-  ($budump =~ /^(CREATE VLABEL ONLY dropcol\([^\n]*)$/m);
-like($dropcol_create,
-	qr/"\Q........pg.dropped.\E\d+\Q........\E" INTEGER/,
-	'binary-upgrade CREATE VLABEL lists the dropped column as a dummy placeholder (attnum gap preserved)');
-
-# The CREATE VLABEL for the inheriting child must list the promoted columns it
-# INHERITS from the parent (pa), alongside its own (ca), plus its dropped-column
-# placeholder -- so a child of a promoted parent round-trips through pg_upgrade.
-my ($buchild_create) =
-  ($budump =~ /^(CREATE VLABEL ONLY buchild\([^\n]*)$/m);
-like($buchild_create, qr/\bpa integer GENERATED ALWAYS AS/,
-	'binary-upgrade child CREATE VLABEL carries the inherited promoted column (buchild.pa)');
-like($buchild_create, qr/"\Q........pg.dropped.\E\d+\Q........\E" INTEGER/,
-	'binary-upgrade child CREATE VLABEL also lists its dropped-column placeholder');
 
 # ---------------------------------------------------------------------------
 # The binary-upgrade dump must RE-LOAD without error into a fresh cluster.  A
@@ -586,8 +553,7 @@ is( $node->safe_psql(
 	'a custom-format restore brings back the rows and the ordinary column data');
 
 # --binary-upgrade only has to refuse a LIVE ordinary column.  One that was
-# dropped again leaves no column to place, so the dump must still succeed -- and
-# it has to keep the dropped attnum, which here sits after a promoted column.
+# dropped again leaves no column to place, so the dump must still succeed.
 $node->safe_psql('postgres', 'CREATE DATABASE agdroponly');
 $node->safe_psql(
 	'agdroponly', q{
@@ -599,8 +565,7 @@ $node->safe_psql(
 	ALTER TABLE gg.after_prom ADD COLUMN gone text;
 	ALTER TABLE gg.after_prom DROP COLUMN gone;
 	CREATE (:after_prom {age:3});
-	-- and one BEFORE a promoted one, so the placeholder has to be emitted ahead
-	-- of the promoted column rather than appended after it
+	-- and one BEFORE a promoted one
 	CREATE VLABEL before_prom;
 	ALTER TABLE gg.before_prom ADD COLUMN gone text;
 	ALTER TABLE gg.before_prom DROP COLUMN gone;
@@ -614,18 +579,6 @@ $node->command_ok(
 		'-d', $node->connstr('agdroponly')
 	],
 	'--binary-upgrade still dumps a label whose ordinary column was dropped again');
-
-my $droponly = slurp_file($droponlyfile);
-my ($after_create) =
-  ($droponly =~ /^(CREATE VLABEL ONLY after_prom\([^\n]*)$/m);
-like($after_create,
-	qr/age integer GENERATED ALWAYS AS .*"\Q........pg.dropped.\E\d+\Q........\E" INTEGER/,
-	'the placeholder for the dropped column follows the promoted column it followed');
-my ($before_create) =
-  ($droponly =~ /^(CREATE VLABEL ONLY before_prom\([^\n]*)$/m);
-like($before_create,
-	qr/"\Q........pg.dropped.\E\d+\Q........\E" INTEGER.*age integer GENERATED ALWAYS AS/,
-	'and precedes the promoted column it preceded');
 
 $node->stop;
 done_testing();

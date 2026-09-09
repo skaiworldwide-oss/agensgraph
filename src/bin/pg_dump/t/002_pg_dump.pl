@@ -3670,6 +3670,285 @@ my %tests = (
 		},
 	},
 
+	'CREATE GRAPH dump_test_graph' => {
+		create_order => 120,
+		create_sql => 'CREATE GRAPH dump_test_graph;',
+		regexp => qr/^CREATE GRAPH ONLY dump_test_graph;/m,
+		like => { %full_runs, section_pre_data => 1, },
+	},
+
+	'CREATE CONSTRAINT dtg_person_ssn_uq' => {
+		create_order => 121,
+		create_sql => 'SET graph_path = dump_test_graph;
+					   CREATE VLABEL dtg_person;
+					   CREATE CONSTRAINT dtg_person_ssn_uq ON dtg_person
+					       ASSERT ssn IS UNIQUE;',
+		regexp =>
+		  qr/^\QCREATE CONSTRAINT dtg_person_ssn_uq ON dtg_person ASSERT (ssn) IS UNIQUE;\E$/m,
+		like => { %full_runs, section_post_data => 1, },
+	},
+
+	'CREATE CONSTRAINT on a label whose name needs quoting' => {
+		create_order => 122,
+		create_sql => 'SET graph_path = dump_test_graph;
+					   CREATE VLABEL "DtgMixed";
+					   CREATE CONSTRAINT "DtgMixed_uq" ON "DtgMixed"
+					       ASSERT k IS UNIQUE;',
+		regexp =>
+		  qr/^\QCREATE CONSTRAINT "DtgMixed_uq" ON "DtgMixed" ASSERT (k) IS UNIQUE;\E$/m,
+		like => { %full_runs, section_post_data => 1, },
+	},
+
+	'CREATE CONSTRAINT on a label named with a reserved word' => {
+		create_order => 123,
+		create_sql => 'SET graph_path = dump_test_graph;
+					   CREATE VLABEL "order";
+					   CREATE CONSTRAINT dtg_ord_uq ON "order" ASSERT k IS UNIQUE;',
+		regexp =>
+		  qr/^\QCREATE CONSTRAINT dtg_ord_uq ON "order" ASSERT (k) IS UNIQUE;\E$/m,
+		like => { %full_runs, section_post_data => 1, },
+	},
+
+	'CREATE CONSTRAINT left unnamed twice on one label' => {
+		create_order => 124,
+		create_sql => 'SET graph_path = dump_test_graph;
+					   CREATE VLABEL dtg_two;
+					   CREATE CONSTRAINT ON dtg_two ASSERT a IS UNIQUE;
+					   CREATE CONSTRAINT ON dtg_two ASSERT b IS UNIQUE;',
+		regexp =>
+		  qr/^\QCREATE CONSTRAINT dtg_two_unique_constraint1 ON dtg_two ASSERT (b) IS UNIQUE;\E$/m,
+		like => { %full_runs, section_post_data => 1, },
+	},
+
+	'CREATE CONSTRAINT on an edge label' => {
+		create_order => 125,
+		create_sql => 'SET graph_path = dump_test_graph;
+					   CREATE ELABEL dtg_erel;
+					   CREATE CONSTRAINT dtg_erel_uq ON dtg_erel ASSERT k IS UNIQUE;',
+		regexp =>
+		  qr/^\QCREATE CONSTRAINT dtg_erel_uq ON dtg_erel ASSERT (k) IS UNIQUE;\E$/m,
+		like => { %full_runs, section_post_data => 1, },
+	},
+
+	'ADD CONSTRAINT ... CHECK on a label' => {
+		create_order => 126,
+		create_sql => 'SET graph_path = dump_test_graph;
+					   CREATE VLABEL dtg_acct;
+					   ALTER TABLE dump_test_graph.dtg_acct ADD CONSTRAINT dtg_acct_chk
+					       CHECK ((properties->>\'age\')::int >= 0);',
+		regexp => qr/^
+			\QALTER TABLE ONLY dump_test_graph.dtg_acct\E\n
+			\s+\QADD CONSTRAINT dtg_acct_chk CHECK ((((properties ->> 'age'::text))::integer >= 0));\E
+			/xm,
+		like => { %full_runs, section_pre_data => 1, },
+	},
+
+	'ADD CONSTRAINT ... CHECK written as graph DDL' => {
+		create_order => 127,
+		create_sql => 'SET graph_path = dump_test_graph;
+					   CREATE VLABEL dtg_cyp;
+					   CREATE CONSTRAINT dtg_cyp_pos ON dtg_cyp ASSERT age > 0;',
+		regexp => qr/^
+			\QALTER TABLE ONLY dump_test_graph.dtg_cyp\E\n
+			\s+\QADD CONSTRAINT dtg_cyp_pos CHECK ((properties.'age' > cypher_to_jsonb(0)));\E
+			/xm,
+		like => { %full_runs, section_pre_data => 1, },
+	},
+
+	'ADD CONSTRAINT ... CHECK on a label a child inherits' => {
+		create_order => 128,
+		create_sql => 'SET graph_path = dump_test_graph;
+					   CREATE VLABEL dtg_par;
+					   ALTER TABLE dump_test_graph.dtg_par ADD CONSTRAINT dtg_par_chk
+					       CHECK ((properties->>\'p\')::int >= 0);
+					   CREATE VLABEL dtg_kid INHERITS (dtg_par);',
+		regexp => qr/^
+			\QALTER TABLE ONLY dump_test_graph.dtg_par\E\n
+			\s+\QADD CONSTRAINT dtg_par_chk CHECK ((((properties ->> 'p'::text))::integer >= 0));\E
+			/xm,
+		like => { %full_runs, section_pre_data => 1, },
+	},
+
+	# the child holds the same constraint, and takes it from the parent
+	'ADD CONSTRAINT ... CHECK is not repeated on the child label' => {
+		regexp => qr/^
+			\QALTER TABLE ONLY dump_test_graph.dtg_kid\E\n
+			\s+\QADD CONSTRAINT dtg_par_chk\E
+			/xm,
+		like => {},
+	},
+
+	'CREATE VLABEL with promoted columns' => {
+		create_order => 129,
+		create_sql => 'SET graph_path = dump_test_graph;
+					   CREATE VLABEL dtg_doc (age int GENERATED, title text GENERATED);
+					   ALTER VLABEL dtg_doc ADD COLUMN rank int GENERATED;',
+		regexp => qr/^
+			\QCREATE VLABEL ONLY dtg_doc(\E\d+\Q) (age integer GENERATED ALWAYS AS ((ag_property_text(properties, 'age'::text, 'n'::"char"))::integer) STORED, title text GENERATED ALWAYS AS (ag_property_text(properties, 'title'::text, 's'::"char")) STORED, rank integer GENERATED ALWAYS AS ((ag_property_text(properties, 'rank'::text, 'n'::"char"))::integer) STORED)\E
+			/xm,
+		like => { %full_runs, section_pre_data => 1, },
+	},
+
+	'CREATE PROPERTY INDEX on a promoted column' => {
+		create_order => 130,
+		create_sql => 'SET graph_path = dump_test_graph;
+					   CREATE PROPERTY INDEX ON dtg_doc (age);',
+		regexp =>
+		  qr/^\QCREATE INDEX dtg_doc_age_idx ON dump_test_graph.dtg_doc USING btree (age);\E$/m,
+		like => { %full_runs, section_post_data => 1, },
+	},
+
+	# A dropped promoted column has to keep its attnum, so only the
+	# binary-upgrade dump names it, as a placeholder among the survivors.
+	'CREATE VLABEL keeps a dropped promoted column as a placeholder' => {
+		create_order => 131,
+		create_sql => 'SET graph_path = dump_test_graph;
+					   CREATE VLABEL dtg_gap (age int GENERATED);
+					   ALTER VLABEL dtg_gap ADD COLUMN tmp int GENERATED;
+					   ALTER VLABEL dtg_gap DROP COLUMN tmp;
+					   ALTER VLABEL dtg_gap ADD COLUMN rank int GENERATED;',
+		regexp => qr/^
+			\QCREATE VLABEL ONLY dtg_gap(\E\d+\Q) (age integer GENERATED\E
+			.*
+			\Q"........pg.dropped.\E\d+\Q........" INTEGER\E
+			.*
+			\Qrank integer GENERATED\E
+			/xm,
+		like => { binary_upgrade => 1, },
+	},
+
+	'CREATE VLABEL carries the promoted columns a child inherits' => {
+		create_order => 132,
+		create_sql => 'SET graph_path = dump_test_graph;
+					   CREATE VLABEL dtg_bupar (pa int GENERATED);
+					   CREATE VLABEL dtg_buchild (ca int GENERATED) INHERITS (dtg_bupar);
+					   ALTER VLABEL dtg_buchild ADD COLUMN scratch int GENERATED;
+					   ALTER VLABEL dtg_buchild DROP COLUMN scratch;',
+		regexp => qr/^
+			\QCREATE VLABEL ONLY dtg_buchild(\E\d+\Q) (pa integer GENERATED\E
+			.*
+			\Qca integer GENERATED\E
+			.*
+			\Q"........pg.dropped.\E\d+\Q........" INTEGER\E
+			/xm,
+		like => { binary_upgrade => 1, },
+	},
+
+	# A dropped ORDINARY column keeps its attnum the same way, on either side
+	# of a promoted one.
+	'CREATE VLABEL places a dropped ordinary column after a promoted one' => {
+		create_order => 133,
+		create_sql => 'SET graph_path = dump_test_graph;
+					   SET enable_graph_ddl = on;
+					   CREATE VLABEL dtg_after_prom (age int GENERATED);
+					   ALTER TABLE dump_test_graph.dtg_after_prom ADD COLUMN gone text;
+					   ALTER TABLE dump_test_graph.dtg_after_prom DROP COLUMN gone;
+					   RESET enable_graph_ddl;',
+		regexp => qr/^
+			\QCREATE VLABEL ONLY dtg_after_prom(\E\d+\Q) (age integer GENERATED\E
+			.*
+			\Q"........pg.dropped.\E\d+\Q........" INTEGER\E
+			/xm,
+		like => { binary_upgrade => 1, },
+	},
+
+	# A binary-upgrade dump ends the statement here and attaches the parent
+	# afterwards, so match either ending.
+	'CREATE VLABEL' => {
+		create_order => 135,
+		create_sql => 'SET graph_path = dump_test_graph;
+					   CREATE VLABEL dtg_plain;',
+		regexp => qr/^\QCREATE VLABEL ONLY dtg_plain(\E\d+\Q)\E[;\n]/m,
+		like => { %full_runs, section_pre_data => 1, },
+	},
+
+	'ALTER VLABEL OWNER TO' => {
+		regexp => qr/^\QALTER VLABEL dtg_plain OWNER TO \E.+;$/m,
+		like => { %full_runs, section_pre_data => 1, },
+		unlike => { no_owner => 1, },
+	},
+
+	'CREATE ELABEL' => {
+		create_order => 136,
+		create_sql => 'SET graph_path = dump_test_graph;
+					   CREATE ELABEL dtg_edge;',
+		regexp => qr/^\QCREATE ELABEL ONLY dtg_edge(\E\d+\Q)\E[;\n]/m,
+		like => { %full_runs, section_pre_data => 1, },
+	},
+
+	'CREATE UNLOGGED VLABEL' => {
+		create_order => 137,
+		create_sql => 'SET graph_path = dump_test_graph;
+					   CREATE UNLOGGED VLABEL dtg_nolog;',
+		regexp => qr/^\QCREATE UNLOGGED VLABEL ONLY dtg_nolog(\E\d+\Q)\E[;\n]/m,
+		like => { %full_runs, section_pre_data => 1, },
+	},
+
+	'CREATE VLABEL names the label it inherits' => {
+		create_order => 138,
+		create_sql => 'SET graph_path = dump_test_graph;
+					   CREATE VLABEL dtg_child INHERITS (dtg_plain);',
+		regexp => qr/^
+			\QCREATE VLABEL ONLY dtg_child(\E\d+\Q)\E\n
+			\QINHERITS (dump_test_graph.dtg_plain);\E
+			/xm,
+		like => { %full_runs, section_pre_data => 1, },
+		unlike => { binary_upgrade => 1, },
+	},
+
+	# A binary upgrade builds the label bare and attaches its parent after, so
+	# that a dropped column can be put back at its own attnum first.
+	'ALTER TABLE ... INHERIT attaches a child label' => {
+		regexp =>
+		  qr/^\QALTER TABLE ONLY dump_test_graph.dtg_child INHERIT dump_test_graph.dtg_plain;\E$/m,
+		like => { binary_upgrade => 1, },
+	},
+
+	'CREATE PROPERTY INDEX' => {
+		create_order => 139,
+		create_sql => 'SET graph_path = dump_test_graph;
+					   CREATE VLABEL dtg_pidx;
+					   CREATE PROPERTY INDEX ON dtg_pidx (title);',
+		regexp =>
+		  qr/^\QCREATE PROPERTY INDEX dtg_pidx_title_idx ON dtg_pidx USING btree (title);\E$/m,
+		like => { %full_runs, section_post_data => 1, },
+	},
+
+	'CREATE UNIQUE PROPERTY INDEX' => {
+		create_order => 140,
+		create_sql => 'SET graph_path = dump_test_graph;
+					   CREATE UNIQUE PROPERTY INDEX dtg_pidx_uk ON dtg_pidx (code);',
+		regexp =>
+		  qr/^\QCREATE UNIQUE PROPERTY INDEX dtg_pidx_uk ON dtg_pidx USING btree (code);\E$/m,
+		like => { %full_runs, section_post_data => 1, },
+	},
+
+	'CREATE PROPERTY INDEX over a nested key' => {
+		create_order => 141,
+		create_sql => 'SET graph_path = dump_test_graph;
+					   CREATE PROPERTY INDEX dtg_pidx_nested ON dtg_pidx (a.b);',
+		regexp =>
+		  qr/^\QCREATE PROPERTY INDEX dtg_pidx_nested ON dtg_pidx USING btree (a.b);\E$/m,
+		like => { %full_runs, section_post_data => 1, },
+	},
+
+	'CREATE VLABEL places a dropped ordinary column before a promoted one' => {
+		create_order => 134,
+		create_sql => 'SET graph_path = dump_test_graph;
+					   SET enable_graph_ddl = on;
+					   CREATE VLABEL dtg_before_prom;
+					   ALTER TABLE dump_test_graph.dtg_before_prom ADD COLUMN gone text;
+					   ALTER TABLE dump_test_graph.dtg_before_prom DROP COLUMN gone;
+					   RESET enable_graph_ddl;
+					   ALTER VLABEL dtg_before_prom ADD COLUMN age int GENERATED;',
+		regexp => qr/^
+			\QCREATE VLABEL ONLY dtg_before_prom(\E\d+\Q) ("........pg.dropped.\E\d+\Q........" INTEGER\E
+			.*
+			\Qage integer GENERATED\E
+			/xm,
+		like => { binary_upgrade => 1, },
+	},
+
 	'CREATE TABLE test_table' => {
 		create_order => 3,
 		create_sql => 'CREATE TABLE dump_test.test_table (
