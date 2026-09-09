@@ -20741,10 +20741,14 @@ dumpLabelSchema(Archive *fout, const TableInfo *tblinfo)
 			appendPQExpBuffer(q, "ALTER TABLE ONLY %s ALTER COLUMN %s SET NOT NULL;\n",
 							  qualrelname, fmtId(tblinfo->attnames[j]));
 		else
-			appendPQExpBuffer(q, "ALTER TABLE ONLY %s ADD CONSTRAINT %s NOT NULL %s;\n",
+		{
+			/* fmtId returns one shared buffer, so the two names take separate calls */
+			appendPQExpBuffer(q, "ALTER TABLE ONLY %s ADD CONSTRAINT %s ",
 							  qualrelname,
-							  fmtId(tblinfo->notnull_constrs[j]),
+							  fmtId(tblinfo->notnull_constrs[j]));
+			appendPQExpBuffer(q, "NOT NULL %s;\n",
 							  fmtId(tblinfo->attnames[j]));
+		}
 	}
 
 	/*
