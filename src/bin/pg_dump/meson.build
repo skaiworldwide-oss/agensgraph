@@ -106,6 +106,7 @@ tests += {
       't/011_promoted_columns.pl',
       't/012_label_constraints.pl',
       't/013_clean_restore.pl',
+      't/014_label_check_constraints.pl',
     ],
   },
 }
