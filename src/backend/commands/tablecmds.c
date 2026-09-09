@@ -1653,15 +1653,17 @@ RemoveRelations(DropStmt *drop)
 		}
 
 
+		/*
+		 * DROP PROPERTY INDEX is the graph DDL and takes only an index over
+		 * properties.  DROP INDEX takes any index, one on a label included:
+		 * an index a plain CREATE INDEX made on a label is dropped the same
+		 * way it was made.
+		 */
 		if (drop->removeType == OBJECT_PROPERTY_INDEX &&
 			!isPropertyIndex(relOid))
 			ereport(ERROR,
 					(errcode(ERRCODE_WRONG_OBJECT_TYPE),
 					 errmsg("\"%s\" is not property index", rel->relname)));
-		if (drop->removeType == OBJECT_INDEX && isPropertyIndex(relOid))
-			ereport(ERROR,
-					(errcode(ERRCODE_WRONG_OBJECT_TYPE),
-					 errmsg("\"%s\" is property index", rel->relname)));
 
 		/*
 		 * Decide if concurrent mode needs to be used here or not.  The

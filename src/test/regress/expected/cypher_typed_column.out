@@ -599,9 +599,7 @@ MATCH (n:doc) RETURN n.age + 1 AS a, count(*) AS c ORDER BY a LIMIT 2;
 (10 rows)
 
 DROP INDEX tc.idx_agex;
-ERROR:  "idx_agex" is property index
 DROP INDEX tc.idx_lowertitle;
-ERROR:  "idx_lowertitle" is property index
 ANALYZE tc.doc;
 SET enable_seqscan = on;
 -- ============================================================================
