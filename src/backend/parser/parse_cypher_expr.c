@@ -109,6 +109,8 @@ static Node *coerce_to_jsonb(ParseState *pstate, Node *expr,
 							 const char *targetname);
 static bool is_graph_type(Oid type);
 static Node *coerce_all_to_jsonb(ParseState *pstate, Node *expr);
+static Node *reduce_in_operand_to_id(ParseState *pstate, Node *expr);
+static Node *coerce_in_operand_to_jsonb(ParseState *pstate, Node *expr);
 
 static List *transformA_Star(ParseState *pstate, int location);
 static Node *build_cypher_cast_expr(Node *expr, Oid otyp, int32 otypmod,
@@ -2695,6 +2697,83 @@ reduce_graph_elem_to_id(ParseState *pstate, Node *elem, int location)
 						format_type_be(typoid)),
 				 parser_errposition(pstate, location)));
 	return id;
+}
+
+/*
+ * transformCypherInSubquery
+ *		Transform the left operand of "x IN { <cypher> }" and match it to the
+ *		column of the analyzed subquery qtree, the way "x IN [list]" matches its
+ *		operands: a node, relationship or graphid on both sides is compared by
+ *		identity, one on the left only is a type error, and any other value is
+ *		compared as jsonb.
+ */
+Node *
+transformCypherInSubquery(ParseState *pstate, Node *testexpr, Query *qtree)
+{
+	Node	   *lhs;
+	TargetEntry *tle = NULL;
+	CypherColumnRewrite rewrite;
+	ListCell   *lc;
+
+	if (IsA(testexpr, CypherGenericExpr))
+		testexpr = ((CypherGenericExpr *) testexpr)->expr;
+	lhs = transformCypherExprRecurse(pstate, testexpr);
+
+	/* transformSubLink() reports a column count other than one */
+	foreach(lc, qtree->targetList)
+	{
+		TargetEntry *te = lfirst_node(TargetEntry, lc);
+
+		if (te->resjunk)
+			continue;
+		if (tle != NULL)
+			return lhs;
+		tle = te;
+	}
+	if (tle == NULL)
+		return lhs;
+
+	if (is_id_reducible_graph_type(exprType(lhs)))
+	{
+		lhs = reduce_graph_elem_to_id(pstate, lhs, exprLocation(lhs));
+		rewrite = reduce_in_operand_to_id;
+	}
+	else
+	{
+		lhs = coerce_in_operand_to_jsonb(pstate, lhs);
+		rewrite = coerce_in_operand_to_jsonb;
+	}
+
+	/* a set operation carries the column in its leaves */
+	if (qtree->setOperations != NULL)
+		rewriteCypherSetOpColumn(pstate, qtree, 0, rewrite);
+	else
+		tle->expr = (Expr *) rewrite(pstate, (Node *) tle->expr);
+
+	return lhs;
+}
+
+/* reduce_graph_elem_to_id() in the shape a set-operation column rewrite takes */
+static Node *
+reduce_in_operand_to_id(ParseState *pstate, Node *expr)
+{
+	return reduce_graph_elem_to_id(pstate, expr, exprLocation(expr));
+}
+
+/*
+ * Coerce an operand of IN to jsonb.  A graph element is serialized whole, as
+ * an array of graph elements is for "x IN [list]", so that a map never equals
+ * a node's properties.
+ */
+static Node *
+coerce_in_operand_to_jsonb(ParseState *pstate, Node *expr)
+{
+	if (is_graph_type(exprType(expr)))
+		return (Node *) makeFuncExpr(F_TO_JSONB, JSONBOID, list_make1(expr),
+									 InvalidOid, InvalidOid,
+									 COERCE_EXPLICIT_CALL);
+
+	return coerce_all_to_jsonb(pstate, expr);
 }
 
 /*

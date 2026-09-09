@@ -1974,24 +1974,6 @@ transformSubLink(ParseState *pstate, SubLink *sublink)
 
 	sublink->subselect = (Node *) qtree;
 
-	/*
-	 * "x IN { <cypher> }" compares x, cast to jsonb, with the body's column;
-	 * a column the body returned in its own type is boxed to jsonb here.
-	 */
-	if (sublink->subLinkType == ANY_SUBLINK && IsA(subselect, CypherStmt))
-	{
-		ListCell   *lc;
-
-		foreach(lc, qtree->targetList)
-		{
-			TargetEntry *tent = (TargetEntry *) lfirst(lc);
-
-			if (!tent->resjunk)
-				tent->expr = (Expr *) coerceCypherValueToJsonb(pstate,
-															   (Node *) tent->expr);
-		}
-	}
-
 	if (sublink->subLinkType == EXISTS_SUBLINK)
 	{
 		/*
@@ -2042,9 +2024,15 @@ transformSubLink(ParseState *pstate, SubLink *sublink)
 			sublink->operName = list_make1(makeString("="));
 
 		/*
-		 * Transform lefthand expression, and convert to a list
+		 * Transform lefthand expression, and convert to a list.  The operand
+		 * of "x IN { <cypher> }" is matched to the body's column as well.
 		 */
-		lefthand = transformExprRecurse(pstate, sublink->testexpr);
+		if (sublink->subLinkType == ANY_SUBLINK &&
+			(IsA(subselect, CypherStmt) || isCypherSetOperation(subselect)))
+			lefthand = transformCypherInSubquery(pstate, sublink->testexpr,
+												 qtree);
+		else
+			lefthand = transformExprRecurse(pstate, sublink->testexpr);
 		if (lefthand && IsA(lefthand, RowExpr))
 			left_list = ((RowExpr *) lefthand)->args;
 		else
