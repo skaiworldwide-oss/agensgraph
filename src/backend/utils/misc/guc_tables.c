@@ -5133,7 +5133,7 @@ struct config_string ConfigureNamesString[] =
 		{"graph_path", PGC_USERSET, CLIENT_CONN_STATEMENT,
 			gettext_noop("Sets the graph search path for all names."),
 			NULL,
-			GUC_IS_NAME
+			GUC_IS_NAME | GUC_REPORT
 		},
 		&graph_path,
 		"",
