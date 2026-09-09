@@ -20,6 +20,7 @@
 #include "catalog/ag_label.h"
 #include "catalog/ag_label_fn.h"
 #include "catalog/ag_vertex_d.h"
+#include "catalog/namespace.h"
 #include "catalog/pg_inherits.h"
 #include "catalog/pg_am.h"
 #include "catalog/pg_class.h"
@@ -382,6 +383,8 @@ static bool nsItemHasColumnNamed(ParseNamespaceItem *nsitem,
 static List *joinCallBody(ParseState *pstate,
 						  ParseNamespaceItem *prev_nsitem,
 						  ParseNamespaceItem *body_nsitem, bool optional);
+static List *selectYieldItems(ParseState *pstate, Query *subqry,
+							  CypherYieldCallClause *detail);
 
 /* graph write */
 static List *addRangeTableAllModifiedLabels(ParseState *pstate, Query *qry,
@@ -2250,8 +2253,8 @@ transformCypherForClause(ParseState *pstate, CypherClause *clause)
  *		is analyzed as a function scan and joined in as a subquery RTE, exactly
  *		like the FOR clause's unnest.  It is LATERAL when a previous clause
  *		exists, so the arguments may reference the outer variables; the YIELD
- *		list projects (and optionally renames) the routine's output columns,
- *		which then surface to the clauses that follow.
+ *		list selects (and optionally renames) among the routine's output
+ *		columns, which then surface to the clauses that follow.
  *
  *		OPTIONAL CALL keeps an input row for which the routine yields no rows,
  *		binding the yielded columns to null for it; see joinCallBody().
@@ -2308,9 +2311,11 @@ transformCypherYieldCallClause(ParseState *pstate, CypherClause *clause)
 	rf->alias = NULL;
 	rf->coldeflist = NIL;
 
-	/* SELECT <yield items> FROM func(args) */
+	/* SELECT * FROM func(args) */
 	subquery = makeNode(SelectStmt);
-	subquery->targetList = detail->yielditems;
+	subquery->targetList =
+		list_make1(makeResTarget(makeColumnRef(list_make1(makeNode(A_Star))),
+								 NULL));
 	subquery->fromClause = list_make1(rf);
 
 	/*
@@ -2326,6 +2331,8 @@ transformCypherYieldCallClause(ParseState *pstate, CypherClause *clause)
 
 	pstate->p_lateral_active = false;
 	pstate->p_expr_kind = EXPR_KIND_NONE;
+
+	subqry->targetList = selectYieldItems(pstate, subqry, detail);
 
 	nsitem = addRangeTableEntryForSubquery(pstate, subqry,
 										   makeAliasNoDup(CYPHER_YIELD_ALIAS, NIL),
@@ -2377,6 +2384,66 @@ transformCypherYieldCallClause(ParseState *pstate, CypherClause *clause)
 	assign_query_collations(pstate, qry);
 
 	return qry;
+}
+
+/*
+ * selectYieldItems
+ *		Select and rename what a YIELD list names from the routine's result.
+ *
+ *		subqry is the analyzed SELECT * over the routine, its target list one
+ *		entry per output column.  A yield item is an output column, or the
+ *		routine's own name for its whole row, and nothing else: a variable of
+ *		the enclosing query is never a candidate.  YIELD * keeps the target
+ *		list as it is.
+ */
+static List *
+selectYieldItems(ParseState *pstate, Query *subqry, CypherYieldCallClause *detail)
+{
+	RangeTblEntry *rte = rt_fetch(1, subqry->rtable);
+	ColumnRef  *first;
+	List	   *result = NIL;
+	ListCell   *lc;
+
+	Assert(rte->rtekind == RTE_FUNCTION);
+
+	first = castNode(ColumnRef, linitial_node(ResTarget, detail->yielditems)->val);
+	if (IsA(linitial(first->fields), A_Star))
+		return subqry->targetList;
+
+	foreach(lc, detail->yielditems)
+	{
+		ResTarget  *rt = lfirst_node(ResTarget, lc);
+		ColumnRef  *cref = castNode(ColumnRef, rt->val);
+		char	   *colname = strVal(linitial(cref->fields));
+		Expr	   *expr = NULL;
+		ListCell   *lc2;
+
+		foreach(lc2, subqry->targetList)
+		{
+			TargetEntry *te = lfirst_node(TargetEntry, lc2);
+
+			if (strcmp(te->resname, colname) == 0)
+			{
+				expr = copyObject(te->expr);
+				break;
+			}
+		}
+		if (expr == NULL && strcmp(colname, rte->eref->aliasname) == 0)
+			expr = (Expr *) makeWholeRowVar(rte, 1, 0, true);
+		if (expr == NULL)
+			ereport(ERROR,
+					(errcode(ERRCODE_UNDEFINED_COLUMN),
+					 errmsg("function %s has no output column \"%s\"",
+							NameListToString(detail->funcname), colname),
+					 parser_errposition(pstate, cref->location)));
+
+		result = lappend(result,
+						 makeTargetEntry(expr, list_length(result) + 1,
+										 rt->name != NULL ? rt->name : colname,
+										 false));
+	}
+
+	return result;
 }
 
 /*
