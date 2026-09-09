@@ -8082,6 +8082,71 @@ ORDER BY Id, alert_type, "offset";
  3  | "some"     | 1
 (6 rows)
 
+-- == a list of nodes, relationships or paths ==
+-- the element comes out as itself, as it does through UNWIND: a path's
+-- vertices and edges, a collected list, a list literal, a COLLECT subquery
+MATCH p = (:Person {Id: 1})-[:Owns]->(:Account)
+FOR v in vertices(p) RETURN v, pg_typeof(v);
+                             v                             | pg_typeof 
+-----------------------------------------------------------+-----------
+ person[3.1]{"id": 1, "name": "Alice", "tags": ["x", "y"]} | "vertex"
+ account[5.1]{"no": 100}                                   | "vertex"
+(2 rows)
+
+MATCH p = (:Person {Id: 1})-[:Owns]->(:Account)
+FOR e in edges(p) RETURN e, pg_typeof(e);
+          e           | pg_typeof 
+----------------------+-----------
+ owns[4.1][3.1,5.1]{} | "edge"
+(1 row)
+
+MATCH (p:Person) WITH collect(p) AS ps FOR v in ps RETURN v.name AS name ORDER BY name;
+  name   
+---------
+ "Alice"
+ "Bob"
+ "Carol"
+(3 rows)
+
+MATCH (p:Person {Id: 1}) FOR v in [p] RETURN v.name AS name, label(v) AS label;
+  name   |  label   
+---------+----------
+ "Alice" | "person"
+(1 row)
+
+MATCH (p:Person {Id: 1}) FOR v in COLLECT { MATCH (a:Account) RETURN a } RETURN v.no AS no ORDER BY no;
+ no  
+-----
+ 100
+ 200
+ 300
+(3 rows)
+
+-- the element and its offset over a list of nodes
+MATCH p = (:Person {Id: 1})-[:Owns]->(:Account)
+FOR v in vertices(p) WITH OFFSET AS i RETURN i, label(v) AS label ORDER BY i;
+ i |   label   
+---+-----------
+ 0 | "person"
+ 1 | "account"
+(2 rows)
+
+-- the element is usable as a node afterwards: a following MATCH from it
+MATCH p = (:Person {Id: 1})-[:Owns]->(:Account)
+FOR v in vertices(p) MATCH (v)-[:Owns]->(a:Account) RETURN a.no AS no;
+ no  
+-----
+ 100
+(1 row)
+
+-- a list of paths
+MATCH p = (:Person)-[:Owns]->(:Account) WITH collect(p) AS ps
+FOR q in ps RETURN length(q) AS len, pg_typeof(q) ORDER BY len LIMIT 1;
+ len |  pg_typeof  
+-----+-------------
+ 1   | "graphpath"
+(1 row)
+
 -- == composition / chaining ==
 -- standalone FOR, then WITH, then RETURN
 FOR x in [1,2,3] WITH x AS col RETURN col ORDER BY col;
@@ -12106,11 +12171,11 @@ EXPLAIN (COSTS OFF) MATCH (a:v {k: 7})-[:e*2..2]-(b:v) RETURN count(*);
 -----------------------------------------------------------
  Aggregate
    ->  Hash Join
-         Hash Cond: ("<0000000820>"._end = b.id)
+         Hash Cond: ("<0000000836>"._end = b.id)
          ->  Nested Loop
                ->  Seq Scan on v a
                      Filter: (properties.'k' = '7'::jsonb)
-               ->  Subquery Scan on "<0000000820>"
+               ->  Subquery Scan on "<0000000836>"
                      ->  Graph VLE on e [2..2]
                            ->  Result
          ->  Hash
