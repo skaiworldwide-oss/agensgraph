@@ -99,9 +99,9 @@ static Query *transformCypherStmt(ParseState *pstate, CypherStmt *stmt);
 static Query *transformCypherClause(ParseState *pstate, CypherClause *clause);
 
 static void preprocess_modifiers(CypherStmt *stmt);
-static bool isCypherSetOperation(Node *stmt);
-static Oid	boxCypherSetOpColumn(ParseState *pstate, Node *arg,
-								 TargetEntry *tle, int colno, bool recursive);
+static Oid	rewriteSetOpColumn(ParseState *pstate, List *rtable, Node *arg,
+							   TargetEntry *tle, int colno, bool require_hash,
+							   CypherColumnRewrite rewrite);
 static bool is_modifier(CypherClause *clause);
 static bool projection_takes_modifiers(CypherClause *clause);
 static bool parent_is_projection(CypherClause *clause);
@@ -2081,7 +2081,7 @@ makeSortGroupClauseForSetOp(Oid rescoltype, bool require_hash)
  *		Is every arm of this raw set operation a Cypher statement?  The Cypher
  *		grammar wraps each arm as "SELECT * FROM (<cypher>) AS <alias>".
  */
-static bool
+bool
 isCypherSetOperation(Node *stmt)
 {
 	SelectStmt *sel;
@@ -2106,21 +2106,21 @@ isCypherSetOperation(Node *stmt)
 }
 
 /*
- * boxCypherSetOpColumn
- *		Box output column colno of a transformed set-operation arm to jsonb and
+ * rewriteSetOpColumn
+ *		Rewrite output column colno of a transformed set-operation arm and
  *		return its type.  tle is the entry the parent compares: a leaf's own
- *		target entry, which is boxed in place, or the dummy standing for a
- *		nested set operation, whose leaves are boxed and whose column type,
+ *		target entry, which is rewritten in place, or the dummy standing for a
+ *		nested set operation, whose leaves are rewritten and whose column type,
  *		collation and grouping operator are brought in line.
  */
 static Oid
-boxCypherSetOpColumn(ParseState *pstate, Node *arg, TargetEntry *tle,
-					 int colno, bool recursive)
+rewriteSetOpColumn(ParseState *pstate, List *rtable, Node *arg,
+				   TargetEntry *tle, int colno, bool require_hash,
+				   CypherColumnRewrite rewrite)
 {
 	if (IsA(arg, RangeTblRef))
 	{
-		RangeTblEntry *rte = rt_fetch(((RangeTblRef *) arg)->rtindex,
-									  pstate->p_rtable);
+		RangeTblEntry *rte = rt_fetch(((RangeTblRef *) arg)->rtindex, rtable);
 		ListCell   *lc;
 		int			n = 0;
 
@@ -2133,8 +2133,7 @@ boxCypherSetOpColumn(ParseState *pstate, Node *arg, TargetEntry *tle,
 			if (n++ == colno)
 			{
 				Assert(tle == NULL || leaftle == tle);
-				leaftle->expr = (Expr *) coerceCypherValueToJsonb(pstate,
-													  (Node *) leaftle->expr);
+				leaftle->expr = (Expr *) rewrite(pstate, (Node *) leaftle->expr);
 				return exprType((Node *) leaftle->expr);
 			}
 		}
@@ -2147,8 +2146,10 @@ boxCypherSetOpColumn(ParseState *pstate, Node *arg, TargetEntry *tle,
 		Oid			rtype;
 		Oid			type;
 
-		ltype = boxCypherSetOpColumn(pstate, op->larg, NULL, colno, recursive);
-		rtype = boxCypherSetOpColumn(pstate, op->rarg, NULL, colno, recursive);
+		ltype = rewriteSetOpColumn(pstate, rtable, op->larg, NULL, colno,
+								   require_hash, rewrite);
+		rtype = rewriteSetOpColumn(pstate, rtable, op->rarg, NULL, colno,
+								   require_hash, rewrite);
 		type = (ltype == rtype) ? ltype : InvalidOid;
 		if (!OidIsValid(type))
 			return InvalidOid;
@@ -2158,7 +2159,7 @@ boxCypherSetOpColumn(ParseState *pstate, Node *arg, TargetEntry *tle,
 		lfirst_oid(list_nth_cell(op->colCollations, colno)) = InvalidOid;
 		if (op->groupClauses != NIL)
 			lfirst(list_nth_cell(op->groupClauses, colno)) =
-				makeSortGroupClauseForSetOp(type, recursive);
+				makeSortGroupClauseForSetOp(type, require_hash);
 
 		if (tle != NULL)
 		{
@@ -2173,6 +2174,43 @@ boxCypherSetOpColumn(ParseState *pstate, Node *arg, TargetEntry *tle,
 	}
 
 	return InvalidOid;			/* keep compiler quiet */
+}
+
+/*
+ * rewriteCypherSetOpColumn
+ *		Rewrite output column colno of an analyzed set-operation query in every
+ *		leaf, and give the query's own target entry the rewritten type.
+ */
+void
+rewriteCypherSetOpColumn(ParseState *pstate, Query *qry, int colno,
+						 CypherColumnRewrite rewrite)
+{
+	Oid			type;
+	ListCell   *lc;
+	int			n = 0;
+
+	type = rewriteSetOpColumn(pstate, qry->rtable, qry->setOperations, NULL,
+							  colno, false, rewrite);
+	if (!OidIsValid(type))
+		elog(ERROR, "set-operation arms disagree on the type of column %d",
+			 colno);
+
+	foreach(lc, qry->targetList)
+	{
+		TargetEntry *tle = (TargetEntry *) lfirst(lc);
+
+		if (tle->resjunk)
+			continue;
+		if (n++ == colno)
+		{
+			Var		   *var = castNode(Var, tle->expr);
+
+			var->vartype = type;
+			var->vartypmod = -1;
+			var->varcollid = InvalidOid;
+			break;
+		}
+	}
 }
 
 /*
@@ -2403,11 +2441,11 @@ transformSetOperationTree(ParseState *pstate, SelectStmt *stmt,
 				int			colno = foreach_current_index(ltl);
 
 				if (lcoltype != JSONBOID)
-					boxCypherSetOpColumn(pstate, op->larg, ltle, colno,
-										 recursive);
+					rewriteSetOpColumn(pstate, pstate->p_rtable, op->larg, ltle,
+									   colno, recursive, coerceCypherValueToJsonb);
 				if (rcoltype != JSONBOID)
-					boxCypherSetOpColumn(pstate, op->rarg, rtle, colno,
-										 recursive);
+					rewriteSetOpColumn(pstate, pstate->p_rtable, op->rarg, rtle,
+									   colno, recursive, coerceCypherValueToJsonb);
 				lcolnode = (Node *) ltle->expr;
 				rcolnode = (Node *) rtle->expr;
 				lcoltype = exprType(lcolnode);

@@ -20113,12 +20113,13 @@ cypher_expr:
 					 * "x IN { <cypher read subquery> }".  Built as a native
 					 * ANY_SUBLINK so the planner can pull it up to a semi-join
 					 * or run it as a hashed subplan, rather than materializing
-					 * the whole result set.  A cypher RETURN column is jsonb,
-					 * so the left operand is cast to jsonb for the comparison.
+					 * the whole result set.  How x is compared with the
+					 * subquery's column is settled once both types are known,
+					 * in transformCypherInSubquery().
 					 */
 					n->subLinkType = ANY_SUBLINK;
 					n->subLinkId = 0;
-					n->testexpr = makeTypeCast($1, SystemTypeName("jsonb"), @1);
+					n->testexpr = $1;
 					n->operName = NIL;
 					n->subselect = $4;
 					n->location = @2;
@@ -20130,7 +20131,7 @@ cypher_expr:
 
 					n->subLinkType = ANY_SUBLINK;
 					n->subLinkId = 0;
-					n->testexpr = makeTypeCast($1, SystemTypeName("jsonb"), @1);
+					n->testexpr = $1;
 					n->operName = NIL;
 					n->subselect = $5;
 					n->location = @2;
@@ -20734,7 +20735,7 @@ cypher_w_expr:
 
 					n->subLinkType = ANY_SUBLINK;
 					n->subLinkId = 0;
-					n->testexpr = makeTypeCast($1, SystemTypeName("jsonb"), @1);
+					n->testexpr = $1;
 					n->operName = NIL;
 					n->subselect = $4;
 					n->location = @2;
@@ -20746,7 +20747,7 @@ cypher_w_expr:
 
 					n->subLinkType = ANY_SUBLINK;
 					n->subLinkId = 0;
-					n->testexpr = makeTypeCast($1, SystemTypeName("jsonb"), @1);
+					n->testexpr = $1;
 					n->operName = NIL;
 					n->subselect = $5;
 					n->location = @2;

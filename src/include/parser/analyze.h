@@ -65,4 +65,9 @@ extern List *BuildOnConflictExcludedTargetlist(Relation targetrel,
 
 extern SortGroupClause *makeSortGroupClauseForSetOp(Oid rescoltype, bool require_hash);
 
+typedef Node *(*CypherColumnRewrite) (ParseState *pstate, Node *expr);
+extern bool isCypherSetOperation(Node *stmt);
+extern void rewriteCypherSetOpColumn(ParseState *pstate, Query *qry, int colno,
+									 CypherColumnRewrite rewrite);
+
 #endif							/* ANALYZE_H */

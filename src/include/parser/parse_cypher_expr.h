@@ -43,6 +43,8 @@ extern List *transformItemList(ParseState *pstate, List *items,
 							   ParseExprKind exprKind);
 extern void resolveItemList(ParseState *pstate, List *items);
 extern Node *coerceCypherValueToJsonb(ParseState *pstate, Node *expr);
+extern Node *transformCypherInSubquery(ParseState *pstate, Node *testexpr,
+									   Query *qtree);
 extern List *transformCypherExprList(ParseState *pstate, List *exprlist,
 									 ParseExprKind exprKind);
 

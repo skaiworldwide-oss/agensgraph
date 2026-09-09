@@ -10398,8 +10398,8 @@ RETURN 'Rex' IN { MATCH (:Person)-[:HAS_DOG]->(d:Dog) RETURN d.name } AS no;
  f
 (1 row)
 
--- numeric membership (the left operand is coerced to jsonb to match the jsonb
--- column a cypher RETURN produces)
+-- numeric membership (a value and the column a cypher RETURN produces meet as
+-- jsonb)
 RETURN 35 IN { MATCH (p:Person) RETURN p.age } AS has35;
  has35 
 -------
@@ -10441,6 +10441,95 @@ RETURN p IN { MATCH (q:Person) RETURN q } AS present;
  t
 (1 row)
 
+-- a node, relationship or graphid is matched by identity, as in "x IN [list]":
+-- two vertices with equal properties are still two vertices
+CREATE (:Twin {k: 1}), (:Twin {k: 1});
+MATCH (a:Twin), (b:Twin) WHERE id(a) <> id(b)
+CREATE (a)-[:TWIN_OF {w: 1}]->(b);
+MATCH (a:Twin), (b:Twin) WHERE id(a) <> id(b)
+RETURN a IN { MATCH (n:Twin) WHERE id(n) = id(b) RETURN n } AS other,
+       a IN { MATCH (n:Twin) WHERE id(n) = id(a) RETURN n } AS self,
+       a NOT IN { MATCH (n:Twin) WHERE id(n) = id(b) RETURN n } AS not_other;
+ other | self | not_other 
+-------+------+-----------
+ f     | t    | t
+ f     | t    | t
+(2 rows)
+
+MATCH ()-[e:TWIN_OF]->() MATCH ()-[f:TWIN_OF]->() WHERE id(e) <> id(f)
+RETURN e IN { MATCH ()-[g:TWIN_OF]->() WHERE id(g) = id(f) RETURN g } AS other,
+       e IN { MATCH ()-[g:TWIN_OF]->() WHERE id(g) = id(e) RETURN g } AS self;
+ other | self 
+-------+------
+ f     | t
+ f     | t
+(2 rows)
+
+-- either side may be the element or its id
+MATCH (a:Twin) WITH a ORDER BY id(a) LIMIT 1
+RETURN id(a) IN { MATCH (n:Twin) RETURN id(n) } AS id_in_ids,
+       id(a) IN { MATCH (n:Twin) RETURN n } AS id_in_nodes,
+       a IN { MATCH (n:Twin) RETURN id(n) } AS node_in_ids;
+ id_in_ids | id_in_nodes | node_in_ids 
+-----------+-------------+-------------
+ t         | t           | t
+(1 row)
+
+-- in a WHERE the identity test is a semi-join on the id
+MATCH (a:Twin), (b:Twin) WHERE id(a) <> id(b)
+  AND a IN { MATCH (n:Twin) WHERE id(n) = id(b) RETURN n }
+RETURN count(*) AS none;
+ none 
+------
+ 0
+(1 row)
+
+EXPLAIN (VERBOSE, COSTS OFF)
+MATCH (a:Twin) RETURN a IN { MATCH (n:Twin) RETURN n } AS r;
+                    QUERY PLAN                    
+--------------------------------------------------
+ Seq Scan on exists_subquery.twin a
+   Output: (ANY (a.id = (hashed SubPlan 1).col1))
+   SubPlan 1
+     ->  Seq Scan on exists_subquery.twin n
+           Output: n.id
+(5 rows)
+
+-- the body may be a set operation
+MATCH (a:Twin), (b:Twin) WHERE id(a) <> id(b)
+RETURN a IN { MATCH (n:Twin) WHERE id(n) = id(b) RETURN n
+              UNION MATCH (n:Twin) WHERE id(n) = id(b) RETURN n } AS other,
+       a IN { MATCH (n:Twin) WHERE id(n) = id(a) RETURN n
+              UNION ALL MATCH (n:Twin) RETURN n } AS self;
+ other | self 
+-------+------
+ f     | t
+ f     | t
+(2 rows)
+
+-- an element is never a member of a set of values, nor a value of a set of
+-- elements
+MATCH (a:Twin) WITH a LIMIT 1 RETURN a IN { MATCH (n:Twin) RETURN n.k } AS r;
+ERROR:  cannot compare graph element identity to type jsonb
+LINE 1: ...ITH a LIMIT 1 RETURN a IN { MATCH (n:Twin) RETURN n.k } AS r...
+                                                             ^
+RETURN 1 IN { MATCH (n:Twin) RETURN n } AS scalar, {k: 1} IN { MATCH (n:Twin) RETURN n } AS map;
+ scalar | map 
+--------+-----
+ f      | f
+(1 row)
+
+-- a path is compared whole
+MATCH p = (a:Twin)-[:TWIN_OF]->(b)
+RETURN p IN { MATCH q = (:Twin)-[:TWIN_OF]->() WHERE id(nodes(q)[0]) = id(a) RETURN q } AS same,
+       p IN { MATCH q = (:Twin)-[:TWIN_OF]->() WHERE id(nodes(q)[0]) <> id(a) RETURN q } AS other;
+ same | other 
+------+-------
+ t    | f
+ t    | f
+(2 rows)
+
+MATCH (t:Twin) DETACH DELETE t;
 -- correlated to the outer row: who owns a dog named 'Fido'
 MATCH (person:Person)
 WHERE 'Fido' IN { MATCH (person)-[:HAS_DOG]->(d:Dog) RETURN d.name }
@@ -10991,7 +11080,7 @@ LINE 1: RETURN 1 IN { MATCH (a:Person) DETACH DELETE a RETURN a };
                                        ^
 -- cleanup
 DROP GRAPH exists_subquery CASCADE;
-NOTICE:  drop cascades to 12 other objects
+NOTICE:  drop cascades to 14 other objects
 DETAIL:  drop cascades to sequence exists_subquery.ag_label_seq
 drop cascades to vlabel ag_vertex
 drop cascades to elabel ag_edge
@@ -11004,6 +11093,8 @@ drop cascades to elabel has_toy
 drop cascades to vlabel toy
 drop cascades to vlabel summary
 drop cascades to vlabel arrsummary
+drop cascades to vlabel twin
+drop cascades to elabel twin_of
 DROP GRAPH agv2_394 CASCADE;
 NOTICE:  drop cascades to 7 other objects
 DETAIL:  drop cascades to sequence agv2_394.ag_label_seq
@@ -11977,11 +12068,11 @@ EXPLAIN (COSTS OFF) MATCH (a:v {k: 7})-[:e*2..2]-(b:v) RETURN count(*);
 -----------------------------------------------------------
  Aggregate
    ->  Hash Join
-         Hash Cond: ("<0000000802>"._end = b.id)
+         Hash Cond: ("<0000000818>"._end = b.id)
          ->  Nested Loop
                ->  Seq Scan on v a
                      Filter: (properties.'k' = '7'::jsonb)
-               ->  Subquery Scan on "<0000000802>"
+               ->  Subquery Scan on "<0000000818>"
                      ->  Graph VLE on e [2..2]
                            ->  Result
          ->  Hash
