@@ -261,6 +261,17 @@ RETURN dog;
 MATCH (p:Person {name: 'Andy'}), (other:Person {name: 'Peter'})
 CALL { WITH p MATCH (p)-[:HAS_DOG]->(d:Dog) WHERE d.name <> other.name RETURN d.name AS dog }
 RETURN dog;
+-- error: an imported variable cannot be rebound in the body, by LET or by UNWIND
+MATCH (p:Person {name: 'Andy'})
+CALL (p) { LET p = 1 RETURN 1 AS x }
+RETURN x;
+MATCH (p:Person {name: 'Andy'})
+CALL (p) { UNWIND [1] AS p RETURN 1 AS x }
+RETURN x;
+-- a variable that is not imported is free for the body to bind
+MATCH (p:Person {name: 'Andy'})
+CALL () { UNWIND [1] AS p RETURN p AS x }
+RETURN p.name AS name, x;
 -- a variable reused inside the body shadows nothing of the outer (uncorrelated)
 MATCH (p:Person {name: 'Andy'})
 CALL () { MATCH (p:Person {name: 'Peter'})-[:HAS_DOG]->(d:Dog) RETURN d.name AS dog }

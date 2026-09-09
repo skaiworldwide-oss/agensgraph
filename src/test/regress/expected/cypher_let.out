@@ -216,6 +216,103 @@ LET z = 1, z = 2
 RETURN z;
 ERROR:  variable "z" already exists
 HINT:  LET cannot redefine an existing variable; use a different name.
+-- Rebinding a variable of the enclosing query inside the body of a subquery
+-- expression: the body reads the outer variable, so the name is taken.  Every
+-- body form, a leading and a following LET, a body in WHERE, two levels down.
+MATCH (n:person {id: 1})
+RETURN COUNT { LET n = 1 RETURN n } AS c;
+ERROR:  variable "n" already exists
+LINE 2: RETURN COUNT { LET n = 1 RETURN n } AS c;
+                           ^
+HINT:  LET cannot redefine an existing variable; use a different name.
+MATCH (n:person {id: 1})
+RETURN EXISTS { MATCH (m:person) LET n = 1 RETURN m } AS e;
+ERROR:  variable "n" already exists
+LINE 2: RETURN EXISTS { MATCH (m:person) LET n = 1 RETURN m } AS e;
+                                             ^
+HINT:  LET cannot redefine an existing variable; use a different name.
+MATCH (n:person {id: 1})
+RETURN COLLECT { LET n = 1 RETURN n } AS l;
+ERROR:  variable "n" already exists
+LINE 2: RETURN COLLECT { LET n = 1 RETURN n } AS l;
+                             ^
+HINT:  LET cannot redefine an existing variable; use a different name.
+MATCH (n:person {id: 1})
+RETURN VALUE { LET n = 1 RETURN n } AS v;
+ERROR:  variable "n" already exists
+LINE 2: RETURN VALUE { LET n = 1 RETURN n } AS v;
+                           ^
+HINT:  LET cannot redefine an existing variable; use a different name.
+MATCH (n:person {id: 1})
+RETURN ARRAY { LET n = 1 RETURN n } AS a;
+ERROR:  variable "n" already exists
+LINE 2: RETURN ARRAY { LET n = 1 RETURN n } AS a;
+                           ^
+HINT:  LET cannot redefine an existing variable; use a different name.
+MATCH (n:person {id: 1})
+RETURN 1 IN { LET n = 1 RETURN n } AS i;
+ERROR:  variable "n" already exists
+LINE 2: RETURN 1 IN { LET n = 1 RETURN n } AS i;
+                          ^
+HINT:  LET cannot redefine an existing variable; use a different name.
+MATCH (n:person {id: 1})
+WHERE COUNT { LET n = 1 RETURN n } > 0
+RETURN n.name;
+ERROR:  variable "n" already exists
+LINE 2: WHERE COUNT { LET n = 1 RETURN n } > 0
+                          ^
+HINT:  LET cannot redefine an existing variable; use a different name.
+MATCH (n:person {id: 1})
+RETURN COUNT { MATCH (m:person) RETURN COUNT { LET n = 1 RETURN n } } AS nested;
+ERROR:  variable "n" already exists
+LINE 2: ...ETURN COUNT { MATCH (m:person) RETURN COUNT { LET n = 1 RETU...
+                                                             ^
+HINT:  LET cannot redefine an existing variable; use a different name.
+-- An edge, a path and a WITH-bound name are taken as well.
+MATCH (a:person)-[k:knows]->(b:person)
+RETURN COUNT { LET k = 1 RETURN k } AS c;
+ERROR:  variable "k" already exists
+LINE 2: RETURN COUNT { LET k = 1 RETURN k } AS c;
+                           ^
+HINT:  LET cannot redefine an existing variable; use a different name.
+MATCH p = (a:person)-[:knows]->(b:person)
+RETURN COUNT { LET p = 1 RETURN p } AS c;
+ERROR:  variable "p" already exists
+LINE 2: RETURN COUNT { LET p = 1 RETURN p } AS c;
+                           ^
+HINT:  LET cannot redefine an existing variable; use a different name.
+MATCH (a:person {id: 1}) WITH a.name AS nm
+RETURN COUNT { LET nm = 1 RETURN nm } AS c;
+ERROR:  variable "nm" already exists
+LINE 2: RETURN COUNT { LET nm = 1 RETURN nm } AS c;
+                           ^
+HINT:  LET cannot redefine an existing variable; use a different name.
+-- A CALL body that imports the variable cannot rebind it either ...
+MATCH (n:person {id: 1})
+CALL (n) { LET n = 1 RETURN 1 AS x }
+RETURN x;
+ERROR:  variable "n" already exists
+LINE 2: CALL (n) { LET n = 1 RETURN 1 AS x }
+                       ^
+HINT:  LET cannot redefine an existing variable; use a different name.
+-- ... while one that does not import it may use the name.
+MATCH (n:person {id: 1})
+CALL () { LET n = 1 RETURN n AS x }
+RETURN n.name AS name, x;
+  name   | x 
+---------+---
+ "alice" | 1
+(1 row)
+
+-- Inside a body, a bound reference to the outer variable and a fresh name are
+-- fine.
+MATCH (n:person {id: 1})
+RETURN COUNT { MATCH (n)-[:knows]->(m) LET d = m.age * 2 RETURN d } AS c;
+ c 
+---
+ 1
+(1 row)
+
 -- A plain aggregate in LET.
 MATCH (n:person)
 LET c = count(*)

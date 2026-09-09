@@ -181,7 +181,8 @@ typedef struct
 
 /* projection (RETURN and WITH) */
 static void checkNameInItems(ParseState *pstate, List *items, List *targetList);
-static void checkCypherLetItems(ParseState *pstate, List *targetList);
+static void checkCypherLetItems(ParseState *pstate, List *items,
+								List *targetList);
 static void updateSortOperatorsForJsonb(List *sortClause, List **targetList,
 										bool allowUnbox, bool allowNativeUnbox);
 static void unboxPromotedGroupKeys(List *groupClause, List **targetList);
@@ -380,6 +381,7 @@ static char *getDeleteTargetName(ParseState *pstate, Node *expr);
 /* CALL */
 static bool nsItemHasColumnNamed(ParseNamespaceItem *nsitem,
 								 const char *colname);
+static bool varBoundInEnclosingQuery(ParseState *pstate, const char *varname);
 static List *joinCallBody(ParseState *pstate,
 						  ParseNamespaceItem *prev_nsitem,
 						  ParseNamespaceItem *body_nsitem, bool optional);
@@ -1211,7 +1213,7 @@ transformCypherProjection(ParseState *pstate, CypherClause *clause)
 		if (detail->kind == CP_WITH)
 			checkNameInItems(pstate, detail->items, qry->targetList);
 		else if (detail->kind == CP_LET)
-			checkCypherLetItems(pstate, qry->targetList);
+			checkCypherLetItems(pstate, detail->items, qry->targetList);
 
 		/*
 		 * Forward each carried element's promoted sentinels through this
@@ -1982,7 +1984,8 @@ transformCypherLoadClause(ParseState *pstate, CypherClause *clause)
 		qry->targetList = makeTargetListFromNSItem(pstate, nsitem);
 	}
 
-	if (findTarget(qry->targetList, rv->alias->aliasname) != NULL)
+	if (findTarget(qry->targetList, rv->alias->aliasname) != NULL ||
+		varBoundInEnclosingQuery(pstate, rv->alias->aliasname))
 		ereport(ERROR,
 				(errcode(ERRCODE_DUPLICATE_ALIAS),
 				 errmsg("duplicate variable \"%s\"", rv->alias->aliasname)));
@@ -2045,7 +2048,8 @@ transformCypherUnwindClause(ParseState *pstate, CypherClause *clause)
 	 *                     ^                ^
 	 *--------------------------
 	 */
-	if (findTarget(qry->targetList, target->name) != NULL)
+	if (findTarget(qry->targetList, target->name) != NULL ||
+		varBoundInEnclosingQuery(pstate, target->name))
 		ereport(ERROR,
 				(errcode(ERRCODE_DUPLICATE_ALIAS),
 				 errmsg("duplicate variable \"%s\"", target->name),
@@ -2141,13 +2145,15 @@ transformCypherForClause(ParseState *pstate, CypherClause *clause)
 	}
 
 	/* The new variable(s) must not collide with previous ones. */
-	if (findTarget(qry->targetList, strVal(detail->resname)) != NULL)
+	if (findTarget(qry->targetList, strVal(detail->resname)) != NULL ||
+		varBoundInEnclosingQuery(pstate, strVal(detail->resname)))
 		ereport(ERROR,
 				(errcode(ERRCODE_DUPLICATE_ALIAS),
 				 errmsg("duplicate variable \"%s\"", strVal(detail->resname))));
 	if (with_offset &&
 		(strcmp(strVal(detail->resname), strVal(detail->offset)) == 0 ||
-		 findTarget(qry->targetList, strVal(detail->offset)) != NULL))
+		 findTarget(qry->targetList, strVal(detail->offset)) != NULL ||
+		 varBoundInEnclosingQuery(pstate, strVal(detail->offset))))
 		ereport(ERROR,
 				(errcode(ERRCODE_DUPLICATE_ALIAS),
 				 errmsg("duplicate variable \"%s\"", strVal(detail->offset))));
@@ -2511,6 +2517,40 @@ nsItemHasColumnNamed(ParseNamespaceItem *nsitem, const char *colname)
 }
 
 /*
+ * varBoundInEnclosingQuery
+ *		Is a variable of this name in scope from an enclosing query?
+ *
+ *		The body of a subquery expression, or of a CALL with an import list,
+ *		reads the enclosing query's variables through the parent parse states,
+ *		the way column resolution finds them.  A clause that binds a name there
+ *		may not take one of theirs: it would hide the outer variable for the
+ *		rest of the body.
+ */
+static bool
+varBoundInEnclosingQuery(ParseState *pstate, const char *varname)
+{
+	for (pstate = pstate->parentParseState; pstate != NULL;
+		 pstate = pstate->parentParseState)
+	{
+		ListCell   *lc;
+
+		foreach(lc, pstate->p_namespace)
+		{
+			ParseNamespaceItem *nsitem = lfirst(lc);
+
+			if (!nsitem->p_cols_visible)
+				continue;
+			if (nsitem->p_lateral_only && !pstate->p_lateral_active)
+				continue;
+			if (nsItemHasColumnNamed(nsitem, varname))
+				return true;
+		}
+	}
+
+	return false;
+}
+
+/*
  * joinCallBody
  *		Join an analyzed CALL body with the working table and return the
  *		resulting clause target list (the working table's columns followed by
@@ -2860,7 +2900,8 @@ transformCypherCallClause(ParseState *pstate, CypherClause *clause)
 		if (colname[0] == '\0')
 			continue;
 
-		if (nsItemHasColumnNamed(prev_nsitem, colname))
+		if (nsItemHasColumnNamed(prev_nsitem, colname) ||
+			varBoundInEnclosingQuery(pstate, colname))
 			ereport(ERROR,
 					(errcode(ERRCODE_DUPLICATE_ALIAS),
 					 errmsg("variable \"%s\" returned by the CALL subquery is already bound in the outer query",
@@ -3243,6 +3284,35 @@ checkNameInItems(ParseState *pstate, List *items, List *targetList)
 	}
 
 	/*
+	 * A WITH may rename a value it passes on, but not to the name of a
+	 * variable an enclosing query has in scope: inside the body of a subquery
+	 * expression that variable stays readable, and the new one would hide it.
+	 * Passing a variable on under its own name binds nothing new.
+	 */
+	foreach(li, items)
+	{
+		ResTarget  *res = lfirst(li);
+		ColumnRef  *cref;
+
+		if (res->name == NULL)
+			continue;
+
+		cref = IsA(res->val, ColumnRef) ? (ColumnRef *) res->val : NULL;
+		if (cref != NULL && list_length(cref->fields) == 1 &&
+			IsA(linitial(cref->fields), String) &&
+			strcmp(strVal(linitial(cref->fields)), res->name) == 0)
+			continue;
+
+		if (varBoundInEnclosingQuery(pstate, res->name))
+			ereport(ERROR,
+					(errcode(ERRCODE_DUPLICATE_ALIAS),
+					 errmsg("variable \"%s\" is already bound in the outer query",
+							res->name),
+					 errhint("WITH cannot rebind a variable of the enclosing query; use a different name."),
+					 parser_errposition(pstate, res->location)));
+	}
+
+	/*
 	 * Every value a WITH passes on is named, and a later clause reads it by
 	 * that name, so two of them may not share one: which value a reference
 	 * meant would be a guess.  Walk the target list itself rather than the
@@ -3276,13 +3346,14 @@ checkNameInItems(ParseState *pstate, List *items, List *targetList)
  * checkCypherLetItems
  *		Enforce the two rules that LET adds on top of a plain projection: it is
  *		row-wise (no aggregates) and it may only INTRODUCE names -- it must not
- *		redefine a variable that already exists in the working record, nor bind
- *		the same name twice.  The target list here is the implicit "*" expansion
- *		(every existing binding, always uniquely named) followed by the LET
- *		items, so a duplicate output name can only come from a LET assignment.
+ *		redefine a variable that already exists in the working record or in an
+ *		enclosing query, nor bind the same name twice.  The target list here is
+ *		the implicit "*" expansion (every existing binding, always uniquely
+ *		named) followed by the LET items, so a duplicate output name can only
+ *		come from a LET assignment; the items are the assignments themselves.
  */
 static void
-checkCypherLetItems(ParseState *pstate, List *targetList)
+checkCypherLetItems(ParseState *pstate, List *items, List *targetList)
 {
 	ListCell   *la;
 
@@ -3290,6 +3361,18 @@ checkCypherLetItems(ParseState *pstate, List *targetList)
 		ereport(ERROR,
 				(errcode(ERRCODE_GROUPING_ERROR),
 				 errmsg("aggregate functions are not allowed in LET")));
+
+	foreach(la, items)
+	{
+		ResTarget  *res = lfirst(la);
+
+		if (res->name != NULL && varBoundInEnclosingQuery(pstate, res->name))
+			ereport(ERROR,
+					(errcode(ERRCODE_DUPLICATE_ALIAS),
+					 errmsg("variable \"%s\" already exists", res->name),
+					 errhint("LET cannot redefine an existing variable; use a different name."),
+					 parser_errposition(pstate, res->location)));
+	}
 
 	foreach(la, targetList)
 	{
