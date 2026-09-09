@@ -27,6 +27,7 @@
 #include "catalog/objectaddress.h"
 #include "catalog/pg_class.h"
 #include "catalog/pg_collation.h"
+#include "catalog/pg_constraint.h"
 #include "catalog/pg_namespace.h"
 #include "catalog/toasting.h"
 #include "commands/event_trigger.h"
@@ -1032,6 +1033,8 @@ CheckLabelSqlReshape(Oid relid, bool recurse, List *cmds)
 		const char *hint;
 		const char *label_ddl_hint =
 			"Use ALTER VLABEL or ALTER ELABEL instead, which keeps the graph catalog in step.";
+		const char *not_null_hint =
+			"The columns every vertex or edge is made of are relied on to be there.";
 
 		switch (cmd->subtype)
 		{
@@ -1057,12 +1060,23 @@ CheckLabelSqlReshape(Oid relid, bool recurse, List *cmds)
 				break;
 			case AT_DropNotNull:
 				what = "drop a not-null constraint of";
-				hint = "The columns every vertex or edge is made of are relied on to be there.";
+				hint = not_null_hint;
 				break;
 			case AT_DropConstraint:
-				what = "drop a constraint of";
-				hint = "Use DROP CONSTRAINT on the label instead.";
-				break;
+				{
+					Oid			conoid;
+
+					/* naming a not-null constraint drops what AT_DropNotNull drops */
+					conoid = get_relation_constraint_oid(relid, cmd->name,
+														 true);
+					if (!OidIsValid(conoid) ||
+						get_constraint_type(conoid) != CONSTRAINT_NOTNULL)
+						continue;
+
+					what = "drop a not-null constraint of";
+					hint = not_null_hint;
+					break;
+				}
 			case AT_AddInherit:
 				what = "add a parent label to";
 				hint = "A label's parents are fixed when it is created.";

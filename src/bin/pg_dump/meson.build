@@ -105,6 +105,7 @@ tests += {
       't/010_dump_connstr.pl',
       't/011_promoted_columns.pl',
       't/012_label_constraints.pl',
+      't/013_clean_restore.pl',
     ],
   },
 }
