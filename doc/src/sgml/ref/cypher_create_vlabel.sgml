@@ -1,5 +1,5 @@
 <!--
-doc/src/sgml/ref/create_vlabel.sgml
+doc/src/sgml/ref/cypher_create_vlabel.sgml
 PostgreSQL documentation
 -->
 
@@ -11,38 +11,97 @@ PostgreSQL documentation
  <refmeta>
   <refentrytitle>CREATE VLABEL</refentrytitle>
   <manvolnum>7</manvolnum>
-  <refmiscinfo>SQL - Language Statements</refmiscinfo>
+  <refmiscinfo>Cypher - Language Statements</refmiscinfo>
  </refmeta>
 
  <refnamediv>
   <refname>CREATE VLABEL</refname>
-  <refpurpose>create the vertex label</refpurpose>
+  <refpurpose>create a vertex label</refpurpose>
  </refnamediv>
 
  <refsynopsisdiv>
 <synopsis>
+CREATE [ UNLOGGED ] VLABEL [ IF NOT EXISTS ] <replaceable class="parameter">label_name</replaceable>
+    [ ( <replaceable class="parameter">label_prop</replaceable> [, ...] ) ]
+    [ DISABLE INDEX ]
+    [ INHERITS ( <replaceable class="parameter">parent_label</replaceable> [, ...] ) ]
+    [ WITH ( <replaceable class="parameter">storage_parameter</replaceable> [= <replaceable class="parameter">value</replaceable>] [, ...] ) ]
+    [ TABLESPACE <replaceable class="parameter">tablespace_name</replaceable> ]
 
-CREATE [UNLOGGED] VLABEL [IF NOT EXISTS] <replaceable class="parameter">label_name</replaceable> [ option [ ... ] ]
+<phrase>where <replaceable class="parameter">label_prop</replaceable> is one of:</phrase>
 
-where option can be:
-
-    DISABLE INDEX
-    INHERITS ( <replaceable class="parameter">label_name</replaceable> [, ... ] )
-    WITH ( <replaceable class="parameter">storage_parameter</replaceable> [= <replaceable class="parameter">value</replaceable>] [, ... ] )
-    TABLESPACE <replaceable class="parameter">tablespace_name</replaceable>
-
+    <replaceable class="parameter">column_name</replaceable> <replaceable class="parameter">data_type</replaceable> GENERATED
+    <replaceable class="parameter">column_name</replaceable> <replaceable class="parameter">data_type</replaceable> GENERATED ( <replaceable class="parameter">property_key</replaceable> )
+    <replaceable class="parameter">column_name</replaceable> <replaceable class="parameter">data_type</replaceable> GENERATED ALWAYS AS ( <replaceable class="parameter">expression</replaceable> ) [ STORED ]
 </synopsis>
  </refsynopsisdiv>
 
- <refsect1>
+ <refsect1 id="cypher-createvlabel-description">
   <title>Description</title>
 
   <para>
-   <command>CREATE VLABEL</command> statement creates the label of vertex.
+   A vertex label is a table with an <structfield>id</structfield> of type <type>graphid</type>
+   and a <structfield>properties</structfield> column of type <type>jsonb</type>.
+   <command>CREATE VLABEL</command> creates that table, the sequence that numbers its ids, and
+   the primary key on <structfield>id</structfield>. The label inherits the graph's
+   <literal>ag_vertex</literal> unless a parent is named. It is created in the graph named by
+   <varname>graph_path</varname>, and the name cannot carry the graph.
+  </para>
+
+  <para>
+   The options are position sensitive: <literal>DISABLE INDEX</literal>, then
+   <literal>INHERITS</literal>, then <literal>WITH</literal>, then
+   <literal>TABLESPACE</literal>. Any other order is a syntax error. Cypher also creates a label
+   on demand, so <literal>CREATE (:film)</literal> against a graph with no
+   <literal>film</literal> label creates one. Use <command>CREATE VLABEL</command> when the
+   label needs options, promoted columns or a parent.
+  </para>
+
+  <para>
+   A promoted property is a real typed column beside the property map, computed from the map
+   and stored. Reads of that property are answered from the column instead of walking the JSON
+   document, and the column can carry an index over the value's own type. The three forms
+   differ only in where the value comes from. <literal>year int GENERATED</literal> mirrors the
+   property whose key is the column name. <literal>released text GENERATED
+   (releaseDate)</literal> mirrors the named key, so the column may be called something else.
+   The long form computes the column from a SQL expression over the label's own columns.
+  </para>
+
+  <para>
+   The property key comes from the generation expression, not from the column name, and is
+   recorded in <structname>ag_label_property</structname>. A query therefore keeps naming the
+   property, and the column name never appears in Cypher. Only a plain read of one key is
+   recorded, such as <literal>properties -&gt;&gt; 'year'</literal> with or without a cast.
+   Wrap that read in anything else and the result is an ordinary generated column: SQL reads
+   it, and <literal>n.<replaceable class="parameter">key</replaceable></literal> does not.
+  </para>
+
+  <para>
+   Four things a promoted property cannot be. It cannot be left ungenerated, so a bare
+   <literal><replaceable class="parameter">column_name</replaceable> <replaceable
+   class="parameter">data_type</replaceable></literal> is refused. It cannot be
+   <literal>VIRTUAL</literal>, because a virtual generated column cannot carry an index;
+   <literal>STORED</literal> is the default and may be left out. It cannot be
+   <literal>GENERATED BY DEFAULT</literal>. And it cannot be named
+   <structfield>id</structfield>, <structfield>properties</structfield>,
+   <structfield>start</structfield> or <structfield>end</structfield>, the structural columns
+   of a graph element. A key an ancestor label already promotes is refused too, unless the
+   column name is the same one.
+  </para>
+
+  <para>
+   The data type has to have an immutable text input function and cannot fix a length.
+   <type>date</type>, <type>timestamp</type>, <type>timestamptz</type> and array types are
+   refused with <literal>generation expression is not immutable</literal>, and
+   <type>varchar(n)</type> and <type>char(n)</type> because fitting a value to a length would
+   let the column and the property hold different values. Accepted are <type>smallint</type>,
+   <type>integer</type>, <type>bigint</type>, <type>numeric</type>, <type>real</type>,
+   <type>double precision</type>, <type>text</type>, <type>boolean</type>, <type>uuid</type>
+   and <type>jsonb</type>, and a type an extension provides such as <type>vector</type>.
   </para>
  </refsect1>
 
- <refsect1>
+ <refsect1 id="cypher-createvlabel-parameters">
   <title>Parameters</title>
 
   <variablelist>
@@ -50,18 +109,18 @@ where option can be:
     <term><literal>UNLOGGED</literal></term>
     <listitem>
      <para>
-      If specified, the table of vertex label is created as an unlogged table.  Refer
-      to <xref linkend="sql-createtable"/> for details.
+      Create the label's table as unlogged. Its contents are not written to the write ahead log
+      and are lost after a crash.
      </para>
     </listitem>
    </varlistentry>
-   
+
    <varlistentry>
     <term><literal>IF NOT EXISTS</literal></term>
     <listitem>
      <para>
-      Do not throw an error if a vertex label with the same name already
-      exists;
+      Issue a notice instead of an error when a label of that name already exists. Nothing is
+      created, and the existing label's options are left as they are.
      </para>
     </listitem>
    </varlistentry>
@@ -70,7 +129,19 @@ where option can be:
     <term><replaceable class="parameter">label_name</replaceable></term>
     <listitem>
      <para>
-      The name of the vertex label that to be created.
+      Name of the label to create, in the graph named by <varname>graph_path</varname>.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><replaceable class="parameter">label_prop</replaceable></term>
+    <listitem>
+     <para>
+      A property to mirror into a typed column, in one of the three forms above. Columns are
+      added after <structfield>properties</structfield>, in the order written.
+      <replaceable class="parameter">property_key</replaceable> is an identifier and is folded
+      to lower case, matching the way Cypher stores map keys.
      </para>
     </listitem>
    </varlistentry>
@@ -79,113 +150,190 @@ where option can be:
     <term><literal>DISABLE INDEX</literal></term>
     <listitem>
      <para>
-      This commmand will disable all indexes of the given graph label
+      Create the label's indexes but leave them invalid, so that loading rows does not maintain
+      them. Reads and writes still work and the planner ignores an invalid index. Rebuild with
+      <xref linkend="cypher-reindex"/>. There is no <literal>ENABLE INDEX</literal>.
      </para>
     </listitem>
    </varlistentry>
 
    <varlistentry>
-    <term><literal>INHERITS</literal></term>
+    <term><literal>INHERITS ( <replaceable class="parameter">parent_label</replaceable> [, ...] )</literal></term>
     <listitem>
      <para>
-      The optional <literal>INHERITS</literal> clause specify the names of the parent labels along with the
-      corresponding keyword after the child label name. There can be multiple parent labels
-      for inheritance.
-        <note>
-          <para>
-            If you want to check the inheritance of the label, 
-            You can use the <command>\d graph_name.label_name</command> command in the psql client.
-<programlisting>
-postgres=# CREATE VLABEL childVlabelName inherits (parentVlabelName1, parentVlabelName2);
-CREATE VLABEL
-postgres=# \d g.childVlabelName;
-                                                            Table "g.childvlabelname"
-   Column   |  Type   | Collation | Nullable |                                              Default                                   
-           
-------------+---------+-----------+----------+----------------------------------------------------------------------------------------
------------
- id         | graphid |           | not null | graphid(graph_labid('g.childvlabelname'::cstring), nextval('g.childvlabelname_id_seq'::
-regclass))
- properties | jsonb   |           | not null | jsonb_build_object()
-Indexes:
-    "childvlabelname_pkey" PRIMARY KEY, btree (id)
-Inherits: g.parentvlabelname1,
-          g.parentvlabelname2
-</programlisting>    
-          </para>
-        </note>
+      Parent labels, replacing the default parent <literal>ag_vertex</literal>. Each has to be
+      a vertex label in the same graph.
      </para>
     </listitem>
    </varlistentry>
 
    <varlistentry>
-    <term><literal>WITH ( <replaceable class="parameter">storage_parameter</replaceable> [= <replaceable class="parameter">value</replaceable>] [, ... ] )</literal></term>
+    <term><literal>WITH ( <replaceable class="parameter">storage_parameter</replaceable> [= <replaceable class="parameter">value</replaceable>] [, ...] )</literal></term>
     <listitem>
      <para>
-      This clause specifies optional storage parameters for a table or index;
-      see <xref linkend="sql-createtable-storage-parameters"/> below for more
-      information.  For backward-compatibility the <literal>WITH</literal>
-      clause for a table can also include <literal>OIDS=FALSE</literal> to
-      specify that rows of the new table should not contain OIDs (object
-      identifiers), <literal>OIDS=TRUE</literal> is not supported anymore.
+      Storage parameters for the label's table, as for <command>CREATE TABLE</command>.
      </para>
     </listitem>
    </varlistentry>
 
    <varlistentry>
-    <term><replaceable class="parameter">tablespace_name</replaceable></term>
+    <term><literal>TABLESPACE</literal> <replaceable class="parameter">tablespace_name</replaceable></term>
     <listitem>
      <para>
-      The <replaceable class="parameter">tablespace_name</replaceable> is the name
-      of the tablespace in which the new label is to be created.
-      If not specified, default_tablespace is consulted.
+      Tablespace for the label's table. Without it, <varname>default_tablespace</varname> decides.
      </para>
     </listitem>
    </varlistentry>
-
   </variablelist>
  </refsect1>
 
- <refsect1>
+ <refsect1 id="cypher-createvlabel-examples">
   <title>Examples</title>
 
   <para>
-   To create vertex label:
+   These examples do not use the graph in <xref linkend="agensgraph-example-data"/>. They
+   build a graph of their own and drop it at the end:
 <programlisting>
-CREATE VLABEL vlabelName;
+CREATE GRAPH vlabeldemo;
+SET graph_path = vlabeldemo;
+CREATE VLABEL film;
+CREATE VLABEL IF NOT EXISTS film;
+
+NOTICE:  label "film" already exists, skipping
+CREATE VLABEL
+</programlisting>
+   A label created under a parent is matched by a pattern on the parent, and
+   <function>label()</function> still reports the label the vertex was created with:
+<programlisting>
+CREATE VLABEL work;
+CREATE VLABEL documentary INHERITS (work);
+CREATE (:documentary {title: 'Free Solo'});
+MATCH (n:work) RETURN label(n) AS label, n.title AS title;
+
+     label     |    title
+---------------+-------------
+ "documentary" | "Free Solo"
+(1 row)
 </programlisting>
   </para>
 
   <para>
-   To create vertex label only if not exists in the graph:
+   Promote two properties to typed columns. Writing does not change: the value still goes into
+   the property map and the column follows it. The read is answered from the column, so it
+   arrives as the column's type rather than as <type>jsonb</type>:
 <programlisting>
-CREATE VLABEL if not exists vlabelName;
+CREATE VLABEL title (year int GENERATED, name text GENERATED);
+CREATE (:title {name: 'Arrival', year: 2016});
+MATCH (t:title) RETURN t.name AS name, t.year AS year;
+
+  name   | year
+---------+------
+ Arrival | 2016
+(1 row)
+</programlisting>
+   A value the column cannot hold is refused at write time, naming both sides:
+<programlisting>
+CREATE (:title {name: 42, year: 2016});
+
+ERROR:  property "name" holds a number
+DETAIL:  A column promoting this property holds strings.
+CONTEXT:  while computing the promoted typed columns of graph label "title"
 </programlisting>
   </para>
 
   <para>
-   To create vertex label with inherits:
+   The parenthesized form names the key, so the column may be called something else. The key
+   was written <literal>releaseDate</literal> and recorded as <literal>releasedate</literal>.
+   Cypher names the property, never the column:
 <programlisting>
-CREATE VLABEL childVlabelName inherits (parentVlabelName1, parentVlabelName2);
+CREATE VLABEL review (released text GENERATED (releaseDate));
+CREATE (:review {releaseDate: '2016-11-11'});
+MATCH (r:review) RETURN r.releasedate AS released;
+
+  released
+------------
+ 2016-11-11
+(1 row)
 </programlisting>
+   SQL reads the same value as <literal>SELECT released FROM vlabeldemo.review</literal>. The
+   long form, by contrast, is a promotion only when its expression is a plain read of one key.
+   <literal>handle text GENERATED ALWAYS AS (lower(properties -&gt;&gt; 'name')) STORED</literal>
+   computes a column SQL can read, but <literal>s.handle</literal> looks for a key
+   <literal>handle</literal> that nothing ever wrote, and finds nothing.
   </para>
 
   <para>
-   Create vlable with disable index and specifying tablespace:
+   Each of these is refused outright:
 <programlisting>
-CREATE VLABEL vlab DISABLE INDEX TABLESPACE my_tablespace;
+CREATE VLABEL bad1 (name text);
+
+ERROR:  a non-generated promoted column is not supported yet
+HINT:  Use GENERATED to mirror the property from the jsonb bag.
 </programlisting>
+<programlisting>
+CREATE VLABEL bad2 (name text GENERATED ALWAYS AS (properties -&gt;&gt; 'name') VIRTUAL);
+
+ERROR:  promoted generated properties must be STORED
+LINE 1: ...e text GENERATED ALWAYS AS (properties -&gt;&gt; 'name') VIRTUAL);
+                                                              ^
+HINT:  A VIRTUAL generated column cannot carry an index.
+</programlisting>
+   <literal>DROP GRAPH vlabeldemo CASCADE</literal> drops the graph the examples built.
   </para>
  </refsect1>
 
- <refsect1>
-  <title>See Also</title>
+ <refsect1 id="cypher-createvlabel-notes">
+  <title>Notes</title>
 
+  <para>
+   <application>pg_dump</application> writes a label with an explicit label id, as
+   <literal>CREATE VLABEL ONLY <replaceable class="parameter">label_name</replaceable> (
+   <replaceable class="parameter">label_id</replaceable> )</literal>, so that a restore keeps
+   the ids a dumped graph handed out. That form creates no parent, no id default and no
+   primary key. Write it only when reproducing a dump.
+  </para>
+
+  <para>
+   <varname>enable_property_promotion</varname> decides whether a Cypher property read is
+   answered from a promoted column. It is on by default, and turning it off can change results
+   as well as plans, because a column compares and orders values with its own type's rules
+   while the property map uses <type>jsonb</type> ordering. See
+   <xref linkend="agensgraph-config"/>.
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-createvlabel-compatibility">
+  <title>Compatibility</title>
+
+  <para>
+   ISO/IEC 39075:2024 has no label DDL. Its schema mechanism is the graph type of clause
+   12.6, which declares node types and edge types for a whole graph at once. AgensGraph
+   declares labels one at a time, and its graphs are open: a label puts no restriction on
+   which properties its vertices carry.
+  </para>
+
+  <para>
+   <command>CREATE VLABEL</command> corresponds to <command>CREATE TABLE</command>.
+   <literal>UNLOGGED</literal>, <literal>IF NOT EXISTS</literal>, <literal>INHERITS</literal>,
+   <literal>WITH</literal> and <literal>TABLESPACE</literal> mean there what they mean here,
+   and each promoted property becomes a <literal>GENERATED ALWAYS AS ... STORED</literal>
+   column. The rest has no counterpart: a fixed column list, a registration in
+   <structname>ag_label</structname> and <structname>ag_label_property</structname>, an
+   automatic parent, and a fixed option order. Going the other way, a label's table cannot be
+   reshaped with <command>ALTER TABLE</command> unless <varname>enable_graph_ddl</varname> is
+   on.
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-createvlabel-see-also">
+  <title>See Also</title>
   <simplelist type="inline">
+   <member><xref linkend="cypher-createelabel"/></member>
    <member><xref linkend="cypher-altervlabel"/></member>
    <member><xref linkend="cypher-dropvlabel"/></member>
-   <member><xref linkend="sql-createtable"/></member>
+   <member><xref linkend="cypher-createpropertyindex"/></member>
+   <member><xref linkend="cypher-reindex"/></member>
+   <member><xref linkend="cypher-creategraph"/></member>
   </simplelist>
  </refsect1>
-
 </refentry>

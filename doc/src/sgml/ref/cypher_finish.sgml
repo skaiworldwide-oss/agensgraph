@@ -1,0 +1,203 @@
+<!--
+doc/src/sgml/ref/cypher_finish.sgml
+PostgreSQL documentation
+-->
+
+<refentry id="cypher-finish">
+ <indexterm zone="cypher-finish">
+  <primary>FINISH</primary>
+ </indexterm>
+
+ <refmeta>
+  <refentrytitle>FINISH</refentrytitle>
+  <manvolnum>7</manvolnum>
+  <refmiscinfo>Cypher - Language Statements</refmiscinfo>
+ </refmeta>
+
+ <refnamediv>
+  <refname>FINISH</refname>
+  <refpurpose>end a query without projecting a result</refpurpose>
+ </refnamediv>
+
+ <refsynopsisdiv>
+<synopsis>
+FINISH
+</synopsis>
+ </refsynopsisdiv>
+
+ <refsect1 id="cypher-finish-description">
+  <title>Description</title>
+
+  <para>
+   Every query has to end with <command>RETURN</command>, <command>FINISH</command> or a write
+   clause. <command>FINISH</command> is the ending that produces no result. It takes no
+   arguments, projects no columns and closes the statement.
+  </para>
+
+  <para>
+   <command>FINISH</command> has to be the last clause. Anything after it raises
+   <literal>FINISH must be at the end of the query</literal>.
+  </para>
+
+  <para>
+   After a read, <command>FINISH</command> discards the rows. The planner applies it as
+   <literal>LIMIT 0</literal>, so the scan is opened but no row is fetched. After a write, the
+   write still happens. <command>FINISH</command> only suppresses the projection.
+  </para>
+
+  <para>
+   A query that ends in <command>FINISH</command> returns an empty result, with no columns and
+   no rows. <application>psql</application> prints it as a <literal>--</literal> header
+   followed by <literal>(0 rows)</literal>, and <command>\gdesc</command> reports
+   <literal>The command has no result, or the result has no columns.</literal> A write that
+   ends in <command>FINISH</command> reports its ordinary command tag instead of a result, such
+   as <literal>UPDATE 1</literal> for one created vertex.
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-finish-parameters">
+  <title>Parameters</title>
+
+  <para>
+   <command>FINISH</command> takes no parameters.
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-finish-examples">
+  <title>Examples</title>
+
+  <para>
+   These examples use the graph in <xref linkend="agensgraph-example-data"/>.
+  </para>
+
+  <para>
+   Run a read for its plan and nothing else. There is no Cypher spelling of this. A Cypher
+   query with no <command>RETURN</command> and no write clause is rejected:
+<programlisting>
+MATCH (m:movie) FINISH;
+
+--
+(0 rows)
+</programlisting>
+  </para>
+
+  <para>
+   Perform a write without reading the result back. This is the form to reach for when the
+   created elements should not be shipped to the client:
+<programlisting>
+CREATE (:movie {title: 'Tenet', year: 2020, genre: 'Action'}) FINISH;
+
+UPDATE 1
+</programlisting>
+  </para>
+
+  <para>
+   The vertex is there:
+<programlisting>
+MATCH (m:movie {title: 'Tenet'}) RETURN m.title AS film, m.year AS year;
+
+  film   | year
+---------+------
+ "Tenet" | 2020
+(1 row)
+</programlisting>
+  </para>
+
+  <para>
+   The plan of a read shows the <literal>LIMIT 0</literal> the clause compiles to, above the
+   scan it never draws from:
+<programlisting>
+EXPLAIN (COSTS OFF) MATCH (m:movie) FINISH;
+
+        QUERY PLAN
+---------------------------
+ Limit
+   -&gt;  Seq Scan on movie m
+(2 rows)
+</programlisting>
+  </para>
+
+  <para>
+   A write plan keeps its write node, because the write is not optional:
+<programlisting>
+EXPLAIN (COSTS OFF) CREATE (:movie {title: 'Tenet'}) FINISH;
+
+  QUERY PLAN
+--------------
+ Graph Create
+   -&gt;  Result
+(2 rows)
+</programlisting>
+  </para>
+
+  <para>
+   <command>ORDER BY</command>, <command>SKIP</command>, <literal>OFFSET</literal> and
+   <command>LIMIT</command> are clauses in their own right, but none of them can end a query.
+   <command>FINISH</command> closes a pipeline that ends on one:
+<programlisting>
+MATCH (m:movie) ORDER BY m.year LIMIT 3 FINISH;
+
+--
+(0 rows)
+</programlisting>
+   Without the <command>FINISH</command> the same query raises
+   <literal>Cypher query must end with RETURN, FINISH or update clause</literal>.
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-finish-notes">
+  <title>Notes</title>
+
+  <para>
+   <command>FINISH</command> is not accepted where a result is required. A
+   <literal>CALL { }</literal> body has to project something, so a body that ends in
+   <command>FINISH</command> raises
+   <literal>CALL subquery must RETURN at least one variable</literal>. A query that ends in
+   <command>FINISH</command> cannot be the left operand of <xref linkend="cypher-next"/>
+   either. That raises <literal>FINISH cannot be followed by NEXT</literal>.
+  </para>
+
+  <para>
+   <literal>finish</literal> became a reserved keyword in 2.18. It is still accepted unquoted
+   as a label name in a pattern, as in <literal>MATCH (n:finish)</literal>, which is what an
+   upgraded database needs. It is not accepted as a variable name, as a
+   <command>CREATE VLABEL</command> name or as a SQL identifier. Write
+   <literal>"finish"</literal> in those places, or rename. Property keys and
+   <command>RETURN</command> aliases are not affected.
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-finish-compatibility">
+  <title>Compatibility</title>
+
+  <para>
+   <command>FINISH</command> implements the <literal>FINISH</literal> form of the GQL primitive
+   result statement of ISO/IEC 39075:2024, section 14.10. The standard gives it the empty type
+   and sets the execution outcome to a successful outcome with an omitted result, which is what
+   the empty result above represents. It is supported as the terminal statement of a read query
+   and of a data modifying query, where section 13.1 makes it implicit anyway. It is not
+   supported as a branch of a set operation, which the standard also forbids in section 14.2,
+   syntax rule 5. AgensGraph rejects that as
+   <literal>each UNION query must have the same number of columns</literal>.
+  </para>
+
+  <para>
+   openCypher has no <command>FINISH</command>. There, a read query has to end with
+   <command>RETURN</command>, and a write query may end with its write clause. AgensGraph
+   accepts that second form too, so <command>FINISH</command> adds the read case rather than
+   replacing anything.
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-finish-see-also">
+  <title>See Also</title>
+  <simplelist type="inline">
+   <member><xref linkend="cypher-return"/></member>
+   <member><xref linkend="cypher-orderby"/></member>
+   <member><xref linkend="cypher-skip"/></member>
+   <member><xref linkend="cypher-limit"/></member>
+   <member><xref linkend="cypher-next"/></member>
+   <member><xref linkend="cypher-insert"/></member>
+  </simplelist>
+ </refsect1>
+</refentry>

@@ -1,0 +1,228 @@
+<!--
+doc/src/sgml/ref/cypher_next.sgml
+PostgreSQL documentation
+-->
+
+<refentry id="cypher-next">
+ <indexterm zone="cypher-next">
+  <primary>NEXT</primary>
+ </indexterm>
+
+ <refmeta>
+  <refentrytitle>NEXT</refentrytitle>
+  <manvolnum>7</manvolnum>
+  <refmiscinfo>Cypher - Language Statements</refmiscinfo>
+ </refmeta>
+
+ <refnamediv>
+  <refname>NEXT</refname>
+  <refpurpose>chain two queries end to end</refpurpose>
+ </refnamediv>
+
+ <refsynopsisdiv>
+<synopsis>
+<replaceable class="parameter">query</replaceable> NEXT <replaceable class="parameter">query</replaceable> [ NEXT <replaceable class="parameter">query</replaceable> ] ...
+</synopsis>
+ </refsynopsisdiv>
+
+ <refsect1 id="cypher-next-description">
+  <title>Description</title>
+
+  <para>
+   <command>NEXT</command> turns the result table of the query on its left into the driving
+   table of the query on its right. It does at the boundary between two whole queries what
+   <command>WITH</command> does between clauses inside one query.
+  </para>
+
+  <para>
+   The query to the left of <command>NEXT</command> has to end with
+   <command>RETURN</command>. The boundary resets scope: only the columns that
+   <command>RETURN</command> produced are visible on the right, and every other variable is
+   gone. Columns cross the boundary in their own types, so a vertex is still a vertex, an edge
+   is still an edge, and a path is still a path.
+  </para>
+
+  <para>
+   <command>NEXT</command> is left associative, so <literal>A NEXT B NEXT C</literal> composes
+   as <literal>(A NEXT B) NEXT C</literal>. A <xref linkend="cypher-union"/>,
+   <literal>INTERSECT</literal> or <literal>EXCEPT</literal> composite may stand on either
+   side.
+  </para>
+
+  <para>
+   <command>NEXT</command> is accepted at the start of a statement and inside
+   <command>EXPLAIN</command> and <command>PREPARE</command>. It is not accepted inside a
+   subquery, in either a <literal>CALL { }</literal> body or a subquery value expression.
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-next-parameters">
+  <title>Parameters</title>
+
+  <variablelist>
+   <varlistentry>
+    <term><replaceable class="parameter">query</replaceable></term>
+    <listitem>
+     <para>
+      A complete query. The one to the left of <command>NEXT</command> has to end with
+      <command>RETURN</command>, and every column it returns has to be named. An unaliased
+      expression raises <literal>expression in WITH must be aliased (use AS)</literal>.
+     </para>
+     <para>
+      The query to the right is a fresh one. It may begin with any clause that can open a
+      query: <command>MATCH</command>, <command>OPTIONAL MATCH</command>,
+      <command>CREATE</command>, <command>INSERT</command>, <command>MERGE</command>,
+      <command>LOAD FROM</command>, <command>UNWIND</command>, <command>FOR</command>,
+      <command>CALL</command>, <command>LET</command>, <command>RETURN</command> or
+      <command>FINISH</command>. It may also begin with a clause that acts on the carried
+      table: <command>WITH</command>, <command>FILTER</command>,
+      <command>ORDER BY</command>, <command>SKIP</command>, <literal>OFFSET</literal> or
+      <command>LIMIT</command>. It ends the way any query ends, with
+      <command>RETURN</command>, <command>FINISH</command> or a write clause.
+     </para>
+    </listitem>
+   </varlistentry>
+  </variablelist>
+ </refsect1>
+
+ <refsect1 id="cypher-next-examples">
+  <title>Examples</title>
+
+  <para>
+   These examples use the graph in <xref linkend="agensgraph-example-data"/>.
+  </para>
+
+  <para>
+   Carry the films one director made into a second query that finds their casts:
+<programlisting>
+MATCH (p:person {name: 'Christopher Nolan'})-[:directed]-&gt;(m:movie)
+RETURN m
+NEXT
+MATCH (a:person)-[:acted_in]-&gt;(m)
+RETURN m.title AS film, a.name AS actor ORDER BY film;
+
+      film      |         actor
+----------------+-----------------------
+ "Inception"    | "Leonardo DiCaprio"
+ "Interstellar" | "Matthew McConaughey"
+(2 rows)
+</programlisting>
+  </para>
+
+  <para>
+   An intermediate <command>WITH</command> composes the same two steps inside one query and
+   plans identically. <literal>m</literal> crosses the boundary as a vertex, so the second
+   query traverses from it again.
+  </para>
+
+  <para>
+   <command>FILTER</command> cannot open a standalone query, but it can open the query after
+   <command>NEXT</command>. That gives an aggregate the equivalent of SQL's
+   <literal>HAVING</literal> without an extra <command>WITH</command>:
+<programlisting>
+MATCH (p:person)-[:acted_in]-&gt;(m:movie)
+RETURN p.name AS actor, count(m) AS films
+NEXT
+FILTER films &gt; 2
+RETURN actor, films ORDER BY actor;
+
+          actor          | films
+-------------------------+-------
+ "Arnold Schwarzenegger" | 3
+ "Keanu Reeves"          | 4
+(2 rows)
+</programlisting>
+  </para>
+
+  <para>
+   Each <command>NEXT</command> is another boundary, evaluated left to right:
+<programlisting>
+MATCH (m:movie) RETURN m.genre AS genre
+NEXT
+RETURN DISTINCT genre AS g
+NEXT
+RETURN count(g) AS genres;
+
+ genres
+--------
+ 3
+(1 row)
+</programlisting>
+  </para>
+
+  <para>
+   Only returned columns survive the boundary, so a reference to anything else fails at parse
+   time:
+<programlisting>
+MATCH (p:person {name: 'Christopher Nolan'})-[:directed]-&gt;(m:movie)
+RETURN m
+NEXT
+RETURN p.name;
+
+ERROR:  variable does not exist
+LINE 4: RETURN p.name;
+               ^
+</programlisting>
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-next-notes">
+  <title>Notes</title>
+
+  <para>
+   <command>NEXT</command> costs nothing at run time. The boundary is built by rewriting the
+   left query's <command>RETURN</command> into the <command>WITH</command> that the clause
+   pipeline already places between clause groups.
+  </para>
+
+  <para>
+   Two guards report misuse directly rather than as a syntax error. A left query that does not
+   end with <command>RETURN</command> raises
+   <literal>a query statement before NEXT must end with RETURN</literal>. A left query ending
+   in <command>FINISH</command> raises <literal>FINISH cannot be followed by NEXT</literal>.
+  </para>
+
+  <para>
+   The last query in a chain still has to end the statement properly.
+   <command>ORDER BY</command>, <command>SKIP</command>, <literal>OFFSET</literal> and
+   <command>LIMIT</command> are clauses in their own right, but none of them can terminate a
+   query. A chain that stops on one raises
+   <literal>Cypher query must end with RETURN, FINISH or update clause</literal>. Follow it
+   with <command>RETURN</command> or <command>FINISH</command>.
+  </para>
+
+  <para>
+   <literal>next</literal> is an unreserved keyword, so it stays available as a variable, a
+   label or a property name.
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-next-compatibility">
+  <title>Compatibility</title>
+
+  <para>
+   <command>NEXT</command> implements the GQL next statement of the procedure body, ISO/IEC
+   39075:2024 clause 9.2, feature GQ20. Chaining query statements, left associative
+   multi chaining, the scope reset at the boundary and a set operation composite on either
+   side all work as the standard describes. The optional <literal>YIELD</literal> clause that
+   the standard allows between <command>NEXT</command> and the following statement is not
+   accepted and raises a syntax error. Project and rename in the preceding
+   <command>RETURN</command> instead.
+  </para>
+
+  <para>
+   openCypher has no <command>NEXT</command>. Composition there is always the
+   <command>WITH</command> form, which AgensGraph accepts unchanged.
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-next-see-also">
+  <title>See Also</title>
+  <simplelist type="inline">
+   <member><xref linkend="cypher-with"/></member>
+   <member><xref linkend="cypher-filter"/></member>
+   <member><xref linkend="cypher-return"/></member>
+   <member><xref linkend="cypher-union"/></member>
+  </simplelist>
+ </refsect1>
+</refentry>
