@@ -75,6 +75,10 @@ my $graph = q{
 	ALTER TABLE g.typed ADD CONSTRAINT typed_age_chk CHECK (age IS NULL OR age >= 0);
 	-- a named NOT NULL on that column names two identifiers in one statement
 	ALTER TABLE g.typed ADD CONSTRAINT typed_age_nn NOT NULL age;
+	-- an exclusion constraint Cypher cannot spell, over a column rather than a
+	-- property: written as Cypher it would name a property and mean something else
+	CREATE VLABEL notcypher;
+	ALTER TABLE g.notcypher ADD CONSTRAINT notcypher_id_ex EXCLUDE USING btree (id WITH =);
 	-- one left NOT VALID, which reaches the dump by another path
 	CREATE VLABEL nv;
 	ALTER TABLE g.nv ADD CONSTRAINT nv_chk CHECK ((properties->>'k')::int > 0) NOT VALID;
@@ -99,6 +103,7 @@ my $unique_query = q{
 	 WHERE c.contype = 'x' AND n.nspname = 'g'};
 
 my $want_unique = 'Mixed|Mixed_uq|Mixed_uq erel|erel_uq|erel_uq '
+  . 'notcypher|notcypher_id_ex|notcypher_id_ex '
   . 'order|ord_uq|ord_uq person|person_ssn_uq|person_ssn_uq '
   . 'two|two_unique_constraint|two_unique_constraint '
   . 'two|two_unique_constraint1|two_unique_constraint1';
@@ -114,10 +119,25 @@ my $check_query = q{
 	  JOIN pg_namespace n ON n.oid = t.relnamespace
 	 WHERE n.nspname = 'g' AND c.contype = 'c'};
 
+# What each exclusion constraint is, as opposed to merely what it is called: one
+# written as Cypher when it cannot be would restore as a different constraint
+# under the same name.
+my $exclusion_defs = q{
+	SELECT string_agg(t.relname || ' ' || pg_catalog.pg_get_constraintdef(c.oid), ' | '
+	                  ORDER BY (t.relname || c.conname) COLLATE "C")
+	  FROM pg_constraint c
+	  JOIN pg_class t ON t.oid = c.conrelid
+	  JOIN pg_namespace n ON n.oid = t.relnamespace
+	 WHERE n.nspname = 'g' AND c.contype = 'x'};
+
 my $want_check = 'acct:acct_age_chk:valid:local cyp:cyp_named:valid:local '
   . 'cyp:cyp_pos:valid:local erel:erel_chk:valid:local '
   . 'kid:par_chk:valid:inherited nv:nv_chk:notvalid:local '
   . 'par:par_chk:valid:local typed:typed_age_chk:valid:local';
+
+my $want_defs = $node->safe_psql('consrc', $exclusion_defs);
+like($want_defs, qr/\Qnotcypher EXCLUDE USING btree (id WITH =)\E/,
+	'the source graph holds an exclusion constraint Cypher cannot spell');
 
 is($node->safe_psql('consrc', $unique_query), $want_unique,
 	'the source graph holds the unique constraints the test expects');
@@ -170,6 +190,8 @@ is($node->safe_psql('condst', $unique_query), $want_unique,
 	'every unique constraint and its index come back under the same name');
 is($node->safe_psql('condst', $check_query), $want_check,
 	'and every CHECK, with its validity and inheritance');
+is($node->safe_psql('condst', $exclusion_defs), $want_defs,
+	'and every exclusion constraint is the same constraint, not just the same name');
 
 # Re-dumping has to reproduce the same dump, so this runs before anything
 # writes to the restored database: a refused write still consumes an id.
@@ -215,6 +237,8 @@ is($dst->safe_psql('conbu', $unique_query), $want_unique,
 	'the binary-upgrade restore keeps every constraint and index name');
 is($dst->safe_psql('conbu', $check_query), $want_check,
 	'and every CHECK');
+is($dst->safe_psql('conbu', $exclusion_defs), $want_defs,
+	'and every exclusion constraint is unchanged');
 constraints_enforced($dst, 'conbu', 'binary upgrade');
 $dst->stop;
 

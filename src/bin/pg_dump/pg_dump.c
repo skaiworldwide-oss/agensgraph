@@ -7778,9 +7778,36 @@ getIndexes(Archive *fout, TableInfo tblinfo[], int numTables)
 				i_indstatvals;
 
 	int			i_ispropidx;
+	int			i_isassertunique;
 	char		sql_is_prop_idx[] = "ag_label.oid IS NOT NULL "
 		"AND i.indisexclusion = false "
 		"AND i.indexprs IS NOT NULL";
+
+	/*
+	 * A label's unique constraint is an exclusion constraint of one shape:
+	 * ASSERT expr IS UNIQUE builds one btree column over a property, compared
+	 * with =, and can say nothing else.  Any other exclusion constraint on a
+	 * label has no Cypher spelling, so it is dumped as the SQL that made it.
+	 * The test is made here rather than by the server, because pg_upgrade
+	 * dumps the old cluster with the new pg_dump.
+	 */
+	char		sql_is_assert_unique[] = "ag_label.oid IS NOT NULL "
+		"AND c.contype = 'x' "
+		"AND i.indnatts = 1 "
+		"AND i.indexprs IS NOT NULL "
+		"AND i.indpred IS NULL "
+		"AND i.indcollation[0] = 0 "
+		"AND i.indoption[0] = 0 "
+		"AND i.indclass[0] IN (SELECT oid FROM pg_catalog.pg_opclass "
+		"                       WHERE opcdefault) "
+		"AND t.relam = (SELECT oid FROM pg_catalog.pg_am "
+		"                WHERE amname = 'btree') "
+		"AND t.reloptions IS NULL "
+		"AND NOT c.condeferrable "
+		"AND c.convalidated "
+		"AND c.conexclop <@ (SELECT pg_catalog.array_agg(oid) "
+		"                      FROM pg_catalog.pg_operator "
+		"                     WHERE oprname = '=')";
 
 	/*
 	 * We want to perform just one query against pg_index.  However, we
@@ -7830,9 +7857,10 @@ getIndexes(Archive *fout, TableInfo tblinfo[], int numTables)
 					  "c.condeferrable, c.condeferred, "
 					  "c.tableoid AS contableoid, "
 					  "c.oid AS conoid, "
-					  "(CASE WHEN ag_label.oid IS NOT NULL AND c.contype = 'x' THEN ag_get_graphconstraintdef(c.oid)"
+					  "(CASE WHEN %s THEN ag_get_graphconstraintdef(c.oid)"
 					  "		 ELSE pg_catalog.pg_get_constraintdef(c.oid, false)"
 					  "END) AS condef, "
+					  "(%s) AS isassertunique, "
 					  "CASE WHEN i.indexprs IS NOT NULL THEN "
 					  "(SELECT pg_catalog.array_agg(attname ORDER BY attnum)"
 					  "  FROM pg_catalog.pg_attribute "
@@ -7840,7 +7868,8 @@ getIndexes(Archive *fout, TableInfo tblinfo[], int numTables)
 					  "ELSE NULL END AS indattnames, "
 					  "(SELECT spcname FROM pg_catalog.pg_tablespace s WHERE s.oid = t.reltablespace) AS tablespace, "
 					  "t.reloptions AS indreloptions, ",
-					  sql_is_prop_idx);
+					  sql_is_prop_idx, sql_is_assert_unique,
+					  sql_is_assert_unique);
 
 
 	if (fout->remoteVersion >= 90400)
@@ -7968,6 +7997,7 @@ getIndexes(Archive *fout, TableInfo tblinfo[], int numTables)
 	i_indstatcols = PQfnumber(res, "indstatcols");
 	i_indstatvals = PQfnumber(res, "indstatvals");
 	i_ispropidx = PQfnumber(res, "ispropidx");
+	i_isassertunique = PQfnumber(res, "isassertunique");
 
 	indxinfo = (IndxInfo *) pg_malloc(ntups * sizeof(IndxInfo));
 
@@ -8040,6 +8070,8 @@ getIndexes(Archive *fout, TableInfo tblinfo[], int numTables)
 				indxinfo[j].ispropidx = false;
 			else
 				indxinfo[j].ispropidx = *(PQgetvalue(res, j, i_ispropidx)) == 't';
+			indxinfo[j].isassertunique =
+				*(PQgetvalue(res, j, i_isassertunique)) == 't';
 
 			indxinfo[j].indkeys = (Oid *) pg_malloc(indxinfo[j].indnattrs * sizeof(Oid));
 			parseOidArray(PQgetvalue(res, j, i_indkey),
@@ -18499,8 +18531,7 @@ dumpConstraint(Archive *fout, const ConstraintInfo *coninfo)
 		 * Also, it would be better to implement a special Cypher syntax so
 		 * that it can be used in ALTER TABLE.
 		 */
-		if ((tbinfo->ag_labkind > 0 && coninfo->contype == 'x') ||
-			indxinfo->ispropidx)
+		if (indxinfo->isassertunique || indxinfo->ispropidx)
 		{
 			setGraphPath(q, tbinfo->dobj.namespace);
 

@@ -3906,6 +3906,56 @@ my %tests = (
 
 	# Both names are quoted, and each takes its own call: fmtId hands back one
 	# shared buffer, so asking for two at once loses one of them.
+	# Only the one shape ASSERT expr IS UNIQUE builds has a Cypher spelling.
+	# Any other exclusion constraint on a label is dumped as the SQL that made
+	# it, so it restores as the constraint it is.
+	'ADD CONSTRAINT ... EXCLUDE with an operator other than =' => {
+		create_order => 144,
+		create_sql => 'SET graph_path = dump_test_graph;
+					   CREATE VLABEL dtg_ov;
+					   ALTER TABLE dump_test_graph.dtg_ov ADD CONSTRAINT dtg_ov_ex
+					       EXCLUDE USING gist ((int4range((properties->>\'a\')::int,
+					                                      (properties->>\'b\')::int)) WITH &&);',
+		regexp => qr/^
+			\QALTER TABLE ONLY dump_test_graph.dtg_ov\E\n
+			\s+\QADD CONSTRAINT dtg_ov_ex EXCLUDE USING gist (int4range(((properties ->> 'a'::text))::integer, ((properties ->> 'b'::text))::integer) WITH &&);\E
+			/xm,
+		like => { %full_runs, section_post_data => 1, },
+	},
+
+	'CREATE CONSTRAINT is not used for an exclusion Cypher cannot spell' => {
+		regexp => qr/^\QCREATE CONSTRAINT dtg_ov_ex ON dtg_ov\E/m,
+		like => {},
+	},
+
+	'ADD CONSTRAINT ... EXCLUDE that is deferrable' => {
+		create_order => 145,
+		create_sql => 'SET graph_path = dump_test_graph;
+					   CREATE VLABEL dtg_defr;
+					   ALTER TABLE dump_test_graph.dtg_defr ADD CONSTRAINT dtg_defr_ex
+					       EXCLUDE USING btree (((properties->>\'k\')) WITH =) DEFERRABLE;',
+		regexp => qr/^
+			\QALTER TABLE ONLY dump_test_graph.dtg_defr\E\n
+			\s+\QADD CONSTRAINT dtg_defr_ex EXCLUDE USING btree (((properties ->> 'k'::text)) WITH =) DEFERRABLE;\E
+			/xm,
+		like => { %full_runs, section_post_data => 1, },
+	},
+
+	# on a column rather than a property: Cypher would read the name as a
+	# property and build a different constraint
+	'ADD CONSTRAINT ... EXCLUDE on a label column' => {
+		create_order => 146,
+		create_sql => 'SET graph_path = dump_test_graph;
+					   CREATE VLABEL dtg_idcol;
+					   ALTER TABLE dump_test_graph.dtg_idcol ADD CONSTRAINT dtg_idcol_ex
+					       EXCLUDE USING btree (id WITH =);',
+		regexp => qr/^
+			\QALTER TABLE ONLY dump_test_graph.dtg_idcol\E\n
+			\s+\QADD CONSTRAINT dtg_idcol_ex EXCLUDE USING btree (id WITH =);\E
+			/xm,
+		like => { %full_runs, section_post_data => 1, },
+	},
+
 	'ADD CONSTRAINT ... NOT NULL on a promoted column' => {
 		create_order => 142,
 		create_sql => 'SET graph_path = dump_test_graph;

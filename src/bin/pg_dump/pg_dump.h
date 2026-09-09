@@ -442,6 +442,7 @@ typedef struct _indxInfo
 	/* if there is an associated constraint object, its dumpId: */
 	DumpId		indexconstraint;
 	bool		ispropidx;		/* Is it cypher property index? */
+	bool		isassertunique; /* Is it what ASSERT ... IS UNIQUE makes? */
 } IndxInfo;
 
 typedef struct _indexAttachInfo
