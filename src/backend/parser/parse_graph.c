@@ -399,6 +399,7 @@ static bool find_target_label_walker(Node *node,
 
 /* common */
 static ParseNamespaceItem *addUnitRowNSItem(ParseState *pstate);
+static List *makeForClauseTargetList(Query *subqry, CypherForClause *detail);
 static bool labelExist(ParseState *pstate, char *labname, int labloc,
 					   char labkind, bool throw);
 #define vertexLabelExist(pstate, labname, labloc) \
@@ -2116,8 +2117,10 @@ transformCypherUnwindClause(ParseState *pstate, CypherClause *clause)
  *		The array expression is unnested as a LATERAL set-returning function
  *		joined with the working table, optionally exposing each element's
  *		0-based position via WITH OFFSET.  The expression is wrapped in a
- *		CypherGenericExpr so it is transformed in Cypher context (yielding a
- *		jsonb array) inside the SQL subquery.
+ *		CypherGenericExpr so it is transformed in Cypher context (a jsonb list,
+ *		or a native list of nodes, relationships or paths) inside the SQL
+ *		subquery; the subquery's output is then built from the function's
+ *		columns by makeForClauseTargetList().
  */
 Query *
 transformCypherForClause(ParseState *pstate, CypherClause *clause)
@@ -2129,7 +2132,6 @@ transformCypherForClause(ParseState *pstate, CypherClause *clause)
 	CypherGenericExpr *cge;
 	RangeFunction *rf;
 	SelectStmt *subquery;
-	List	   *colnames;
 	List	   *targetList;
 	ParseNamespaceItem *nsitem;
 	bool		with_offset = (detail->offset != NULL);
@@ -2187,14 +2189,12 @@ transformCypherForClause(ParseState *pstate, CypherClause *clause)
 	cge = makeNode(CypherGenericExpr);
 	cge->expr = source;
 
-	colnames = list_make1(detail->resname);
-	targetList = list_make1(makeResTarget(makeColumnRef(list_make1(detail->resname)),
+	/* SELECT * [, ordinality - 1 AS offset] FROM unnest(array) [WITH ORDINALITY] */
+	targetList = list_make1(makeResTarget(makeColumnRef(list_make1(makeNode(A_Star))),
 										  NULL));
 	if (with_offset)
 	{
 		Node	   *zero_based;
-
-		colnames = lappend(colnames, detail->offset);
 
 		/*
 		 * Per the GQL standard the offset is 0-based, but the ordinality
@@ -2202,14 +2202,14 @@ transformCypherForClause(ParseState *pstate, CypherClause *clause)
 		 * - 1) under the offset variable's name.
 		 */
 		zero_based = (Node *) makeSimpleA_Expr(AEXPR_OP, "-",
-											   makeColumnRef(list_make1(detail->offset)),
+											   makeColumnRef(list_make1(makeString("ordinality"))),
 											   makeIntConst(1, -1), -1);
 		targetList = lappend(targetList,
 							 makeResTarget(zero_based, strVal(detail->offset)));
 	}
 
 	rf = makeRangeFunction(list_make1(makeString("unnest")), (Node *) cge,
-						   makeAliasNoDup(AGENS_DEFAULT_PREFIX "for", colnames),
+						   makeAliasNoDup(AGENS_DEFAULT_PREFIX "for", NIL),
 						   with_offset);
 
 	subquery = makeNode(SelectStmt);
@@ -2226,6 +2226,8 @@ transformCypherForClause(ParseState *pstate, CypherClause *clause)
 	pstate->p_lateral_active = (clause->prev != NULL);
 
 	subqry = parse_sub_analyze((Node *) subquery, pstate, NULL, false, true);
+
+	subqry->targetList = makeForClauseTargetList(subqry, detail);
 
 	nsitem = addRangeTableEntryForSubquery(pstate, subqry,
 										   makeAliasNoDup(CYPHER_FOR_ALIAS, NIL),
@@ -2249,6 +2251,60 @@ transformCypherForClause(ParseState *pstate, CypherClause *clause)
 	assign_query_collations(pstate, qry);
 
 	return qry;
+}
+
+/*
+ * makeForClauseTargetList
+ *		Build the output of a FOR clause's unnest subquery: the element under
+ *		the FOR variable's name, and the offset when one was asked for.
+ *
+ *		subqry is the analyzed SELECT * over the function scan.  A function
+ *		returning a row type is expanded into one column per field there, so
+ *		the element is put back together as a row of that type; a scalar
+ *		element is its single column.  The offset expression, when present,
+ *		is the last entry already.
+ */
+static List *
+makeForClauseTargetList(Query *subqry, CypherForClause *detail)
+{
+	RangeTblEntry *rte = rt_fetch(1, subqry->rtable);
+	RangeTblFunction *rtf = linitial(rte->functions);
+	Oid			elemtype = exprType(rtf->funcexpr);
+	Node	   *elem;
+	List	   *result;
+
+	Assert(rte->rtekind == RTE_FUNCTION);
+
+	if (type_is_rowtype(elemtype))
+	{
+		List	   *fields = NIL;
+		int			i;
+
+		for (i = 0; i < rtf->funccolcount; i++)
+		{
+			TargetEntry *te = list_nth(subqry->targetList, i);
+
+			fields = lappend(fields, te->expr);
+		}
+		elem = makeTypedRowExpr(fields, elemtype, exprLocation(detail->expr));
+	}
+	else
+	{
+		Assert(rtf->funccolcount == 1);
+		elem = (Node *) ((TargetEntry *) linitial(subqry->targetList))->expr;
+	}
+
+	result = list_make1(makeTargetEntry((Expr *) elem, 1,
+										strVal(detail->resname), false));
+	if (detail->offset != NULL)
+	{
+		TargetEntry *offset = llast(subqry->targetList);
+
+		result = lappend(result, makeTargetEntry(offset->expr, 2,
+												 offset->resname, false));
+	}
+
+	return result;
 }
 
 /*
