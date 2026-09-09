@@ -1130,13 +1130,14 @@ transformCypherProjection(ParseState *pstate, CypherClause *clause)
 			return prev_nsitem->p_rte->subquery;
 
 		/*
-		 * Otherwise the query is read-only: keep the read for planning but
-		 * return nothing by applying LIMIT 0.  FINISH has no projection
-		 * items, so the target list is left empty.
+		 * Otherwise keep the read for planning but return nothing by applying
+		 * LIMIT 0.  FINISH has no projection items, so the target list is left
+		 * empty.  A write further down the query still happens: a write clause
+		 * that is not the last one runs to completion at ExecutorFinish,
+		 * however many of its rows the plan above it reads.
 		 */
-		if (!pstate->p_hasGraphwriteClause)
-			qry->limitCount = transformCypherLimit(pstate, makeIntConst(0, -1),
-												   EXPR_KIND_LIMIT, "LIMIT");
+		qry->limitCount = transformCypherLimit(pstate, makeIntConst(0, -1),
+											   EXPR_KIND_LIMIT, "LIMIT");
 	}
 	else if (detail->where != NULL)
 	{
