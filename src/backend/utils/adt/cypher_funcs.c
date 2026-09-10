@@ -79,6 +79,7 @@ static bool float8_to_int64(float8 f, int64 *result);
 static bool conv_to_text(Datum d, Oid typeid, Datum *result);
 static bool conv_to_int8(Datum d, Oid typeid, Datum *result);
 static bool conv_to_float8(Datum d, Oid typeid, Datum *result);
+static bool conv_to_bool(Datum d, Oid typeid, Datum *result);
 static Datum convert_array_list(FunctionCallInfo fcinfo, ElemConvFn conv,
 								Oid result_type);
 static Jsonb *convert_jsonb_list(Jsonb *j, ElemConvFn conv, Oid result_type,
@@ -2008,7 +2009,7 @@ tostringornull(PG_FUNCTION_ARGS)
 	PG_RETURN_TEXT_P(cstring_to_text(s));
 }
 
-/* the three element conversions, each giving its result as a Datum */
+/* the four element conversions, each giving its result as a Datum */
 
 static bool
 conv_to_text(Datum d, Oid typeid, Datum *result)
@@ -2047,6 +2048,72 @@ conv_to_float8(Datum d, Oid typeid, Datum *result)
 	*result = Float8GetDatum(f);
 
 	return true;
+}
+
+/*
+ * conv_to_bool
+ *		Reads d as a truth value.  An integer is false only where it is zero,
+ *		the way an explicit cast to boolean reads one, and a number written
+ *		with a fractional part names no truth value at all; the text a string
+ *		names is read for the truth value it spells, so a word that spells
+ *		none -- "yes", "hello", the empty string -- names no value at all.
+ */
+static bool
+conv_to_bool(Datum d, Oid typeid, Datum *result)
+{
+	switch (typeid)
+	{
+		case BOOLOID:
+			*result = d;
+			return true;
+
+		case INT2OID:
+		case INT4OID:
+		case INT8OID:
+		case NUMERICOID:
+			{
+				int64		i;
+
+				/*
+				 * A jsonb list gives every number as a numeric, so how the
+				 * number was written is the only signal there is: a scale
+				 * says a fractional part was written.  Only a number written
+				 * without one names a truth value, which is why no float type
+				 * is read here either.
+				 */
+				if (typeid == NUMERICOID &&
+					!is_numeric_integer(DatumGetNumeric(d)))
+					return false;
+
+				if (!datum_to_int64(d, typeid, &i))
+					return false;
+
+				*result = BoolGetDatum(i != 0);
+
+				return true;
+			}
+
+		case VARCHAROID:
+		case BPCHAROID:
+		case TEXTOID:
+		case CSTRINGOID:
+		case UNKNOWNOID:
+			{
+				char	   *s;
+				bool		b;
+
+				if (!datum_to_string(d, typeid, &s) ||
+					!string_to_bool(s, &b))
+					return false;
+
+				*result = BoolGetDatum(b);
+
+				return true;
+			}
+
+		default:
+			return false;
+	}
 }
 
 /*
@@ -2163,6 +2230,11 @@ convert_jsonb_list(Jsonb *j, ElemConvFn conv, Oid result_type,
 					ejv.type = jbvString;
 					ejv.val.string.val = TextDatumGetCString(d);
 					ejv.val.string.len = strlen(ejv.val.string.val);
+				}
+				else if (result_type == BOOLOID)
+				{
+					ejv.type = jbvBool;
+					ejv.val.boolean = DatumGetBool(d);
 				}
 				else
 				{
@@ -2795,6 +2867,33 @@ Datum
 array_tofloatlist(PG_FUNCTION_ARGS)
 {
 	PG_RETURN_DATUM(convert_array_list(fcinfo, conv_to_float8, FLOAT8OID));
+}
+
+/*
+ * tobooleanlist:
+ *		returns a list with the truth value of all the elements in the list
+ *		example: tobooleanlist([0,1,2,3,4]) = [false,true,true,true,true]
+ * 				 tobooleanlist(['true',null,'yes']) = [true,null,null]
+ */
+Datum
+jsonb_tobooleanlist(PG_FUNCTION_ARGS)
+{
+	Jsonb	   *j = PG_GETARG_JSONB_P(0);
+
+	PG_RETURN_JSONB_P(convert_jsonb_list(j, conv_to_bool, BOOLOID,
+										 "toBooleanList"));
+}
+
+/*
+ * tobooleanlist:
+ *		returns an array with the truth value of all the elements in the array
+ *		example: tobooleanlist(ARRAY[0,1,2,3,4]) = {f,t,t,t,t}
+ * 				 tobooleanlist(ARRAY['true',null,'yes']) = {t,NULL,NULL}
+ */
+Datum
+array_tobooleanlist(PG_FUNCTION_ARGS)
+{
+	PG_RETURN_DATUM(convert_array_list(fcinfo, conv_to_bool, BOOLOID));
 }
 
 
