@@ -1248,6 +1248,8 @@ InitResultRelInfo(ResultRelInfo *resultRelInfo,
 	resultRelInfo->type = T_ResultRelInfo;
 	resultRelInfo->ri_RangeTableIndex = resultRelationIndex;
 	resultRelInfo->ri_RelationDesc = resultRelationDesc;
+	resultRelInfo->ri_GraphLabid =
+		get_relid_labid(RelationGetRelid(resultRelationDesc));
 	resultRelInfo->ri_NumIndices = 0;
 	resultRelInfo->ri_IndexRelationDescs = NULL;
 	resultRelInfo->ri_IndexRelationInfo = NULL;
@@ -2006,6 +2008,35 @@ ExecConstraints(ResultRelInfo *resultRelInfo,
 										  notnull_virtual_attrs);
 		if (attnum != InvalidAttrNumber)
 			ReportNotNullViolationError(resultRelInfo, slot, estate, attnum);
+	}
+
+	/*
+	 * Verify that the id names the label that stores the row.
+	 *
+	 * A vertex or edge is named by the label it is stored in, and that name is
+	 * read back from the first part of its id.  Everything that stores a row
+	 * arrives here: a Cypher write, an INSERT, an UPDATE, COPY and a logical
+	 * replication apply.
+	 */
+	if (resultRelInfo->ri_GraphLabid != InvalidLabid)
+	{
+		Datum		iddat;
+		bool		isnull;
+
+		/* a label carries its id first */
+		iddat = slot_getattr(slot, 1, &isnull);
+		if (!isnull)
+		{
+			Graphid		id = DatumGetGraphid(iddat);
+
+			if (GraphidGetLabid(id) != resultRelInfo->ri_GraphLabid)
+				ereport(ERROR,
+						(errcode(ERRCODE_CHECK_VIOLATION),
+						 errmsg("id \"%hu.%lu\" does not belong to graph label \"%s\"",
+								GraphidGetLabid(id), GraphidGetLocid(id),
+								RelationGetRelationName(rel)),
+						 errdetail("The label a vertex or edge belongs to is read from its id, so it has to be the label that stores it.")));
+		}
 	}
 
 	/*

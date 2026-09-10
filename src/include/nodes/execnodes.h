@@ -479,6 +479,9 @@ typedef struct ResultRelInfo
 	/* relation descriptor for result relation */
 	Relation	ri_RelationDesc;
 
+	/* label stored in that relation, InvalidLabid if it is not a label */
+	Labid		ri_GraphLabid;
+
 	/* # of indices existing on result relation */
 	int			ri_NumIndices;
 
