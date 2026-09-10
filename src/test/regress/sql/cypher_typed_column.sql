@@ -2573,6 +2573,28 @@ CREATE (:uncollated {s: 'a'});
 MATCH (n:uncollated) RETURN n.s AS s;
 DROP VLABEL uncollated CASCADE;
 DROP VLABEL collated2;
+
+-- A type change redefines the column after the property was registered, so it
+-- is asked the same question.  Both spellings reach it: a collation named
+-- outright, and one a domain brings along without it being written.
+CREATE VLABEL retyped (s text GENERATED);
+SET enable_graph_ddl = on;
+ALTER TABLE tc.retyped ALTER COLUMN s TYPE text COLLATE "C";
+ALTER TABLE tc.retyped ALTER COLUMN s TYPE tc.ctext;
+-- the column is collated as it was
+SELECT c.collname
+  FROM pg_attribute a JOIN pg_collation c ON c.oid = a.attcollation
+ WHERE a.attrelid = 'tc.retyped'::regclass AND a.attname = 's';
+-- a type change that brings no collation of its own goes through
+ALTER TABLE tc.retyped ALTER COLUMN s TYPE varchar(64);
+-- a column that answers for no property is collated as its owner likes
+ALTER TABLE tc.retyped ADD COLUMN d text COLLATE "C"
+	GENERATED ALWAYS AS (upper(properties ->> 'x')) STORED;
+SELECT c.collname
+  FROM pg_attribute a JOIN pg_collation c ON c.oid = a.attcollation
+ WHERE a.attrelid = 'tc.retyped'::regclass AND a.attname = 'd';
+RESET enable_graph_ddl;
+DROP VLABEL retyped CASCADE;
 DROP DOMAIN tc.ctext;
 
 -- ----------------------------------------------------------------------------

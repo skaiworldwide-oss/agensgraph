@@ -38,6 +38,7 @@
 #include "executor/spi.h"
 #include "nodes/params.h"
 #include "nodes/parsenodes.h"
+#include "parser/parse_type.h"
 #include "parser/parse_utilcmd.h"
 #include "tcop/utility.h"
 #include "utils/builtins.h"
@@ -56,8 +57,7 @@ static ObjectAddress DefineLabel(CreateStmt *stmt, char labkind,
 								 const char *queryString, bool is_fixed_id,
 								 int32 fixed_id, List *promoted_props);
 static char *extractPromotedSourceKey(Node *raw_expr);
-static void CheckPromotedColumnCollation(Oid relid, AttrNumber attnum,
-										 const char *colname);
+static void CheckPromotedCollation(Oid collid, const char *colname);
 static void CheckPromotedPropertyCoherence(Oid relid, const char *propname,
 										   const char *colname);
 static void recordPromotedProperties(Oid laboid, Oid relid,
@@ -405,7 +405,7 @@ extractPromotedSourceKey(Node *raw_expr)
 }
 
 /*
- * CheckPromotedColumnCollation
+ * CheckPromotedCollation
  *
  * A promoted column answers for a property, and reading that property has to
  * mean the same thing whether the column answers or the property map does.
@@ -415,18 +415,12 @@ extractPromotedSourceKey(Node *raw_expr)
  * what it returns.
  *
  * A collation can arrive without anyone naming one here, through a domain that
- * carries it, so ask the column what it ended up with rather than what was
- * written.
+ * carries it, so the collation the column ends up with is what is judged,
+ * rather than what was written.
  */
 static void
-CheckPromotedColumnCollation(Oid relid, AttrNumber attnum, const char *colname)
+CheckPromotedCollation(Oid collid, const char *colname)
 {
-	Oid			typid;
-	int32		typmod;
-	Oid			collid;
-
-	get_atttypetypmodcoll(relid, attnum, &typid, &typmod, &collid);
-
 	if (!OidIsValid(collid) || collid == DEFAULT_COLLATION_OID)
 		return;
 
@@ -525,6 +519,9 @@ recordPromotedProperties(Oid laboid, Oid relid, List *promoted_props)
 			Constraint *con = (Constraint *) lfirst(lcon);
 			char	   *srckey;
 			AttrNumber	attnum;
+			Oid			typid;
+			int32		typmod;
+			Oid			collid;
 
 			if (con->contype != CONSTR_GENERATED)
 				continue;
@@ -537,7 +534,8 @@ recordPromotedProperties(Oid laboid, Oid relid, List *promoted_props)
 			if (attnum == InvalidAttrNumber)
 				continue;		/* should not happen */
 
-			CheckPromotedColumnCollation(relid, attnum, col->colname);
+			get_atttypetypmodcoll(relid, attnum, &typid, &typmod, &collid);
+			CheckPromotedCollation(collid, col->colname);
 			CheckPromotedPropertyCoherence(relid, srckey, col->colname);
 
 			InsertAgLabelProperty(laboid, srckey, (int16) attnum,
@@ -1005,22 +1003,40 @@ CheckLabelSqlReshape(Oid relid, bool recurse, List *cmds)
 	foreach(lc, cmds)
 	{
 		AlterTableCmd *cmd = (AlterTableCmd *) lfirst(lc);
+		ColumnDef  *def;
+		AttrNumber	attnum;
+		Oid			typid;
+		int32		typmod;
 
-		if (cmd->subtype != AT_AlterColumnType)
+		if (cmd->subtype != AT_AlterColumnType || cmd->name == NULL)
 			continue;
 
-		if (cmd->name == NULL ||
-			(strcmp(cmd->name, AG_ELEM_LOCAL_ID) != 0 &&
-			 strcmp(cmd->name, AG_ELEM_PROP_MAP) != 0 &&
-			 strcmp(cmd->name, AG_START_ID) != 0 &&
-			 strcmp(cmd->name, AG_END_ID) != 0))
+		if (strcmp(cmd->name, AG_ELEM_LOCAL_ID) == 0 ||
+			strcmp(cmd->name, AG_ELEM_PROP_MAP) == 0 ||
+			strcmp(cmd->name, AG_START_ID) == 0 ||
+			strcmp(cmd->name, AG_END_ID) == 0)
+			ereport(ERROR,
+					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+					 errmsg("cannot change the type of column \"%s\" of graph label \"%s\"",
+							cmd->name, get_rel_name(labelrelid)),
+					 errdetail("Every vertex and edge is made of that column.")));
+
+		/*
+		 * What a promoted column may be collated as is settled when the
+		 * property is registered, and a type change redefines the column
+		 * afterwards.  Ask the new definition the same question, before
+		 * anything is rewritten.
+		 */
+		attnum = get_attnum(labelrelid, cmd->name);
+		if (cmd->def == NULL || attnum == InvalidAttrNumber ||
+			get_label_property_name_by_attnum(get_relid_laboid(labelrelid),
+											  attnum) == NULL)
 			continue;
 
-		ereport(ERROR,
-				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				 errmsg("cannot change the type of column \"%s\" of graph label \"%s\"",
-						cmd->name, get_rel_name(labelrelid)),
-				 errdetail("Every vertex and edge is made of that column.")));
+		def = (ColumnDef *) cmd->def;
+		typenameTypeIdAndMod(NULL, def->typeName, &typid, &typmod);
+		CheckPromotedCollation(GetColumnDefCollation(NULL, def, typid),
+							   cmd->name);
 	}
 
 	if (enable_graph_ddl)
