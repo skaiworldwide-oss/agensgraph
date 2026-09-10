@@ -1,5 +1,5 @@
 <!--
-doc/src/sgml/ref/unwind.sgml
+doc/src/sgml/ref/cypher_unwind.sgml
 PostgreSQL documentation
 -->
 
@@ -11,70 +11,259 @@ PostgreSQL documentation
  <refmeta>
   <refentrytitle>UNWIND</refentrytitle>
   <manvolnum>7</manvolnum>
-  <refmiscinfo>SQL - Language Statements</refmiscinfo>
+  <refmiscinfo>Cypher - Language Statements</refmiscinfo>
  </refmeta>
 
  <refnamediv>
   <refname>UNWIND</refname>
-  <refpurpose>transform any list back into individual rows</refpurpose>
+  <refpurpose>turn a list into rows, one row per element</refpurpose>
  </refnamediv>
 
  <refsynopsisdiv>
 <synopsis>
-UNWIND <replaceable class="parameter">expression</replaceable> AS <replaceable class="parameter">alias_name</replaceable>
+UNWIND <replaceable class="parameter">list_expression</replaceable> AS <replaceable class="parameter">variable</replaceable>
 </synopsis>
  </refsynopsisdiv>
 
- <refsect1>
+ <refsect1 id="cypher-unwind-description">
   <title>Description</title>
+
   <para>
-   <command>UNWIND</command> transform any list back into individual rows.
+   <command>UNWIND</command> expands a list into the query. For each element it emits one row
+   and binds <replaceable class="parameter">variable</replaceable> to that element. Everything
+   else in scope is carried along unchanged. It is the inverse of
+   <literal>collect()</literal>, and the way to get from one row holding a list to many rows
+   holding its parts.
+  </para>
+
+  <para>
+   <literal>AS <replaceable class="parameter">variable</replaceable></literal> is required.
+   There is no unnamed form.
+  </para>
+
+  <para>
+   The list may be a literal, a property holding a list, a variable that
+   <literal>collect()</literal> produced, or any expression that yields a jsonb array or a
+   PostgreSQL array. A scalar is refused. An empty list produces no rows, so the input row
+   disappears with it. A null inside the list is an element like any other and produces a row.
+  </para>
+
+  <para>
+   <command>UNWIND</command> runs once per incoming row and the rows it produces multiply out.
+   Three input rows over a two element list give six. Nest two
+   <command>UNWIND</command> clauses to flatten a list of lists.
+  </para>
+
+  <para>
+   <command>UNWIND</command> may open a query or follow another clause. It cannot end one.
+  </para>
+
+  <para>
+   <xref linkend="cypher-for"/> is the GQL counterpart and does the same job, with an optional
+   ordinal.
   </para>
  </refsect1>
 
- <refsect1>
+ <refsect1 id="cypher-unwind-parameters">
   <title>Parameters</title>
-  <refsect2>
-   <title><replaceable class="parameter">expression</replaceable></title>
-   <para>
-    Basic expression of the cypher query.
-    See <xref linkend="cypher-expr"/> for more details.
-   </para>
-  </refsect2>
 
-  <refsect2>
-   <title><replaceable class="parameter">alias_name</replaceable></title>
-   <para>
-    Alias name of this unwind result.
-   </para>
-  </refsect2>
+  <variablelist>
+   <varlistentry>
+    <term><replaceable class="parameter">list_expression</replaceable></term>
+    <listitem>
+     <para>
+      An expression yielding a jsonb array or a PostgreSQL array. See
+      <xref linkend="cypher-expr"/>.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><replaceable class="parameter">variable</replaceable></term>
+    <listitem>
+     <para>
+      The name bound to each element. It is visible to every clause after this one.
+     </para>
+    </listitem>
+   </varlistentry>
+  </variablelist>
  </refsect1>
 
- <refsect1>
+ <refsect1 id="cypher-unwind-examples">
   <title>Examples</title>
+
   <para>
-   To transform list as rows:
-<programlisting>
-UNWIND [1, 2, 3, null] AS unwinded return unwinded;
-</programlisting>
+   These examples use the graph in <xref linkend="agensgraph-example-data"/>.
   </para>
 
   <para>
-   To transform expression as rows:
+   Expand a list literal. Six rows, in list order, duplicates included:
 <programlisting>
-CREATE ({a: [1, 2, 3]}), ({a: [4, 5, 6]});
-MATCH (n) WITH n.a AS a UNWIND a AS i RETURN *;
-UPDATE 2
-     a     | i 
------------+---
- [1, 2, 3] | 1
- [1, 2, 3] | 2
- [1, 2, 3] | 3
- [4, 5, 6] | 4
- [4, 5, 6] | 5
- [4, 5, 6] | 6
+UNWIND [1, 91, 203, 1, 7, 91] AS n
+RETURN n;
+
+  n
+-----
+ 1
+ 91
+ 203
+ 1
+ 7
+ 91
 (6 rows)
 </programlisting>
   </para>
+
+  <para>
+   Drive a <command>MATCH</command> from a list. This is the usual way to run a query over a
+   list of keys supplied by the client, with the list passed as one parameter:
+<programlisting>
+UNWIND ['The Matrix', 'Inception'] AS t
+MATCH (m:movie {title: t})
+RETURN m.title AS film, m.year AS year;
+
+     film     | year
+--------------+------
+ "The Matrix" | 1999
+ "Inception"  | 2010
+(2 rows)
+</programlisting>
+  </para>
+
+  <para>
+   A property may hold a list, and <command>UNWIND</command> opens it:
+<programlisting>
+MATCH (m:movie {title: 'The Matrix'})
+UNWIND m.embedding AS component
+RETURN component;
+
+  component
+-------------
+ -0.07594558
+ 0.04081754
+ 0.29592122
+ -0.11921061
+(4 rows)
+</programlisting>
+  </para>
+
+  <para>
+   <literal>collect()</literal> folds rows into a list and <command>UNWIND</command> unfolds
+   it again. The pair is how you aggregate and then go back to rows:
+<programlisting>
+MATCH (p:person)-[:acted_in]-&gt;(m:movie)
+WITH collect(DISTINCT m.genre) AS genres
+UNWIND genres AS genre
+RETURN genre
+ORDER BY genre;
+
+    genre
+-------------
+ "Action"
+ "Adventure"
+ "Sci-Fi"
+(3 rows)
+</programlisting>
+  </para>
+
+  <para>
+   Flatten a list of lists with two clauses, the second over the variable the first bound:
+<programlisting>
+UNWIND [[1, 2], [3]] AS pair
+UNWIND pair AS x
+RETURN pair, x;
+
+  pair  | x
+--------+---
+ [1, 2] | 1
+ [1, 2] | 2
+ [3]    | 3
+(3 rows)
+</programlisting>
+  </para>
+
+  <para>
+   An empty list produces no rows, and the input row goes with them. Use
+   <literal>OPTIONAL MATCH</literal> or a <literal>CASE</literal> guard when a row has to
+   survive an empty list:
+<programlisting>
+UNWIND [] AS x RETURN x;
+
+ x
+---
+(0 rows)
+</programlisting>
+  </para>
+
+  <para>
+   A null element is still an element. It prints as <literal>null</literal> because the output
+   column is jsonb, and a jsonb null is a value rather than a missing one:
+<programlisting>
+UNWIND [1, NULL, 3] AS x RETURN x;
+
+  x
+------
+ 1
+ null
+ 3
+(3 rows)
+</programlisting>
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-unwind-notes">
+  <title>Notes</title>
+
+  <para>
+   <command>UNWIND</command> requires a list. Neither a scalar nor a bare
+   <literal>NULL</literal> is treated as a list of one element or of none:
+<programlisting>
+UNWIND 3 AS x RETURN x;
+
+ERROR:  expression must be jsonb or array, but integer
+LINE 1: UNWIND 3 AS x RETURN x;
+               ^
+</programlisting>
+<programlisting>
+UNWIND NULL AS x RETURN x;
+
+ERROR:  expression must be jsonb or array, but unknown
+LINE 1: UNWIND NULL AS x RETURN x;
+               ^
+</programlisting>
+  </para>
+
+  <para>
+   Wrap a value that might not be a list, as in
+   <literal>UNWIND coalesce(m.tags, []) AS tag</literal>, when the property is not guaranteed
+   to be there.
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-unwind-compatibility">
+  <title>Compatibility</title>
+
+  <para>
+   ISO/IEC 39075:2024 has no <command>UNWIND</command>. Its list expanding statement is the
+   FOR statement of section 14.8, which AgensGraph also implements, as
+   <xref linkend="cypher-for"/>. <command>FOR</command> adds a
+   <literal>WITH OFFSET</literal> clause that gives each element its position counting from 0,
+   which <command>UNWIND</command> cannot do. The two are otherwise interchangeable.
+  </para>
+
+  <para>
+   <command>UNWIND</command> is the openCypher spelling and behaves as it does there. The list
+   may additionally be a PostgreSQL array here, not only a jsonb array.
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-unwind-see-also">
+  <title>See Also</title>
+  <simplelist type="inline">
+   <member><xref linkend="cypher-for"/></member>
+   <member><xref linkend="cypher-with"/></member>
+   <member><xref linkend="cypher-match"/></member>
+   <member><xref linkend="cypher-let"/></member>
+  </simplelist>
  </refsect1>
 </refentry>

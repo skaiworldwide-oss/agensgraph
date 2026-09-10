@@ -232,6 +232,7 @@
 
    &cypherAlterElabel;
    &cypherAlterVlabel;
+   &cypherCall;
    &cypherCreate;
    &cypherCreateConstraint;
    &cypherCreateElabel;
@@ -244,13 +245,24 @@
    &cypherDropGraph;
    &cypherDropPropertyIndex;
    &cypherDropVlabel;
+   &cypherFilter;
+   &cypherFinish;
+   &cypherFor;
+   &cypherInsert;
+   &cypherLet;
+   &cypherLimit;
    &cypherLoad;
    &cypherMatch;
    &cypherMerge;
+   &cypherNext;
+   &cypherOrderBy;
+   &cypherReindex;
    &cypherRemove;
    &cypherReturn;
    &cypherSet;
    &cypherSkip;
+   &cypherSubqueryExpressions;
+   &cypherUnion;
    &cypherUnwind;
    &cypherWhere;
    &cypherWith;

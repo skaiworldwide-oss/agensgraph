@@ -1,0 +1,548 @@
+<!--
+doc/src/sgml/ref/cypher_subquery_expressions.sgml
+PostgreSQL documentation
+-->
+
+<refentry id="cypher-subqueryexpressions">
+ <indexterm zone="cypher-subqueryexpressions">
+  <primary>Subquery Expressions</primary>
+ </indexterm>
+
+ <refmeta>
+  <refentrytitle>Subquery Expressions</refentrytitle>
+  <manvolnum>7</manvolnum>
+  <refmiscinfo>Cypher - Language Expressions</refmiscinfo>
+ </refmeta>
+
+ <refnamediv>
+  <refname>Subquery Expressions</refname>
+  <refpurpose>answer a question with a subquery written in place of a value</refpurpose>
+ </refnamediv>
+
+ <refsynopsisdiv>
+<synopsis>
+EXISTS { <replaceable class="parameter">body</replaceable> }
+COUNT { <replaceable class="parameter">body</replaceable> }
+COLLECT { <replaceable class="parameter">body</replaceable> }
+ARRAY { <replaceable class="parameter">body</replaceable> }
+VALUE { <replaceable class="parameter">body</replaceable> }
+<replaceable class="parameter">expression</replaceable> [ NOT ] IN { <replaceable class="parameter">body</replaceable> }
+</synopsis>
+ </refsynopsisdiv>
+
+ <refsect1 id="cypher-subqueryexpressions-description">
+  <title>Description</title>
+
+  <para>
+   Each of these six expressions runs its body and reduces the result to one value. They may
+   be written anywhere a value is, which includes <xref linkend="cypher-return"/>,
+   <xref linkend="cypher-where"/>, <xref linkend="cypher-filter"/>,
+   <xref linkend="cypher-with"/> and SQL.
+  </para>
+
+  <para>
+   The body is correlated. It sees the variables in scope where the expression is written,
+   with no import list to declare, unlike <xref linkend="cypher-call"/>. Those variables stay
+   in scope through the whole body, so a clause inside it cannot bind one of their names
+   again. A <command>LET</command>, an <command>UNWIND</command> or a <command>FOR</command>
+   on such a name, a <command>WITH</command> that renames a value to it, and a nested
+   <literal>CALL { }</literal> that returns it are all refused. <literal>MATCH (n)</literal>
+   on the name refers to the outer node, and <literal>WITH n</literal> passes it on
+   unchanged.
+  </para>
+
+  <para>
+   These expressions may nest inside each other. A body may contain another one of them.
+  </para>
+
+  <refsect2 id="cypher-subqueryexpressions-returns">
+   <title>What Each One Returns</title>
+
+   <para>
+    Five of the six answer an empty body with a value of their own type rather than with
+    null. <literal>VALUE { }</literal> has no such value to fall back on, so it is the one
+    that gives null.
+   </para>
+
+   <variablelist>
+    <varlistentry>
+     <term><literal>EXISTS { }</literal></term>
+     <listitem>
+      <para>
+       A <type>boolean</type>, true when the body yields at least one row. An empty body
+       gives <literal>false</literal>, never null. It short circuits: the planner turns it
+       into a semi join or an <literal>EXISTS</literal> subplan rather than counting matches.
+      </para>
+     </listitem>
+    </varlistentry>
+
+    <varlistentry>
+     <term><literal>COUNT { }</literal></term>
+     <listitem>
+      <para>
+       The number of rows the body yields, as a <type>bigint</type>. An empty body gives
+       <literal>0</literal>.
+      </para>
+     </listitem>
+    </varlistentry>
+
+    <varlistentry>
+     <term><literal>COLLECT { }</literal></term>
+     <listitem>
+      <para>
+       A list of the body's single column, keeping the body's order and its nulls. An empty
+       body gives <literal>[]</literal>.
+      </para>
+     </listitem>
+    </varlistentry>
+
+    <varlistentry>
+     <term><literal>ARRAY { }</literal></term>
+     <listitem>
+      <para>
+       The same expression as <literal>COLLECT { }</literal>, under the standard's name. An
+       empty body gives <literal>[]</literal>.
+      </para>
+     </listitem>
+    </varlistentry>
+
+    <varlistentry>
+     <term><literal>VALUE { }</literal></term>
+     <listitem>
+      <para>
+       The body's single value, in the column's own type, so a graph element survives instead
+       of being boxed as <type>jsonb</type>. An empty body gives null. The body must produce
+       at most one row, and more than one is a run time error.
+      </para>
+     </listitem>
+    </varlistentry>
+
+    <varlistentry>
+     <term><literal>x IN { }</literal></term>
+     <listitem>
+      <para>
+       A <type>boolean</type>, true when the body yields a row equal to
+       <literal>x</literal>. An empty body gives <literal>false</literal>. It is a semi join,
+       not a materialized list, so it stays cheap on a large body.
+      </para>
+     </listitem>
+    </varlistentry>
+   </variablelist>
+  </refsect2>
+
+  <refsect2 id="cypher-subqueryexpressions-bodies">
+   <title>What a Body May Be</title>
+
+   <para>
+    Four kinds of body are accepted, and which ones are allowed depends on the expression.
+   </para>
+
+   <variablelist>
+    <varlistentry>
+     <term>A bare graph pattern, with an optional <literal>WHERE</literal></term>
+     <listitem>
+      <para>
+       <literal>EXISTS { }</literal> and <literal>COUNT { }</literal> only.
+      </para>
+     </listitem>
+    </varlistentry>
+
+    <varlistentry>
+     <term>A <command>MATCH</command> statement, <literal>OPTIONAL MATCH</literal> included</term>
+     <listitem>
+      <para>
+       <literal>EXISTS { }</literal> and <literal>COUNT { }</literal> only.
+      </para>
+     </listitem>
+    </varlistentry>
+
+    <varlistentry>
+     <term>A read statement ending in <command>RETURN</command></term>
+     <listitem>
+      <para>All six.</para>
+     </listitem>
+    </varlistentry>
+
+    <varlistentry>
+     <term>A SQL <literal>SELECT</literal></term>
+     <listitem>
+      <para>All six.</para>
+     </listitem>
+    </varlistentry>
+   </variablelist>
+
+   <para>
+    The body is read only. <literal>CREATE</literal>, <literal>INSERT</literal>,
+    <literal>MERGE</literal>, <literal>SET</literal>, <literal>REMOVE</literal>,
+    <literal>DELETE</literal> and <literal>DETACH DELETE</literal> each raise a syntax error
+    at the keyword, whichever expression wraps the body.
+   </para>
+
+   <para>
+    <literal>COLLECT { }</literal>, <literal>ARRAY { }</literal>,
+    <literal>VALUE { }</literal> and <literal>x IN { }</literal> need the body to produce
+    exactly one column. A body with more than one is refused.
+    <literal>EXISTS { }</literal> and <literal>COUNT { }</literal> do not read a column at
+    all, so they take a body of any width.
+   </para>
+
+   <para>
+    A read statement body may use <literal>DISTINCT</literal>, <literal>ORDER BY</literal>,
+    <literal>SKIP</literal>, <literal>LIMIT</literal>, the set operators and a nested
+    <literal>CALL { }</literal>. <xref linkend="cypher-next"/> is not accepted.
+   </para>
+
+   <para>
+    A bare pattern body may not name the path. <literal>EXISTS { p = (a)-[]-&gt;(b) }</literal>
+    is a syntax error. A <literal>shortestpath()</literal> and a variable length edge are both
+    accepted.
+   </para>
+
+   <para>
+    A SQL <literal>SELECT</literal> body is uncorrelated. It cannot see the enclosing query's
+    variables, and referring to one raises
+    <literal>missing FROM-clause entry for table "name"</literal>. It also keeps its own
+    column type rather than meeting the other side as <type>jsonb</type>.
+   </para>
+  </refsect2>
+ </refsect1>
+
+ <refsect1 id="cypher-subqueryexpressions-parameters">
+  <title>Parameters</title>
+
+  <variablelist>
+   <varlistentry>
+    <term><replaceable class="parameter">body</replaceable></term>
+    <listitem>
+     <para>
+      The subquery, in one of the four shapes above. It is read only.
+      <literal>COLLECT</literal>, <literal>ARRAY</literal>, <literal>VALUE</literal> and
+      <literal>IN</literal> need it to produce exactly one column.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><replaceable class="parameter">expression</replaceable></term>
+    <listitem>
+     <para>
+      For <literal>x IN { }</literal>, the value to look for. A node, an edge or a
+      <type>graphid</type> is matched by identity, as in <literal>x IN [list]</literal>, so
+      two elements with the same properties are still two elements and the semi join runs on
+      the id. An element on the left against a body of plain values is a type error.
+     </para>
+     <para>
+      Any other value and a Cypher body's column meet as <type>jsonb</type>. A SQL body keeps
+      its own column type, so unwrap the property first:
+      <literal>m.title #&gt;&gt; '{}'</literal> yields <type>text</type>.
+     </para>
+    </listitem>
+   </varlistentry>
+  </variablelist>
+ </refsect1>
+
+ <refsect1 id="cypher-subqueryexpressions-examples">
+  <title>Examples</title>
+
+  <para>
+   These examples use the graph in <xref linkend="agensgraph-example-data"/>.
+  </para>
+
+  <para>
+   A bare pattern is the shortest body for <literal>EXISTS { }</literal>, and it takes a
+   <literal>WHERE</literal>:
+<programlisting>
+MATCH (p:person)
+WHERE EXISTS { (p)-[:directed]-&gt;(m:movie) WHERE m.year &gt; 2015 }
+RETURN p.name AS director ORDER BY director;
+
+      director
+--------------------
+ "Denis Villeneuve"
+ "Lana Wachowski"
+(2 rows)
+</programlisting>
+  </para>
+
+  <para>
+   In <command>RETURN</command> it is a boolean column, false rather than null when nothing
+   matches:
+<programlisting>
+MATCH (p:person {name: 'Keanu Reeves'}) RETURN EXISTS { (p)-[:directed]-&gt;(:movie) } AS directs;
+
+ directs
+---------
+ f
+(1 row)
+</programlisting>
+  </para>
+
+  <para>
+   <literal>COUNT { }</literal> over a pattern counts the pattern's matches:
+<programlisting>
+MATCH (m:movie {title: 'The Matrix'}) RETURN COUNT { (:person)-[:acted_in]-&gt;(m) } AS cast_size;
+
+ cast_size
+-----------
+ 3
+(1 row)
+</programlisting>
+  </para>
+
+  <para>
+   A read statement body keeps its own <literal>DISTINCT</literal>,
+   <literal>LIMIT</literal> and grouping, so it can count something a pattern cannot:
+<programlisting>
+MATCH (m:movie {title: 'The Matrix'})
+RETURN COUNT { MATCH (p:person)-[:acted_in]-&gt;(m) RETURN DISTINCT p } AS distinct_cast;
+
+ distinct_cast
+---------------
+ 3
+(1 row)
+</programlisting>
+  </para>
+
+  <para>
+   <literal>COLLECT { }</literal> returns a list, preserving the body's order and its nulls:
+<programlisting>
+MATCH (m:movie {title: 'The Matrix'})
+RETURN COLLECT { MATCH (p:person)-[:acted_in]-&gt;(m) RETURN p.name ORDER BY p.name } AS cast;
+
+                            cast
+------------------------------------------------------------
+ ["Carrie-Anne Moss", "Keanu Reeves", "Laurence Fishburne"]
+(1 row)
+</programlisting>
+  </para>
+
+  <para>
+   <literal>ARRAY { }</literal> is the same expression under the standard's name. It takes
+   the same body and returns the same list.
+  </para>
+
+  <para>
+   An empty body gives an empty list, not null:
+<programlisting>
+MATCH (m:movie {title: 'The Matrix'})
+RETURN COLLECT { MATCH (p:person)-[:acted_in]-&gt;(m) WHERE p.born &gt; 2000 RETURN p.name } AS nobody;
+
+ nobody
+--------
+ []
+(1 row)
+</programlisting>
+  </para>
+
+  <para>
+   <literal>VALUE { }</literal> is the scalar subquery:
+<programlisting>
+MATCH (m:movie {title: 'Inception'})
+RETURN VALUE { MATCH (p:person)-[:directed]-&gt;(m) RETURN p.name } AS director;
+
+      director
+---------------------
+ "Christopher Nolan"
+(1 row)
+</programlisting>
+  </para>
+
+  <para>
+   Unlike everything else on this page it keeps the column's own type, so a graph element
+   survives instead of being boxed:
+<programlisting>
+MATCH (m:movie {title: 'Inception'})
+RETURN label(VALUE { MATCH (p:person)-[:directed]-&gt;(m) RETURN p }) AS yielded_type;
+
+ yielded_type
+--------------
+ "person"
+(1 row)
+</programlisting>
+  </para>
+
+  <para>
+   The body must produce at most one row. Add an <literal>ORDER BY ... LIMIT 1</literal> or
+   an aggregate when the body is not already single valued:
+<programlisting>
+MATCH (m:movie {title: 'The Matrix'})
+RETURN VALUE { MATCH (p:person)-[:acted_in]-&gt;(m) RETURN p.name } AS one_of_three;
+
+ERROR:  more than one row returned by a subquery used as an expression
+</programlisting>
+  </para>
+
+  <para>
+   A value and a Cypher body's column meet as <type>jsonb</type>:
+<programlisting>
+MATCH (m:movie)
+WHERE m.year IN { MATCH (x:movie) WHERE x.genre = 'Adventure' RETURN x.year }
+RETURN m.title AS film ORDER BY film;
+
+      film
+-----------------
+ "Jurassic Park"
+(1 row)
+</programlisting>
+  </para>
+
+  <para>
+   A node is matched by identity, so two nodes with the same properties are still two nodes.
+   The semi join then runs on the id:
+<programlisting>
+MATCH (p:person)
+WHERE p IN { MATCH (d:person)-[:directed]-&gt;(:movie {title: 'Inception'}) RETURN d }
+RETURN p.name AS director;
+
+      director
+---------------------
+ "Christopher Nolan"
+(1 row)
+</programlisting>
+  </para>
+
+  <para>
+   A SQL body keeps its own column type. <literal>rating.title</literal> is
+   <type>text</type>, so unwrap the property with <literal>#&gt;&gt; '{}'</literal> rather
+   than comparing it as <type>jsonb</type>. Without the unwrap the comparison has no
+   operator: <literal>operator does not exist: jsonb = text</literal>.
+<programlisting>
+MATCH (m:movie)
+WHERE m.title #&gt;&gt; '{}' IN { SELECT title FROM rating WHERE source = 'audience' }
+RETURN m.title AS film ORDER BY film;
+
+      film
+----------------
+ "Inception"
+ "Interstellar"
+ "The Matrix"
+(3 rows)
+</programlisting>
+  </para>
+
+  <para>
+   A subquery expression is a value, so it can be projected by <command>WITH</command> and
+   then tested:
+<programlisting>
+MATCH (m:movie)
+WITH m.title AS film, COUNT { (:person)-[:acted_in]-&gt;(m) } AS cast_size
+FILTER cast_size &gt; 2
+RETURN film, cast_size;
+
+     film     | cast_size
+--------------+-----------
+ "The Matrix" | 3
+(1 row)
+</programlisting>
+  </para>
+
+  <para>
+   It also works from SQL, wrapped in the Cypher query that supplies its variables:
+<programlisting>
+SELECT (MATCH (m:movie {title: 'The Matrix'}) RETURN COUNT { (:person)-[:acted_in]-&gt;(m) }) AS cast_size;
+
+ cast_size
+-----------
+ 3
+(1 row)
+</programlisting>
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-subqueryexpressions-notes">
+  <title>Notes</title>
+
+  <para>
+   A write clause anywhere in a body is refused at the keyword, whichever expression wraps
+   it:
+<programlisting>
+MATCH (m:movie) RETURN COUNT { CREATE (:tmp) RETURN 1 AS one } AS n;
+
+ERROR:  syntax error at or near "CREATE"
+LINE 1: MATCH (m:movie) RETURN COUNT { CREATE (:tmp) RETURN 1 AS one...
+                                       ^
+</programlisting>
+  </para>
+
+  <para>
+   So is a binding that would hide a variable of the enclosing query. The error is the one
+   the clause raises at the top level:
+<programlisting>
+MATCH (m:movie) RETURN COUNT { LET m = 1 RETURN m } AS n;
+
+ERROR:  variable "m" already exists
+LINE 1: MATCH (m:movie) RETURN COUNT { LET m = 1 RETURN m } AS n;
+                                           ^
+HINT:  LET cannot redefine an existing variable; use a different name.
+</programlisting>
+  </para>
+
+  <para>
+   <literal>ARRAY</literal> is a reserved keyword, as it is in PostgreSQL, and so is
+   <literal>IN</literal>. <literal>COLLECT</literal>, <literal>COUNT</literal>,
+   <literal>EXISTS</literal> and <literal>VALUE</literal> are not reserved, so they remain
+   usable as identifiers. A <literal>RETURN ... AS value</literal> still works.
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-subqueryexpressions-compatibility">
+  <title>Compatibility</title>
+
+  <para>
+   Two of the six are in the standard. <literal>EXISTS { }</literal> implements the GQL
+   exists predicate of ISO/IEC 39075:2024 section 19.4, including the bare graph pattern
+   body and the match statement block body of that subclause, and the nested query
+   specification. It is supported in full.
+  </para>
+
+  <para>
+   <literal>VALUE { }</literal> implements the GQL value query expression of section 20.6,
+   feature GQ18, scalar subqueries, with the rule of general rule 2 that an empty body gives
+   null. Section 20.6 syntax rule 10 requires the body to carry <literal>LIMIT 1</literal> or
+   an aggregate. AgensGraph accepts any body and raises a run time error when it returns more
+   than one row.
+  </para>
+
+  <para>
+   <literal>COUNT { }</literal>, <literal>COLLECT { }</literal>,
+   <literal>ARRAY { }</literal> and <literal>x IN { }</literal> are extensions. ISO/IEC
+   39075:2024 has no subquery form of <literal>COUNT</literal>. Section 20.9 defines only
+   <literal>COUNT(*)</literal> and <literal>COUNT(value expression)</literal>, and the
+   standard's list aggregate is <literal>COLLECT_LIST(...)</literal>, also an aggregate over
+   rows rather than a subquery. <literal>COUNT { }</literal> and
+   <literal>COLLECT { }</literal> come from openCypher, <literal>ARRAY { }</literal> follows
+   SQL's <literal>ARRAY(subquery)</literal>, and <literal>x IN { }</literal> follows SQL's
+   <literal>IN (subquery)</literal>.
+  </para>
+
+  <para>
+   AgensGraph goes beyond the standard in the bodies it accepts. A SQL
+   <literal>SELECT</literal> may be the body of any of the six, which the standard has no
+   form for. Such a body is an ordinary SQL query: it is uncorrelated and it keeps its own
+   column types. The same reach into PostgreSQL appears in the clause form of a subquery,
+   where <literal>CALL ... YIELD</literal> may invoke any PostgreSQL table function and not
+   only a graph routine. See <xref linkend="cypher-call"/>.
+  </para>
+
+  <para>
+   openCypher has <literal>EXISTS { }</literal>, <literal>COUNT { }</literal> and
+   <literal>COLLECT { }</literal> with the same meanings. It has no
+   <literal>ARRAY { }</literal>, no <literal>VALUE { }</literal> and no
+   <literal>x IN { }</literal> over a subquery. For a scalar it uses
+   <literal>head(COLLECT { ... })</literal>, and for membership
+   <literal>x IN COLLECT { ... }</literal>. Both of those work here too, but they materialize
+   the whole list, so prefer <literal>VALUE { }</literal> and <literal>x IN { }</literal>.
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-subqueryexpressions-see-also">
+  <title>See Also</title>
+  <simplelist type="inline">
+   <member><xref linkend="cypher-call"/></member>
+   <member><xref linkend="cypher-filter"/></member>
+   <member><xref linkend="cypher-where"/></member>
+   <member><xref linkend="cypher-match"/></member>
+   <member><xref linkend="cypher-expr"/></member>
+  </simplelist>
+ </refsect1>
+</refentry>

@@ -1,5 +1,5 @@
 <!--
-doc/src/sgml/ref/drop_property_index.sgml
+doc/src/sgml/ref/cypher_drop_property_index.sgml
 PostgreSQL documentation
 -->
 
@@ -11,45 +11,75 @@ PostgreSQL documentation
  <refmeta>
   <refentrytitle>DROP PROPERTY INDEX</refentrytitle>
   <manvolnum>7</manvolnum>
-  <refmiscinfo>SQL - Language Statements</refmiscinfo>
+  <refmiscinfo>Cypher - Language Statements</refmiscinfo>
  </refmeta>
 
  <refnamediv>
   <refname>DROP PROPERTY INDEX</refname>
-  <refpurpose>drop the property index</refpurpose>
+  <refpurpose>remove a property index</refpurpose>
  </refnamediv>
 
  <refsynopsisdiv>
 <synopsis>
-DROP PROPERTY INDEX [ IF EXISTS ] <replaceable class="parameter">property_index_name</replaceable> [ , ... ] [ CASCADE | RESTRICT ]
-
+DROP PROPERTY INDEX [ IF EXISTS ] <replaceable class="parameter">index_name</replaceable> [, ...] [ CASCADE | RESTRICT ]
 </synopsis>
  </refsynopsisdiv>
 
- <refsect1>
+ <refsect1 id="cypher-droppropertyindex-description">
   <title>Description</title>
+
   <para>
-   <command>DROP PROPERTY INDEX</command> drop the property index
+   <command>DROP PROPERTY INDEX</command> drops one or more indexes over properties, and
+   nothing else.
+  </para>
+
+  <para>
+   The name is resolved in the graph named by <varname>graph_path</varname> and cannot be
+   qualified. A name with a schema on it is rejected with
+   <literal>improper property index name</literal>. To drop an index in another graph, change
+   <varname>graph_path</varname> first.
+  </para>
+
+  <para>
+   Only an index over properties is accepted. Every other index on a label is refused with
+   <literal>"<replaceable class="parameter">index_name</replaceable>" is not property
+   index</literal>: the label's primary key, an edge label's endpoint indexes, and an index
+   written in SQL over a column or over the whole <literal>properties</literal> bag.
+  </para>
+
+  <para>
+   <command>DROP INDEX</command> is wider. It takes any index of a label, an index over
+   properties included, under the schema qualified name. So an index over properties can be
+   dropped by either statement, whichever statement made it, while this one stays inside the
+   set it owns.
+  </para>
+
+  <para>
+   An index that belongs to a constraint is not dropped here. It goes with the constraint,
+   through <xref linkend="cypher-dropconstraint"/>.
   </para>
  </refsect1>
 
- <refsect1>
+ <refsect1 id="cypher-droppropertyindex-parameters">
   <title>Parameters</title>
+
   <variablelist>
    <varlistentry>
     <term><literal>IF EXISTS</literal></term>
     <listitem>
      <para>
-      Only if target property index exists, then it drop the target property index.
+      Issue a notice instead of an error for an index that is not there. Other names in the
+      same statement are still dropped.
      </para>
     </listitem>
    </varlistentry>
 
    <varlistentry>
-    <term><replaceable class="parameter">property_index_name</replaceable></term>
+    <term><replaceable class="parameter">index_name</replaceable></term>
     <listitem>
      <para>
-      The property index name that to be dropped.
+      Unqualified name of the property index to drop. Several names may be given, separated
+      by commas, and they need not be on the same label.
      </para>
     </listitem>
    </varlistentry>
@@ -58,7 +88,7 @@ DROP PROPERTY INDEX [ IF EXISTS ] <replaceable class="parameter">property_index_
     <term><literal>CASCADE</literal></term>
     <listitem>
      <para>
-      Remove property index dependent objects too.
+      Drop the objects that depend on the index.
      </para>
     </listitem>
    </varlistentry>
@@ -67,42 +97,146 @@ DROP PROPERTY INDEX [ IF EXISTS ] <replaceable class="parameter">property_index_
     <term><literal>RESTRICT</literal></term>
     <listitem>
      <para>
-      Drop fails if any dependent objects exist to the vertex label
+      Refuse if anything depends on the index. This is the default. An index rarely has
+      dependents, so the two behave alike most of the time.
      </para>
     </listitem>
    </varlistentry>
   </variablelist>
  </refsect1>
 
- <refsect1>
+ <refsect1 id="cypher-droppropertyindex-examples">
   <title>Examples</title>
+
   <para>
-   To drop property index:
+   These examples do not use the graph in <xref linkend="agensgraph-example-data"/>. They
+   build a graph of their own and drop it at the end:
 <programlisting>
-DROP PROPERTY INDEX pidx1;
+CREATE GRAPH unindexed;
+SET graph_path = unindexed;
+CREATE VLABEL movie;
+CREATE VLABEL person;
+CREATE PROPERTY INDEX movie_title_idx ON movie (title);
+CREATE PROPERTY INDEX movie_year_idx ON movie (year);
+CREATE PROPERTY INDEX person_name_idx ON person (name);
 </programlisting>
   </para>
 
   <para>
-   To drop property index if exists:
+   Drop one index:
 <programlisting>
-DROP PROPERTY INDEX IF EXISTS pidx2;
+DROP PROPERTY INDEX movie_title_idx;
+
+DROP PROPERTY INDEX
 </programlisting>
   </para>
 
   <para>
-   To drop property index with CASCADE:
+   A second attempt is an error, because the index is gone:
 <programlisting>
-DROP PROPERTY INDEX IF EXISTS pidx3 CASCADE;
+DROP PROPERTY INDEX movie_title_idx;
+
+ERROR:  index "movie_title_idx" does not exist
 </programlisting>
+  </para>
+
+  <para>
+   <literal>IF EXISTS</literal> turns that into a notice:
+<programlisting>
+DROP PROPERTY INDEX IF EXISTS movie_title_idx;
+
+NOTICE:  index "movie_title_idx" does not exist, skipping
+DROP PROPERTY INDEX
+</programlisting>
+  </para>
+
+  <para>
+   Several names go in one statement, and they need not belong to the same label:
+<programlisting>
+DROP PROPERTY INDEX movie_year_idx, person_name_idx;
+
+DROP PROPERTY INDEX
+</programlisting>
+  </para>
+
+  <para>
+   The name cannot carry the graph:
+<programlisting>
+CREATE PROPERTY INDEX movie_title_idx ON movie (title);
+DROP PROPERTY INDEX unindexed.movie_title_idx;
+
+ERROR:  improper property index name
+</programlisting>
+  </para>
+
+  <para>
+   An index the statement does not own is refused. A label's primary key is one:
+<programlisting>
+DROP PROPERTY INDEX movie_pkey;
+
+ERROR:  "movie_pkey" is not property index
+</programlisting>
+  </para>
+
+  <para>
+   <command>DROP INDEX</command> takes the same index, under its schema qualified name:
+<programlisting>
+DROP INDEX unindexed.movie_title_idx;
+
+DROP INDEX
+</programlisting>
+  </para>
+
+  <para>
+   <literal>DROP GRAPH unindexed CASCADE</literal> drops the graph the examples built.
   </para>
  </refsect1>
- <refsect1>
+
+ <refsect1 id="cypher-droppropertyindex-notes">
+  <title>Notes</title>
+
+  <para>
+   Because the name is resolved in <varname>graph_path</varname>, an index that exists in
+   another graph reads as missing rather than as belonging to someone else. Two graphs may
+   hold indexes of the same name, so check <literal>\dGi</literal> before assuming which one
+   a bare name will reach.
+  </para>
+
+  <para>
+   To turn a label's indexes off without dropping them, for a bulk load say, use
+   <literal>ALTER VLABEL <replaceable class="parameter">label_name</replaceable> DISABLE
+   INDEX</literal> and <xref linkend="cypher-reindex"/> instead. That keeps the definitions
+   and only invalidates them.
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-droppropertyindex-compatibility">
+  <title>Compatibility</title>
+
+  <para>
+   ISO/IEC 39075:2024 has no index DDL. Its catalog modifying statements reach only schemas,
+   graphs and graph types, in clause 12, so this statement is an AgensGraph extension.
+  </para>
+
+  <para>
+   <command>DROP PROPERTY INDEX</command> corresponds to <command>DROP INDEX</command>, and
+   <literal>IF EXISTS</literal>, the name list and
+   <literal>CASCADE</literal> or <literal>RESTRICT</literal> behave as they do there. It
+   differs in three ways. The name is resolved in <varname>graph_path</varname> rather than
+   <varname>search_path</varname> and may not be schema qualified.
+   <literal>CONCURRENTLY</literal> is not accepted. And the two statements do not reach the
+   same set: <command>DROP INDEX</command> takes any index of a label, while this statement
+   takes only an index over properties.
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-droppropertyindex-see-also">
   <title>See Also</title>
   <simplelist type="inline">
    <member><xref linkend="cypher-createpropertyindex"/></member>
-   <member><xref linkend="sql-dropindex"/></member>
+   <member><xref linkend="cypher-reindex"/></member>
+   <member><xref linkend="cypher-dropconstraint"/></member>
+   <member><xref linkend="cypher-altervlabel"/></member>
   </simplelist>
  </refsect1>
-
 </refentry>

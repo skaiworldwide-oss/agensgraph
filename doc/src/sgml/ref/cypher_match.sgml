@@ -11,226 +11,634 @@ PostgreSQL documentation
  <refmeta>
   <refentrytitle>MATCH</refentrytitle>
   <manvolnum>7</manvolnum>
-  <refmiscinfo>SQL - Language Statements</refmiscinfo>
+  <refmiscinfo>Cypher - Language Statements</refmiscinfo>
  </refmeta>
 
  <refnamediv>
   <refname>MATCH</refname>
-  <refpurpose>describes the graph pattern</refpurpose>
+  <refpurpose>find every place in the graph where a pattern fits</refpurpose>
  </refnamediv>
 
  <refsynopsisdiv>
 <synopsis>
-[ OPTIONAL ] MATCH <replaceable class="parameter">path_pattern</replaceable> 
-  [ WHERE expression ]
+[ OPTIONAL ] MATCH <replaceable class="parameter">pattern</replaceable> [, <replaceable class="parameter">pattern</replaceable> ] ... [ WHERE <replaceable class="parameter">condition</replaceable> ]
+
+where <replaceable class="parameter">pattern</replaceable> is:
+
+    [ <replaceable class="parameter">path_variable</replaceable> = ] <replaceable class="parameter">node</replaceable> [ <replaceable class="parameter">edge</replaceable> <replaceable class="parameter">node</replaceable> ] ...
+
+where <replaceable class="parameter">node</replaceable> is:
+
+    ( [ <replaceable class="parameter">variable</replaceable> ] [ : <replaceable class="parameter">label</replaceable> [ ONLY ] ] [ { <replaceable class="parameter">property_map</replaceable> } ] )
+
+where <replaceable class="parameter">edge</replaceable> is one of:
+
+    -[ <replaceable class="parameter">edge_body</replaceable> ]-&gt;      left to right
+    &lt;-[ <replaceable class="parameter">edge_body</replaceable> ]-      right to left
+    -[ <replaceable class="parameter">edge_body</replaceable> ]-       either direction
+
+where <replaceable class="parameter">edge_body</replaceable> is:
+
+    [ <replaceable class="parameter">variable</replaceable> ] [ : <replaceable class="parameter">label</replaceable> [ ONLY ] ] [ * [ <replaceable class="parameter">min</replaceable> ] [ .. [ <replaceable class="parameter">max</replaceable> ] ] ] [ { <replaceable class="parameter">property_map</replaceable> } ]
 </synopsis>
  </refsynopsisdiv>
 
- <refsect1>
+ <refsect1 id="cypher-match-description">
   <title>Description</title>
+
   <para>
-    The <command>MATCH</command> clause is a clause that describes the graph pattern you want to find in the
-    database. This is the most basic way to import data.
+   <command>MATCH</command> reads the graph. It emits one row for every way its pattern can be
+   laid over the stored vertices and edges. Each named element of the pattern is bound to the
+   vertex, the edge or the path it matched, and every later clause in the pipeline sees those
+   bindings. A <command>MATCH</command> in the middle of a pipeline runs once per incoming row
+   and joins its matches to that row, the way a join adds rows to a relational query.
   </para>
+
+  <para>
+   The full pattern grammar is described in <xref linkend="cypher-path"/>.
+   <xref linkend="cypher-create"/> and <xref linkend="cypher-merge"/> write with the same
+   syntax. The points that matter when reading are these.
+  </para>
+
+  <para>
+   A pattern element with no variable is still matched. It just cannot be referred to later.
+   Leave the variable out when the element is there only to constrain the shape. A label
+   restricts an element to that label and to its child labels, and <literal>ONLY</literal>
+   restricts it to the label itself. Without a label, a node pattern matches every vertex in
+   the graph and an edge pattern matches every edge.
+  </para>
+
+  <para>
+   A property map in the pattern is an equality test on each key it lists. It is shorthand:
+   <literal>(m:movie {year: 1999})</literal> and
+   <literal>(m:movie) WHERE m.year = 1999</literal> match the same vertices. Commas separate
+   independent patterns inside one <command>MATCH</command>. Patterns that share a variable
+   are joined on it, and patterns that share nothing produce their Cartesian product.
+  </para>
+
+  <para>
+   Within one pattern match no edge is used twice. Node bindings may repeat, so a pattern can
+   close a triangle, but a two hop pattern never doubles back along the edge it arrived on. An
+   edge variable may be used once per pattern, and reusing it raises
+   <literal>duplicate variable</literal>. A node variable may be repeated, which constrains
+   both positions to the same vertex.
+  </para>
+
+  <para>
+   <command>MATCH</command> may lead a query or sit anywhere after the first clause. It never
+   ends one: a query has to finish with <xref linkend="cypher-return"/>,
+   <xref linkend="cypher-finish"/> or a write clause.
+  </para>
+
+  <refsect2 id="cypher-match-optional">
+   <title>OPTIONAL MATCH</title>
+
+   <para>
+    <literal>OPTIONAL MATCH</literal> takes the same patterns and matches them the same way.
+    The difference is what happens when a pattern finds nothing. A plain
+    <command>MATCH</command> drops the row. <literal>OPTIONAL MATCH</literal> keeps it and
+    binds every variable the pattern introduces to null. It is the graph counterpart of a
+    <literal>LEFT JOIN</literal>.
+   </para>
+
+   <para>
+    Variables already in scope keep their values. Only the variables the optional pattern
+    introduces can become null. Leading a query with <literal>OPTIONAL MATCH</literal> yields
+    one row of nulls when the pattern matches nothing, rather than no rows at all. Several
+    comma separated patterns in one clause are optional together: either they all match, or
+    the whole clause contributes nulls.
+   </para>
+
+   <para>
+    A <literal>WHERE</literal> attached to an <literal>OPTIONAL MATCH</literal> is part of the
+    optional match. A row whose pattern matched but whose condition failed is kept with nulls,
+    not dropped. To drop it, filter after the clause with <xref linkend="cypher-with"/> or
+    <xref linkend="cypher-filter"/>.
+   </para>
+
+   <para>
+    Reading a property of a null element gives null rather than an error, so
+    <literal>m.title</literal> is safe on a row the pattern did not match. Testing the variable
+    itself, <literal>WHERE m IS NULL</literal>, is the reliable way to detect that row, because
+    a matched vertex may legitimately be missing the property you would otherwise test. A
+    <xref linkend="cypher-set"/> whose target element is null skips that element instead of
+    failing.
+   </para>
+  </refsect2>
  </refsect1>
 
- <refsect1>
+ <refsect1 id="cypher-match-parameters">
   <title>Parameters</title>
+
   <variablelist>
    <varlistentry>
     <term><literal>OPTIONAL</literal></term>
     <listitem>
      <para>
-      The OPTIONAL MATCH clause, like the MATCH clause, is a clause describing the graph
-      pattern to be searched. The OPTIONAL MATCH clause differs from the MATCH clause in
-      that it returns NULL if there are no results to return.
+      Keeps an input row whose pattern found nothing, with the pattern's variables bound to
+      null.
      </para>
     </listitem>
    </varlistentry>
 
    <varlistentry>
-    <term><replaceable class="parameter">path_pattern</replaceable> </term>
+    <term><replaceable class="parameter">pattern</replaceable></term>
     <listitem>
      <para>
-      The graph pattern to be searched is described in the MATCH clause.
-      See both below example section and <xref linkend="cypher-path"/> for more details.
+      One path pattern, optionally preceded by
+      <replaceable class="parameter">path_variable</replaceable> and <literal>=</literal>.
+      Several patterns may be listed, separated by commas. See
+      <xref linkend="cypher-path"/>.
      </para>
     </listitem>
    </varlistentry>
 
    <varlistentry>
-    <term><replaceable class="parameter">expression</replaceable></term>
+    <term><replaceable class="parameter">path_variable</replaceable></term>
     <listitem>
      <para>
-      where <replaceable class="parameter">expression</replaceable> is
-      any expression that evaluates to a result of type
-      <type>boolean</type>.  Any row that does not satisfy this
-      condition will be eliminated from the output.  A row satisfies the
-      condition if it returns true when the actual row values are
-      substituted for any variable references.
+      Name bound to the whole matched path, as a value carrying its vertices and edges in
+      order. Read it with <literal>length()</literal>, <literal>nodes()</literal> and
+      <literal>relationships()</literal>.
+     </para>
+     <para>
+      This position takes a narrower set of names than an element variable does. An unreserved
+      keyword such as <literal>path</literal> is rejected here unless it is double quoted.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><replaceable class="parameter">variable</replaceable></term>
+    <listitem>
+     <para>
+      Name bound to the matched vertex or edge. Optional. Visible to every clause after this
+      one.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><replaceable class="parameter">label</replaceable></term>
+    <listitem>
+     <para>
+      A vertex label on a node pattern, an edge label on an edge pattern. One label per
+      element. Two labels separated by <literal>|</literal> are refused with
+      <literal>multiple types for relationship not supported</literal>.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><literal>ONLY</literal></term>
+    <listitem>
+     <para>
+      Excludes child labels, so the element matches rows of that label's own table and nothing
+      that inherits from it. It goes after the label and before the property map, and before
+      the <literal>*</literal> of a variable length edge. It requires a label, and without one
+      raises <literal>ONLY must have one label preceding it</literal>.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><replaceable class="parameter">property_map</replaceable></term>
+    <listitem>
+     <para>
+      A map literal, or a query parameter holding one. Each key is compared for equality
+      against the element's property of that name.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><replaceable class="parameter">min</replaceable>,
+     <replaceable class="parameter">max</replaceable></term>
+    <listitem>
+     <para>
+      Bounds on the number of edges a variable length edge pattern traverses.
+      <literal>*n</literal> is exactly <replaceable class="parameter">n</replaceable> hops,
+      <literal>*m..n</literal> is between <replaceable class="parameter">m</replaceable> and
+      <replaceable class="parameter">n</replaceable>, <literal>*m..</literal> is
+      <replaceable class="parameter">m</replaceable> or more, <literal>*..n</literal> is up to
+      <replaceable class="parameter">n</replaceable>, and a bare <literal>*</literal> is one or
+      more. A lower bound of <literal>0</literal> includes the zero length path, which binds
+      both ends of the pattern to the same vertex.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><replaceable class="parameter">condition</replaceable></term>
+    <listitem>
+     <para>
+      A boolean expression filtering the matches, evaluated with every variable in the pattern
+      bound. See <xref linkend="cypher-where"/>.
      </para>
     </listitem>
    </varlistentry>
   </variablelist>
  </refsect1>
 
- <refsect1>
+ <refsect1 id="cypher-match-examples">
   <title>Examples</title>
+
   <para>
-   To search with OPTIONAL MATCH:
-<programlisting>
-OPTIONAL MATCH (e:person {name:'Emily'})
-RETURN e.hobby;
-</programlisting>
+   These examples use the graph in <xref linkend="agensgraph-example-data"/>.
   </para>
 
   <para>
-   To find a vertex:
+   Find one vertex by a property. A vertex prints as
+   <literal>label[id]{properties}</literal>:
 <programlisting>
-MATCH (j {name: 'Jack'})
-RETURN j;
-</programlisting>
-  </para>
-
-  <para>
-   To find a edge:
-<programlisting>
-MATCH (j {name: 'Jack'})-[k:knows]->(e)
-RETURN k;
-</programlisting>
-  </para>
-
-  <para>
-   To find a property:
-<programlisting>
-MATCH (j {name: 'Jack'})
-RETURN j.age;
-</programlisting>
-  </para>
-
-  <para>
-   To find a path:
-<programlisting>
-MATCH p=(j {name: 'Jack'})-[k:knows]->(e)
+MATCH (p:person {name: 'Keanu Reeves'})
 RETURN p;
+
+                         p
+---------------------------------------------------
+ person[4.1]{"born": 1964, "name": "Keanu Reeves"}
+(1 row)
 </programlisting>
   </para>
 
   <para>
-   Delete a vertex:
+   Follow an edge in one direction. Both endpoints carry a label, and the edge is bound to
+   <literal>r</literal> so its <literal>role</literal> property can be projected:
 <programlisting>
-MATCH (m:person {name: 'Michael'})
-DELETE m;
+MATCH (p:person)-[r:acted_in]-&gt;(m:movie {title: 'The Matrix'})
+RETURN p.name AS actor, r.role AS role
+ORDER BY actor;
+
+        actor         |    role
+----------------------+------------
+ "Carrie-Anne Moss"   | "Trinity"
+ "Keanu Reeves"       | "Neo"
+ "Laurence Fishburne" | "Morpheus"
+(3 rows)
 </programlisting>
   </para>
 
   <para>
-   Delete an edge:
+   Leave out the elements you do not need. Here the edge has no variable and the far endpoint
+   has no label. Both still constrain the match, and neither costs a binding:
 <programlisting>
-MATCH (m:person {name: 'Michael'})-[l:likes]->(b:person {name: 'Bella'})
-DELETE l;
+MATCH (p:person {name: 'Christopher Nolan'})-[:directed]-&gt;(m)
+RETURN m.title AS film
+ORDER BY film;
+
+      film
+----------------
+ "Inception"
+ "Interstellar"
+(2 rows)
 </programlisting>
   </para>
 
   <para>
-   Add a property:
+   An edge pattern with no arrowhead matches the edge whichever way it points, and writing
+   arrowheads at both ends, <literal>&lt;-[:related_to]-&gt;</literal>, means the same thing.
+   <literal>Total Recall</literal> has one outgoing <literal>related_to</literal> edge and one
+   incoming one:
 <programlisting>
-MATCH (E:person {name: 'Edward'})
-SET E.habit = 'play the guitar';
+MATCH (m:movie {title: 'Total Recall'})-[:related_to]-(n:movie)
+RETURN n.title AS neighbour
+ORDER BY neighbour;
+
+  neighbour
+--------------
+ "Inception"
+ "The Matrix"
+(2 rows)
 </programlisting>
   </para>
 
   <para>
-   Modify property:
+   Join two patterns on a shared variable. Both patterns mention <literal>m</literal>, so they
+   are joined on it. Two consecutive <command>MATCH</command> clauses give the same result,
+   and so does one pattern that meets in the middle,
+   <literal>(a:person)-[:acted_in]-&gt;(m:movie)&lt;-[:directed]-(d:person)</literal>:
 <programlisting>
-MATCH (E:person {name: 'Edward'})
-SET E.name = 'Edward Williams';
+MATCH (a:person)-[:acted_in]-&gt;(m:movie), (d:person)-[:directed]-&gt;(m)
+WHERE m.title = 'The Matrix'
+RETURN a.name AS actor, d.name AS director
+ORDER BY actor, director;
+
+        actor         |     director
+----------------------+-------------------
+ "Carrie-Anne Moss"   | "Lana Wachowski"
+ "Carrie-Anne Moss"   | "Lilly Wachowski"
+ "Keanu Reeves"       | "Lana Wachowski"
+ "Keanu Reeves"       | "Lilly Wachowski"
+ "Laurence Fishburne" | "Lana Wachowski"
+ "Laurence Fishburne" | "Lilly Wachowski"
+(6 rows)
 </programlisting>
   </para>
 
   <para>
-   Remove a property, Using SET:
+   Put <replaceable class="parameter">variable</replaceable> and <literal>=</literal> in front
+   of a pattern to bind the path itself:
 <programlisting>
-MATCH (E:person {name: 'Edward'})
-SET E.hobby = NULL;
+MATCH p = (a:movie {title: 'The Matrix'})-[:related_to*1..3]-&gt;(b:movie)
+RETURN length(p) AS hops, [x IN nodes(p) | x.title] AS route
+ORDER BY hops, route;
+
+ hops |                                            route
+------+---------------------------------------------------------------------------------------------
+ 1    | ["The Matrix", "The Matrix Reloaded"]
+ 1    | ["The Matrix", "The Terminator"]
+ 1    | ["The Matrix", "Total Recall"]
+ 2    | ["The Matrix", "The Matrix Reloaded", "The Matrix Revolutions"]
+ 2    | ["The Matrix", "The Terminator", "Terminator 2: Judgment Day"]
+ 2    | ["The Matrix", "Total Recall", "Inception"]
+ 3    | ["The Matrix", "The Matrix Reloaded", "The Matrix Revolutions", "The Matrix Resurrections"]
+(7 rows)
 </programlisting>
   </para>
 
   <para>
-   Remove a property, Using REMOVE:
+   <literal>*</literal> on an edge pattern repeats it, and a fixed length behaves like the
+   same pattern written out longhand. A lower bound of <literal>0</literal> includes the zero
+   length path, so the starting vertex is one of the answers:
 <programlisting>
-MATCH (E:person {name: 'Edward'})
-REMOVE E.habit;
+MATCH (m:movie {title: 'The Matrix'})-[:related_to*0..1]-&gt;(n:movie)
+RETURN n.title AS reached
+ORDER BY reached;
+
+        reached
+-----------------------
+ "The Matrix"
+ "The Matrix Reloaded"
+ "The Terminator"
+ "Total Recall"
+(4 rows)
 </programlisting>
   </para>
 
   <para>
-   To find a path using WITH clause:
+   A label matches its child labels too, because a label is a table and a child label inherits
+   from it. <literal>ONLY</literal> narrows the match to the one label. Give
+   <literal>person</literal> a child label to see the difference:
 <programlisting>
-MATCH (j:person {name:'Jack'})-[:knows]-&gt;(common:person)&lt;-[:knows]-(other:person)
-WITH other, count(common) AS cnt
-WHERE to_jsonb(cnt) > 1
-RETURN other;
+CREATE VLABEL crew INHERITS (person);
+CREATE (:crew {name: 'Bill Pope', born: 1952});
+
+CREATE VLABEL
+UPDATE 1
+</programlisting>
+<programlisting>
+MATCH (p:person) RETURN count(*) AS people;
+
+ people
+--------
+ 29
+(1 row)
+</programlisting>
+<programlisting>
+MATCH (p:person ONLY) RETURN count(*) AS people;
+
+ people
+--------
+ 28
+(1 row)
 </programlisting>
   </para>
 
   <para>
-   Use "ONLY" to find result that excluding child label:
+   <literal>ONLY</literal> works the same on an edge pattern,
+   <literal>-[r:acted_in ONLY]-&gt;</literal>. Undo the setup with:
 <programlisting>
-MATCH (n:person ONLY) RETURN n;
-MATCH ()-[r:knows ONLY]->() RETURN r;
+MATCH (p:crew) DETACH DELETE p;
+DROP VLABEL crew;
+
+UPDATE 1
+DROP VLABEL
 </programlisting>
   </para>
 
   <para>
-   To find a single shortest path between two verteices:
+   A <literal>WHERE</literal> attached to a <command>MATCH</command> is part of the match, not
+   a later step:
 <programlisting>
-MATCH p = shortestpath( (j:person {name: 'Jack'})-[l:knows*..15]-(a:person {name: 'Alice'}) )
-RETURN p;
+MATCH (m:movie) WHERE m.year &gt; 2015
+RETURN m.title AS film, m.year AS year
+ORDER BY year, film;
+
+            film            | year
+----------------------------+------
+ "Blade Runner 2049"        | 2017
+ "The Matrix Resurrections" | 2021
+(2 rows)
 </programlisting>
   </para>
 
   <para>
-   To find all shortest paths between two verteices:
+   An edge pattern carries at most one label. Listing two is refused:
 <programlisting>
-MATCH p = allshortestpaths( (j:person {name: 'Jack'})-[l:knows*]-(a:person {name: 'Alice'}) )
-RETURN p;
+MATCH (p:person)-[r:acted_in|directed]-&gt;(m:movie) RETURN count(r);
+
+ERROR:  multiple types for relationship not supported
 </programlisting>
   </para>
 
   <para>
-   To find a dijkstra shortest paths between two verteices:
+   Match an unlabelled edge instead and test its label in <literal>WHERE</literal>.
+   <literal>label()</literal> returns the element's label as a string, so
+   <literal>IN</literal> over a list of names is the general form, and the only way to match a
+   set of edge labels:
 <programlisting>
-MATCH (v1:v {id: 0}), (v2:v {id: 3}),
-      p=dijkstra((v2)-[e:e]-(v1), e.weight)
-RETURN nodes(p);
+MATCH (p:person)-[r]-&gt;(m:movie)
+WHERE label(r) IN ['acted_in', 'directed']
+RETURN count(r) AS edges;
+
+ edges
+-------
+ 46
+(1 row)
 </programlisting>
   </para>
 
   <para>
-   To find an weighted dijkstra shortest paths between two verteices:
+   <literal>OPTIONAL MATCH</literal> keeps the rows the pattern does not match. Two of these
+   three people directed nothing, so <literal>m</literal> is null for them and
+   <literal>m.title</literal> is null too:
 <programlisting>
-MATCH (v1:v {id: 0}), (v2:v {id: 3})
-RETURN dijkstra((v1)-[e:e]->(v2), e.weight, LIMIT 2);
+MATCH (p:person) WHERE p.born &gt; 1974
+OPTIONAL MATCH (p)-[:directed]-&gt;(m:movie)
+RETURN p.name AS person, m.title AS directed
+ORDER BY person;
+
+      person       | directed
+-------------------+-----------
+ "Neill Blomkamp"  | "Elysium"
+ "Ryan Gosling"    |
+ "Sam Worthington" |
+(3 rows)
 </programlisting>
   </para>
 
   <para>
-   To find a dijkstra shortest paths between two verteices with condition:
+   A condition inside an <literal>OPTIONAL MATCH</literal> is part of the match.
+   <literal>Jurassic Park</literal> has one actor, Sam Neill, born 1947, so the film survives
+   with a null actor:
 <programlisting>
-MATCH (v1:v {id: 0}), (v2:v {id: 3}),
-    p=dijkstra((v1)-[e:e]->(v2), e.weight, e.weight >= 5)
-RETURN nodes(p);
+MATCH (m:movie) WHERE m.genre = 'Adventure'
+OPTIONAL MATCH (p:person)-[:acted_in]-&gt;(m) WHERE p.born &gt; 1950
+RETURN m.title AS film, p.name AS actor
+ORDER BY film, actor;
+
+      film       | actor
+-----------------+-------
+ "Jurassic Park" |
+(1 row)
+</programlisting>
+  </para>
+
+  <para>
+   With the same condition applied after the clause, the film is dropped:
+<programlisting>
+MATCH (m:movie) WHERE m.genre = 'Adventure'
+OPTIONAL MATCH (p:person)-[:acted_in]-&gt;(m)
+WITH m, p WHERE p.born &gt; 1950
+RETURN m.title AS film, p.name AS actor
+ORDER BY film, actor;
+
+ film | actor
+------+-------
+(0 rows)
+</programlisting>
+  </para>
+
+  <para>
+   Leading a query with <literal>OPTIONAL MATCH</literal> gives one row, with
+   <literal>m</literal> null. A plain <command>MATCH</command> here returns no rows at all:
+<programlisting>
+OPTIONAL MATCH (m:movie {title: 'Nope'})
+RETURN m;
+
+ m
+---
+
+(1 row)
+</programlisting>
+  </para>
+
+  <para>
+   <literal>Gattaca</literal> has no outgoing <literal>related_to</literal> edge, so
+   <literal>n</literal> is null and the <xref linkend="cypher-set"/> writes nothing:
+<programlisting>
+MATCH (m:movie {title: 'Gattaca'})
+OPTIONAL MATCH (m)-[:related_to]-&gt;(n:movie)
+SET n.checked = true
+RETURN m.title AS film, n.title AS related;
+
+   film    | related
+-----------+---------
+ "Gattaca" |
+(1 row)
 </programlisting>
   </para>
  </refsect1>
 
-  <refsect1>
+ <refsect1 id="cypher-match-notes">
+  <title>Notes</title>
+
+  <para>
+   A <command>MATCH</command> may not follow an <literal>OPTIONAL MATCH</literal> directly. A
+   pattern leaves state behind for the next clause to resolve, and an
+   <literal>OPTIONAL MATCH</literal> strands it on the nullable side of its join:
+<programlisting>
+MATCH (p:person)
+OPTIONAL MATCH (p)-[:directed]-&gt;(m:movie)
+MATCH (m)-[:related_to]-&gt;(x:movie)
+RETURN count(*);
+
+ERROR:  MATCH right after OPTIONAL MATCH is not allowed
+HINT:  Use a WITH clause between them
+</programlisting>
+  </para>
+
+  <para>
+   The named path variable is parsed more narrowly than an element variable.
+   <literal>(path)</literal> is an acceptable node variable, but
+   <literal>MATCH path = ...</literal> is a syntax error because <literal>path</literal> is a
+   keyword. Write <literal>MATCH p = ...</literal>, or double quote the name.
+  </para>
+
+  <para>
+   A label test belongs in <literal>label(n) = '...'</literal> and not in a colon in
+   <literal>WHERE</literal>. <literal>WHERE n:movie</literal> is a syntax error, and so is a
+   bare pattern used as a predicate: <literal>WHERE (m)-[:related_to]-&gt;(:movie)</literal>
+   does not parse. Write
+   <literal>WHERE EXISTS { MATCH (m)-[:related_to]-&gt;(:movie) }</literal> instead. See
+   <xref linkend="cypher-subqueryexpressions"/>.
+  </para>
+
+  <para>
+   A range whose lower bound is above its upper bound is rejected at parse time with
+   <literal>invalid range</literal>.
+  </para>
+
+  <para>
+   A property map compares jsonb values, and so does a comparison against a property. That
+   matters when the literal's type does not match the stored one. See
+   <xref linkend="cypher-where"/>.
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-match-compatibility">
+  <title>Compatibility</title>
+
+  <para>
+   <command>MATCH</command> implements the GQL match statement of ISO/IEC 39075:2024, section
+   14.4. <literal>OPTIONAL MATCH</literal> is the optional match statement of the same
+   section.
+  </para>
+
+  <para>
+   The standard's label expression, section 16.8, combines label names with
+   <literal>|</literal> for disjunction, <literal>&amp;</literal> for conjunction and
+   <literal>!</literal> for negation. AgensGraph accepts a single label name per pattern
+   element, so none of the three is available.
+   <literal>-[r:acted_in|directed]-&gt;</literal> raises
+   <literal>multiple types for relationship not supported</literal>, and
+   <literal>-[r:acted_in|:directed]-&gt;</literal> is a syntax error. openCypher spells the
+   disjunction with a pipe too, and it is refused here on a fixed length edge, on a variable
+   length edge and inside <literal>shortestpath</literal> alike. Use
+   <literal>WHERE label(r) IN [...]</literal>.
+  </para>
+
+  <para>
+   The standard writes a label test as <literal>n IS LABELED movie</literal> or
+   <literal>n:movie</literal>, section 19.9. AgensGraph accepts neither spelling. Use
+   <literal>label(n) = 'movie'</literal>.
+  </para>
+
+  <para>
+   The standard's element pattern filler, section 16.7, holds a variable declaration, a label
+   expression and a predicate, and nothing else. There is no <literal>ONLY</literal>.
+   AgensGraph adds it because a label here is a table that child labels inherit from, so a
+   label match is a match over an inheritance tree.
+  </para>
+
+  <para>
+   The standard's optional operand, section 14.4, also allows a braced or parenthesized block
+   of match statements, <literal>OPTIONAL { MATCH ... MATCH ... }</literal>. AgensGraph accepts
+   <literal>OPTIONAL</literal> only directly in front of <command>MATCH</command> and of
+   <xref linkend="cypher-call"/>. The block form is a syntax error.
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-match-see-also">
   <title>See Also</title>
   <simplelist type="inline">
-   <member><xref linkend="cypher-merge"/></member>
+   <member><xref linkend="cypher-path"/></member>
+   <member><xref linkend="cypher-where"/></member>
    <member><xref linkend="cypher-create"/></member>
+   <member><xref linkend="cypher-merge"/></member>
+   <member><xref linkend="cypher-with"/></member>
+   <member><xref linkend="cypher-load"/></member>
+   <member><xref linkend="cypher-subqueryexpressions"/></member>
   </simplelist>
  </refsect1>
 </refentry>
-

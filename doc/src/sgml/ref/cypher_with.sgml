@@ -11,45 +11,96 @@ PostgreSQL documentation
  <refmeta>
   <refentrytitle>WITH</refentrytitle>
   <manvolnum>7</manvolnum>
-  <refmiscinfo>SQL - Language Statements</refmiscinfo>
+  <refmiscinfo>Cypher - Language Statements</refmiscinfo>
  </refmeta>
 
  <refnamediv>
   <refname>WITH</refname>
-  <refpurpose>connects multiple cypher queries</refpurpose>
+  <refpurpose>project the working rows and pass them to the next clause</refpurpose>
  </refnamediv>
 
  <refsynopsisdiv>
 <synopsis>
-
-WITH [ DISTINCT ] { * | <replaceable class="parameter">expression</replaceable> [ AS <replaceable class="parameter">output_name</replaceable> ] } [ , ... ]
-  [ ORDER BY <replaceable class="parameter">expression</replaceable> [ ASC | DESC ] [ NULLS { FIRST | LAST } ] [ , ... ] ]
-  [ SKIP <replaceable class="parameter">expression</replaceable> ] 
-  [ LIMIT <replaceable class="parameter">count</replaceable> ] 
-  [ WHERE <replaceable class="parameter">expression</replaceable> ]
-
+WITH [ DISTINCT | ALL ] { * | <replaceable class="parameter">expression</replaceable> [ AS <replaceable class="parameter">alias</replaceable> ] } [, ...] [ WHERE <replaceable class="parameter">condition</replaceable> ]
 </synopsis>
  </refsynopsisdiv>
 
- <refsect1>
+ <refsect1 id="cypher-with-description">
   <title>Description</title>
+
   <para>
-    The <command>WITH</command> clause is a clause that connects multiple cypher queries.
-    It passes the result of the preceding WITH clause query to the following WITH clause query. 
-    That is, the WITH clause can be regarded as a RETURN clause that passes the value of the preceding query to
-    the input of the following query.
+   <command>WITH</command> closes one section of a query and opens the next. It evaluates its
+   expressions once per row exactly as <xref linkend="cypher-return"/> does, then hands the
+   resulting columns to the clause that follows. It is a <command>RETURN</command> in the
+   middle of a query.
+  </para>
+
+  <para>
+   Three jobs need it. Aggregating and then filtering or matching further, because an
+   aggregate cannot appear in a <xref linkend="cypher-where"/>. Computing a value once and
+   using it in several later clauses. Cutting the rows down before the expensive part of the
+   query runs.
+  </para>
+
+  <para>
+   <command>WITH</command> replaces the scope. Only what it projects survives. A variable it
+   omits is gone, and naming that variable later raises
+   <literal>variable does not exist</literal>. Write <literal>WITH *, expr AS v</literal>, or
+   use <xref linkend="cypher-let"/>, to add a column without dropping any.
+  </para>
+
+  <para>
+   Each output name has to be unique within the clause. Projecting the same name twice raises
+   <literal>WITH passes on "..." more than once</literal>. <command>RETURN</command> has no
+   such rule, because no later clause has to resolve its names.
+  </para>
+
+  <para>
+   The <literal>WHERE</literal> of a <command>WITH</command> runs after the projection and
+   after any grouping, so it can test the alias of an aggregate.
+   <command>ORDER BY</command>, <command>SKIP</command>, <literal>OFFSET</literal> and
+   <command>LIMIT</command> are clauses in their own right that follow the whole
+   <command>WITH</command>, and so follow its <literal>WHERE</literal> too: the filter runs
+   first and the paging applies to what survives. See <xref linkend="cypher-orderby"/>,
+   <xref linkend="cypher-skip"/> and <xref linkend="cypher-limit"/>.
+  </para>
+
+  <para>
+   <command>WITH</command> can neither open a query nor end one. At the start of a statement
+   <literal>WITH</literal> is the SQL common table expression, a different clause taking a
+   name and a parenthesized query. <command>LET</command> has no such collision and may open
+   a query.
   </para>
  </refsect1>
 
- <refsect1>
+ <refsect1 id="cypher-with-parameters">
   <title>Parameters</title>
+
   <variablelist>
    <varlistentry>
     <term><literal>DISTINCT</literal></term>
     <listitem>
      <para>
-      If <literal>DISTINCT</literal> is specified, all duplicate rows are
-      removed from the result set.
+      Removes duplicate rows from the projection before passing them on.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><literal>ALL</literal></term>
+    <listitem>
+     <para>
+      Keeps duplicate rows. This is the default.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><literal>*</literal></term>
+    <listitem>
+     <para>
+      Carries every named binding in scope through unchanged. Combine it with further items,
+      as in <literal>WITH *, expr AS v</literal>, to add a column without dropping any.
      </para>
     </listitem>
    </varlistentry>
@@ -58,114 +109,192 @@ WITH [ DISTINCT ] { * | <replaceable class="parameter">expression</replaceable> 
     <term><replaceable class="parameter">expression</replaceable></term>
     <listitem>
      <para>
-      The cypher expression that you want to use from previous cypher clauses.
-      See <xref linkend="cypher-expr"/> for more details.
+      Any Cypher expression over the bindings in scope, including an aggregate. See
+      <xref linkend="cypher-expr"/>.
      </para>
     </listitem>
    </varlistentry>
 
    <varlistentry>
-    <term><literal>ORDER BY</literal></term>
+    <term><replaceable class="parameter">alias</replaceable></term>
     <listitem>
      <para>
-      If the <literal>ORDER BY</literal> clause is specified, the
-      returned rows are sorted in the specified order.  If
-      <literal>ORDER BY</literal> is not given, the rows are returned
-      in whatever order the system finds fastest to produce.  (See
-      <xref linkend="sql-orderby"/> below.)
+      The name the next clause uses. It is required for anything that is not a plain variable
+      reference, because a later clause has to be able to name it.
      </para>
     </listitem>
    </varlistentry>
 
    <varlistentry>
-    <term><literal>ASC | DESC</literal></term>
+    <term><replaceable class="parameter">condition</replaceable></term>
     <listitem>
      <para>
-      Optionally one can add the key word <literal>ASC</literal> (ascending) or
-      <literal>DESC</literal> (descending) after any expression in the
-      <literal>ORDER BY</literal> clause.  If not specified, <literal>ASC</literal> is
-      assumed by default.  Alternatively, a specific ordering operator
-      name can be specified in the <literal>USING</literal> clause.
-      An ordering operator must be a less-than or greater-than
-      member of some B-tree operator family.
-      <literal>ASC</literal> is usually equivalent to <literal>USING &lt;</literal> and
-      <literal>DESC</literal> is usually equivalent to <literal>USING &gt;</literal>.
-      (But the creator of a user-defined data type can define exactly what the
-      default sort ordering is, and it might correspond to operators with other
-      names.)
-     </para>
-    </listitem>
-   </varlistentry>
-
-   <varlistentry>
-    <term><literal>NULLS { LAST | FIRST }</literal></term>
-    <listitem>
-     <para>
-      If <literal>NULLS LAST</literal> is specified, null values sort after all
-      non-null values; if <literal>NULLS FIRST</literal> is specified, null values
-      sort before all non-null values.  If neither is specified, the default
-      behavior is <literal>NULLS LAST</literal> when <literal>ASC</literal> is specified
-      or implied, and <literal>NULLS FIRST</literal> when <literal>DESC</literal> is specified
-      (thus, the default is to act as though nulls are larger than non-nulls).
-      When <literal>USING</literal> is specified, the default nulls ordering depends
-      on whether the operator is a less-than or greater-than operator.
-     </para>
-    </listitem>
-   </varlistentry>
-
-   <varlistentry>
-    <term><literal>SKIP</literal></term>
-    <listitem>
-     <para>
-      <command>SKIP</command> clause will changes the search start location.
-      The number of patterns specified in the SKIP clause will be skipped in the result.
-     </para>
-    </listitem>
-   </varlistentry>
-
-   <varlistentry>
-    <term><literal>LIMIT</literal></term>
-    <listitem>
-     <para>
-      The parameter <replaceable class="parameter">count</replaceable> specifies the
-      maximum number of rows to return.
-     </para>
-    </listitem>
-   </varlistentry>
-
-   <varlistentry>
-    <term><literal>WHERE</literal> <replaceable class="parameter">expression</replaceable></term>
-    <listitem>
-     <para>
-      where <replaceable class="parameter">expression</replaceable> is
-      any expression that evaluates to a result of type
-      <type>boolean</type>.  Any row that does not satisfy this
-      condition will be eliminated from the output.
+      A boolean expression filtering the projected rows, evaluated after the projection, so it
+      can read an alias defined in this clause.
      </para>
     </listitem>
    </varlistentry>
   </variablelist>
  </refsect1>
 
- <refsect1>
+ <refsect1 id="cypher-with-examples">
   <title>Examples</title>
-  <para>
-   Extract the variable from the first MATCH query and filter the result.
-<programlisting>
 
-MATCH (j:person {name:'Jack'})-[:knows]-&gt;(common:person)&lt;-[:knows]-(other:person)
-WITH other, count(common) AS cnt
-WHERE to_jsonb(cnt) > 1
-RETURN other;
+  <para>
+   These examples use the graph in <xref linkend="agensgraph-example-data"/>.
+  </para>
+
+  <para>
+   Aggregate, then filter on the aggregate. <literal>count(m)</literal> groups by
+   <literal>p.name</literal> and the <literal>WHERE</literal> tests the resulting
+   <literal>films</literal>. In a <literal>MATCH ... WHERE</literal> the same condition raises
+   <literal>aggregate functions are not allowed in WHERE</literal>:
+<programlisting>
+MATCH (p:person)-[:acted_in]-&gt;(m:movie)
+WITH p.name AS actor, count(m) AS films
+WHERE films &gt; 1
+RETURN actor, films
+ORDER BY films DESC, actor;
+
+          actor          | films
+-------------------------+-------
+ "Keanu Reeves"          | 4
+ "Arnold Schwarzenegger" | 3
+ "Carrie-Anne Moss"      | 2
+ "Harrison Ford"         | 2
+ "Laurence Fishburne"    | 2
+ "Linda Hamilton"        | 2
+(6 rows)
+</programlisting>
+  </para>
+
+  <para>
+   Add a column without losing the others. <literal>WITH *</literal> keeps
+   <literal>p</literal> and <literal>m</literal> in scope, so <command>RETURN</command> can
+   still read their properties:
+<programlisting>
+MATCH (p:person)-[:directed]-&gt;(m:movie)
+WITH *, m.year - p.born AS age_at_release
+RETURN p.name AS director, m.title AS film, age_at_release
+ORDER BY age_at_release
+LIMIT 3;
+
+     director      |       film       | age_at_release
+-------------------+------------------+----------------
+ "James Cameron"   | "The Terminator" | 30
+ "Lilly Wachowski" | "The Matrix"     | 32
+ "Andrew Niccol"   | "Gattaca"        | 33
+(3 rows)
+</programlisting>
+  </para>
+
+  <para>
+   A variable the projection omits is out of scope afterwards:
+<programlisting>
+MATCH (p:person)-[:acted_in]-&gt;(m:movie)
+WITH m
+RETURN p.name;
+
+ERROR:  variable does not exist
+LINE 3: RETURN p.name;
+               ^
+</programlisting>
+  </para>
+
+  <para>
+   Deduplicate in the middle of a query:
+<programlisting>
+MATCH (p:person)-[:acted_in]-&gt;(m:movie)
+WITH DISTINCT m.genre AS genre
+RETURN genre
+ORDER BY genre;
+
+    genre
+-------------
+ "Action"
+ "Adventure"
+ "Sci-Fi"
+(3 rows)
+</programlisting>
+  </para>
+
+  <para>
+   The <literal>WHERE</literal> belongs to the <command>WITH</command>, while
+   <command>ORDER BY</command> and <command>LIMIT</command> are the clauses after it, so the
+   <command>LIMIT</command> counts only rows that passed the filter:
+<programlisting>
+MATCH (m:movie)
+WITH m.title AS film, m.genre AS genre WHERE genre = 'Action'
+ORDER BY film LIMIT 3
+RETURN film, genre;
+
+             film             |  genre
+------------------------------+----------
+ "Terminator 2: Judgment Day" | "Action"
+ "The Avengers"               | "Action"
+ "The Matrix"                 | "Action"
+(3 rows)
+</programlisting>
+  </para>
+
+  <para>
+   Two items of one <command>WITH</command> cannot share an output name. Carrying a variable
+   and then aliasing something else to its name collides the same way, so
+   <literal>WITH m, m.title AS m</literal> raises the same error:
+<programlisting>
+MATCH (m:movie)
+WITH m.title AS film, m.genre AS film
+RETURN film;
+
+ERROR:  WITH passes on "film" more than once
+LINE 2: WITH m.title AS film, m.genre AS film
+                              ^
 </programlisting>
   </para>
  </refsect1>
 
-  <refsect1>
+ <refsect1 id="cypher-with-notes">
+  <title>Notes</title>
+
+  <para>
+   The <literal>WHERE</literal> has to be written directly after the projection list, before
+   any <command>ORDER BY</command>, <command>SKIP</command> or <command>LIMIT</command>.
+   Putting it later is a syntax error:
+   <literal>WITH ... ORDER BY film WHERE genre = 'Action'</literal> does not parse.
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-with-compatibility">
+  <title>Compatibility</title>
+
+  <para>
+   ISO/IEC 39075:2024 has no <command>WITH</command> clause. It splits the work three ways:
+   the return statement of section 14.11 projects and ends a query, the LET statement of
+   section 14.7 adds bindings without dropping any, and the next statement of section 9.2
+   composes two whole queries. AgensGraph implements all three, as
+   <xref linkend="cypher-return"/>, <xref linkend="cypher-let"/> and
+   <xref linkend="cypher-next"/>. None of them drops a binding partway through a query, which
+   is what <command>WITH</command> is for.
+  </para>
+
+  <para>
+   <command>WITH</command> is the openCypher spelling and behaves as it does there, including
+   its <literal>WHERE</literal>, its <literal>DISTINCT</literal> and its
+   <literal>*</literal>. openCypher writes <command>ORDER BY</command>,
+   <command>SKIP</command> and <command>LIMIT</command> as trailing modifiers of a
+   <command>WITH</command>; AgensGraph accepts that and also accepts each of the three as a
+   clause of its own. <literal>ALL</literal> is not part of openCypher.
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-with-see-also">
   <title>See Also</title>
   <simplelist type="inline">
-   <member><xref linkend="cypher-match"/></member>
+   <member><xref linkend="cypher-return"/></member>
+   <member><xref linkend="cypher-let"/></member>
+   <member><xref linkend="cypher-where"/></member>
+   <member><xref linkend="cypher-filter"/></member>
+   <member><xref linkend="cypher-next"/></member>
   </simplelist>
  </refsect1>
 </refentry>
-

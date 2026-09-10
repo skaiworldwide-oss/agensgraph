@@ -11,37 +11,66 @@ PostgreSQL documentation
  <refmeta>
   <refentrytitle>DELETE</refentrytitle>
   <manvolnum>7</manvolnum>
-  <refmiscinfo>SQL - Language Statements</refmiscinfo>
+  <refmiscinfo>Cypher - Language Statements</refmiscinfo>
  </refmeta>
 
  <refnamediv>
   <refname>DELETE</refname>
-  <refpurpose>removes vertices or edges</refpurpose>
+  <refpurpose>remove vertices and edges from the graph</refpurpose>
  </refnamediv>
 
  <refsynopsisdiv>
 <synopsis>
-[ DETACH ] DELETE <replaceable class="parameter">expression</replaceable> [ , ... ]
+[ DETACH ] DELETE <replaceable class="parameter">expression</replaceable> [, <replaceable class="parameter">expression</replaceable> ] ...
 </synopsis>
  </refsynopsisdiv>
 
- <refsect1>
+ <refsect1 id="cypher-delete-description">
   <title>Description</title>
+
   <para>
-    The <command>DELETE</command> clause is a clause that removes vertices or edges.
+   <command>DELETE</command> removes the graph elements its expressions evaluate to. It needs
+   them bound first, so it always follows a clause that found them.
+  </para>
+
+  <para>
+   A plain <command>DELETE</command> refuses a vertex that still has edges. Deleting it would
+   leave edges pointing at nothing, so the clause raises an error and the transaction rolls
+   back. <literal>DETACH DELETE</literal> deletes the vertex's edges first and then the vertex.
+   Use it whenever the vertex might be connected.
+  </para>
+
+  <para>
+   Deleting an edge never needs <literal>DETACH</literal>, and never touches its endpoints.
+   Several expressions may be listed. They are deleted in the order given, so listing an edge
+   before its endpoints works without <literal>DETACH</literal>.
+  </para>
+
+  <para>
+   <command>DELETE</command> runs once per incoming row. An element already deleted by an
+   earlier row is not an error.
+  </para>
+
+  <para>
+   Each expression has to be a vertex, an edge or a path. A property reference is not accepted.
+   To remove a property, use <xref linkend="cypher-remove"/>.
+  </para>
+
+  <para>
+   <command>DELETE</command> may end a query. Add a <xref linkend="cypher-return"/> to see what
+   went.
   </para>
  </refsect1>
 
- <refsect1>
+ <refsect1 id="cypher-delete-parameters">
   <title>Parameters</title>
+
   <variablelist>
    <varlistentry>
     <term><literal>DETACH</literal></term>
     <listitem>
      <para>
-      If the DETACH keyword is used together, the edges associated with the vertices are
-      also removed. If the vertices you want to remove are linked to other vertices and edges,
-      you may skip the edge-removing process.
+      Delete each vertex's connected edges along with it.
      </para>
     </listitem>
    </varlistentry>
@@ -50,57 +79,171 @@ PostgreSQL documentation
     <term><replaceable class="parameter">expression</replaceable></term>
     <listitem>
      <para>
-      Find the vertices or edges that you want to remove through the MATCH clause. 
-      See <xref linkend="cypher-expr"/> for more details.
+      An expression yielding a vertex, an edge or a path, usually a variable bound by a
+      <xref linkend="cypher-match"/>.
      </para>
     </listitem>
    </varlistentry>
   </variablelist>
  </refsect1>
 
- <refsect1>
+ <refsect1 id="cypher-delete-examples">
   <title>Examples</title>
 
   <para>
-   Find the vertices you want to remove through the MATCH clause and remove them by
-   marking corresponding variables in the DELETE clause.
+   These examples use the graph in <xref linkend="agensgraph-example-data"/>.
+  </para>
+
+  <para>
+   Build a subgraph to remove:
 <programlisting>
-MATCH (m:person {name: 'Michael'})
-DELETE m;
+CREATE (:movie {title: 'Tenet', year: 2020, genre: 'Action'});
+MATCH (d:person {name: 'Christopher Nolan'}), (m:movie {title: 'Tenet'})
+CREATE (d)-[:directed]-&gt;(m);
+MATCH (m:movie {title: 'Tenet'})
+CREATE (a:person {name: 'Elizabeth Debicki', born: 1990})-[:acted_in {role: 'Kat'}]-&gt;(m);
+
+UPDATE 1
+UPDATE 1
+UPDATE 2
+</programlisting>
+   <literal>Tenet</literal> now has two edges:
+<programlisting>
+MATCH (m:movie {title: 'Tenet'})-[r]-(x)
+RETURN label(r) AS edge, count(*) AS n
+ORDER BY edge;
+
+    edge    | n
+------------+---
+ "acted_in" | 1
+ "directed" | 1
+(2 rows)
 </programlisting>
   </para>
 
   <para>
-   Find the edges you want to remove with the MATCH clause and remove them by
-   marking corresponding variables in the DELETE clause.
+   A plain <command>DELETE</command> refuses that vertex:
 <programlisting>
-MATCH (m:person {name: 'Michael'})-[l:likes]->(b:person {name: 'Bella'})
-DELETE l;
+MATCH (m:movie {title: 'Tenet'}) DELETE m;
+
+ERROR:  Vertex with connected edges cannot be removed
+HINT:  Use DETACH DELETE or remove connected edges before deleting the vertex.
+</programlisting>
+   Nothing is deleted. The graph never holds an edge whose endpoint is gone.
+  </para>
+
+  <para>
+   An edge needs no <literal>DETACH</literal>, and its endpoints survive:
+<programlisting>
+MATCH (:person {name: 'Elizabeth Debicki'})-[r:acted_in]-&gt;(:movie {title: 'Tenet'})
+DELETE r;
+
+UPDATE 1
+</programlisting>
+   With no edges left, a plain <command>DELETE</command> succeeds on the actor. A
+   <command>RETURN</command> after it reports the element that was removed:
+<programlisting>
+MATCH (p:person {name: 'Elizabeth Debicki'})
+DELETE p
+RETURN properties(p) AS removed;
+
+                   removed
+---------------------------------------------
+ {"born": 1990, "name": "Elizabeth Debicki"}
+(1 row)
 </programlisting>
   </para>
 
   <para>
-   To find a property:
+   <literal>Tenet</literal> still has the <literal>directed</literal> edge.
+   <literal>DETACH DELETE</literal> takes both, and the tag counts the two elements:
 <programlisting>
-MATCH (j {name: 'Jack'})
-RETURN j.age;
+MATCH (m:movie {title: 'Tenet'}) DETACH DELETE m;
+
+UPDATE 2
+</programlisting>
+   Christopher Nolan is untouched and keeps his other edges:
+<programlisting>
+MATCH (p:person {name: 'Christopher Nolan'})-[:directed]-&gt;(m:movie)
+RETURN m.title AS film
+ORDER BY film;
+
+      film
+----------------
+ "Inception"
+ "Interstellar"
+(2 rows)
 </programlisting>
   </para>
 
   <para>
-   Delete a vertex with all its relationships
+   List the edge before the vertices it joins and no <literal>DETACH</literal> is needed,
+   because by the time the vertices are deleted the edge is gone:
 <programlisting>
-MATCH (m:person {name: 'Michael'})
-DETACH DELETE m;
+CREATE (:person {name: 'Extra Two'});
+MATCH (a:person {name: 'Extra Two'}) CREATE (a)-[:acted_in]-&gt;(:movie {title: 'Scratch'});
+
+UPDATE 1
+UPDATE 2
+</programlisting>
+<programlisting>
+MATCH (a:person {name: 'Extra Two'})-[r:acted_in]-&gt;(m:movie {title: 'Scratch'})
+DELETE r, a, m;
+
+UPDATE 3
 </programlisting>
   </para>
  </refsect1>
 
-  <refsect1>
+ <refsect1 id="cypher-delete-notes">
+  <title>Notes</title>
+
+  <para>
+   <command>DELETE</command> takes elements, not properties. Naming a property is refused
+   rather than quietly ignored:
+<programlisting>
+MATCH (m:movie {title: 'The Matrix'}) DELETE m.title;
+
+ERROR:  node, relationship, or path is expected
+LINE 1: MATCH (m:movie {title: 'The Matrix'}) DELETE m.title;
+                                                     ^
+</programlisting>
+   Use <xref linkend="cypher-remove"/> for a property, or <literal>SET m.title = NULL</literal>.
+  </para>
+
+  <para>
+   <literal>DETACH DELETE</literal> on a busy vertex can delete a great many edges in one
+   statement, and all of it is one transaction. Count first, with
+   <literal>MATCH (v)-[r]-() RETURN count(r)</literal>, when you are not sure how large the
+   effect will be.
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-delete-compatibility">
+  <title>Compatibility</title>
+
+  <para>
+   <command>DELETE</command> implements the GQL delete statement of ISO/IEC 39075:2024 section
+   13.5. The standard writes it <literal>[ DETACH | NODETACH ] DELETE</literal>, with
+   <literal>NODETACH</literal> the implicit default. AgensGraph implements that default but not
+   the keyword: <literal>NODETACH DELETE m</literal> is a syntax error. Write a plain
+   <command>DELETE</command>, which means the same thing.
+  </para>
+
+  <para>
+   openCypher spells the clause the same way, with the same <literal>DETACH</literal> keyword
+   and the same refusal to strand an edge, and AgensGraph accepts it unchanged.
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-delete-see-also">
   <title>See Also</title>
   <simplelist type="inline">
+   <member><xref linkend="cypher-remove"/></member>
    <member><xref linkend="cypher-match"/></member>
+   <member><xref linkend="cypher-create"/></member>
+   <member><xref linkend="cypher-merge"/></member>
+   <member><xref linkend="cypher-dropvlabel"/></member>
   </simplelist>
  </refsect1>
 </refentry>
-

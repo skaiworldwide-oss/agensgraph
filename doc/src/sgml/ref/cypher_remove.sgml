@@ -11,51 +11,237 @@ PostgreSQL documentation
  <refmeta>
   <refentrytitle>REMOVE</refentrytitle>
   <manvolnum>7</manvolnum>
-  <refmiscinfo>SQL - Language Statements</refmiscinfo>
+  <refmiscinfo>Cypher - Language Statements</refmiscinfo>
  </refmeta>
 
  <refnamediv>
   <refname>REMOVE</refname>
-  <refpurpose>remove properties</refpurpose>
+  <refpurpose>delete properties from bound vertices and edges</refpurpose>
  </refnamediv>
 
  <refsynopsisdiv>
 <synopsis>
-REMOVE <replaceable class="parameter">expression</replaceable> [ , ... ]
+REMOVE <replaceable class="parameter">property_reference</replaceable> [, <replaceable class="parameter">property_reference</replaceable> ] ...
 </synopsis>
  </refsynopsisdiv>
 
- <refsect1>
+ <refsect1 id="cypher-remove-description">
   <title>Description</title>
+
   <para>
-   A <command>REMOVE</command> is a terminal clause. It will remove properties from target label or elements.
+   <command>REMOVE</command> takes property references and deletes those keys. It is the plain
+   spelling of <literal>SET n.key = NULL</literal> and does exactly the same thing: each
+   reference is assigned null, which removes the key.
+  </para>
+
+  <para>
+   Removing a key that is not there is not an error. The element is left as it was. Several
+   references may be listed, separated by commas.
+  </para>
+
+  <para>
+   A reference may be nested. <literal>n.key.subkey</literal> removes the inner key and leaves
+   the rest of the outer map. Naming the outer key removes the whole map.
+  </para>
+
+  <para>
+   <command>REMOVE</command> runs once per incoming row, so a <command>MATCH</command> that
+   finds many elements strips them all. The clause has no <literal>WHERE</literal> of its own.
+   Filter in the <xref linkend="cypher-match"/>.
+  </para>
+
+  <para>
+   <command>REMOVE</command> needs a bound variable and cannot lead a query. It is not a
+   terminal clause: it may end a query, and it may be followed by further clauses. Add a
+   <xref linkend="cypher-return"/> to see the result.
+  </para>
+
+  <para>
+   <command>REMOVE</command> removes properties only. It cannot remove a label, and it cannot
+   remove an element. Removing an element is <xref linkend="cypher-delete"/>.
   </para>
  </refsect1>
 
- <refsect1>
+ <refsect1 id="cypher-remove-parameters">
   <title>Parameters</title>
+
   <variablelist>
    <varlistentry>
-    <term><literal>expression</literal></term>
+    <term><replaceable class="parameter">property_reference</replaceable></term>
     <listitem>
      <para>
-      The property expression that will be removed. 
-      See <xref linkend="cypher-expr"/> for more details.
+      A property of a bound vertex or edge, written <literal>variable.key</literal> and
+      optionally nested as <literal>variable.key.subkey</literal>. A bare element variable is
+      rejected.
      </para>
     </listitem>
    </varlistentry>
   </variablelist>
  </refsect1>
 
- <refsect1>
+ <refsect1 id="cypher-remove-examples">
   <title>Examples</title>
+
   <para>
-   To remove specified property:
+   These examples use the graph in <xref linkend="agensgraph-example-data"/>.
+  </para>
+
+  <para>
+   Add a film with properties to strip:
 <programlisting>
--- Remove property 'nickname' from matching vertex
-MATCH (E:person {name: 'Edward'})
-REMOVE E.nickname;
+CREATE (:movie {title: 'Tenet', year: 2020, genre: 'Action', runtime: 150, imax: true});
+
+UPDATE 1
+</programlisting>
+   Remove one property:
+<programlisting>
+MATCH (m:movie {title: 'Tenet'})
+REMOVE m.runtime
+RETURN properties(m) AS props;
+
+                               props
+-------------------------------------------------------------------
+ {"imax": true, "year": 2020, "genre": "Action", "title": "Tenet"}
+(1 row)
+</programlisting>
+   Remove several at once:
+<programlisting>
+MATCH (m:movie {title: 'Tenet'})
+REMOVE m.imax, m.genre
+RETURN properties(m) AS props;
+
+              props
+----------------------------------
+ {"year": 2020, "title": "Tenet"}
+(1 row)
 </programlisting>
   </para>
+
+  <para>
+   Removing a key that is not there is not an error, and changes nothing:
+<programlisting>
+MATCH (m:movie {title: 'Tenet'})
+REMOVE m.nosuchkey
+RETURN properties(m) AS props;
+
+              props
+----------------------------------
+ {"year": 2020, "title": "Tenet"}
+(1 row)
+</programlisting>
+  </para>
+
+  <para>
+   A property may itself be a map:
+<programlisting>
+MATCH (m:movie {title: 'Tenet'})
+SET m.crew = {dop: 'Hoyte van Hoytema', editor: 'Jennifer Lame'}
+RETURN properties(m) AS props;
+
+                                               props
+---------------------------------------------------------------------------------------------------
+ {"crew": {"dop": "Hoyte van Hoytema", "editor": "Jennifer Lame"}, "year": 2020, "title": "Tenet"}
+(1 row)
+</programlisting>
+   A dotted reference reaches into it and leaves the rest of the map alone:
+<programlisting>
+MATCH (m:movie {title: 'Tenet'})
+REMOVE m.crew.dop
+RETURN properties(m) AS props;
+
+                                 props
+-----------------------------------------------------------------------
+ {"crew": {"editor": "Jennifer Lame"}, "year": 2020, "title": "Tenet"}
+(1 row)
+</programlisting>
+   Naming the outer key removes the whole map:
+<programlisting>
+MATCH (m:movie {title: 'Tenet'})
+REMOVE m.crew
+RETURN properties(m) AS props;
+
+              props
+----------------------------------
+ {"year": 2020, "title": "Tenet"}
+(1 row)
+</programlisting>
+  </para>
+
+  <para>
+   An edge is stripped the same way:
+<programlisting>
+MATCH (:person {name: 'Keanu Reeves'})-[r:acted_in]-&gt;(:movie {title: 'The Matrix'})
+SET r.credited = true
+RETURN properties(r) AS props;
+
+               props
+-----------------------------------
+ {"role": "Neo", "credited": true}
+(1 row)
+</programlisting>
+<programlisting>
+MATCH (:person {name: 'Keanu Reeves'})-[r:acted_in]-&gt;(:movie {title: 'The Matrix'})
+REMOVE r.credited
+RETURN properties(r) AS props;
+
+      props
+-----------------
+ {"role": "Neo"}
+(1 row)
+</programlisting>
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-remove-notes">
+  <title>Notes</title>
+
+  <para>
+   <command>REMOVE</command> will not take a bare element variable. Asking it to strip
+   everything that way is refused, with a hint pointing at the <xref linkend="cypher-set"/>
+   form instead:
+<programlisting>
+MATCH (m:movie {title: 'Tenet'}) REMOVE m RETURN m.title;
+
+ERROR:  cannot set property map to NULL
+HINT:  use {} instead of NULL to remove all properties
+</programlisting>
+   <literal>SET m = {}</literal> empties the bag and keeps the element.
+   <literal>DETACH DELETE m</literal> removes the element altogether.
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-remove-compatibility">
+  <title>Compatibility</title>
+
+  <para>
+   <command>REMOVE</command> implements the property removals of the GQL remove statement,
+   ISO/IEC 39075:2024 section 13.4. The standard's remove label item, which takes a label off
+   an element, is not accepted in either spelling,
+   <literal>REMOVE n:blockbuster</literal> or <literal>REMOVE n IS blockbuster</literal>:
+<programlisting>
+MATCH (m:movie {title: 'Tenet'}) REMOVE m:movie RETURN m.title;
+
+ERROR:  syntax error at or near ":"
+LINE 1: MATCH (m:movie {title: 'Tenet'}) REMOVE m:movie RETURN m.tit...
+                                                 ^
+</programlisting>
+   A label is the table an element lives in, so it is fixed at creation. The same restriction
+   applies to adding one with <xref linkend="cypher-set"/>.
+  </para>
+
+  <para>
+   openCypher spells the clause the same way and gives it the same meaning for properties.
+   Its label form <literal>REMOVE n:Label</literal> is refused as above.
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-remove-see-also">
+  <title>See Also</title>
+  <simplelist type="inline">
+   <member><xref linkend="cypher-set"/></member>
+   <member><xref linkend="cypher-delete"/></member>
+   <member><xref linkend="cypher-match"/></member>
+   <member><xref linkend="cypher-merge"/></member>
+  </simplelist>
  </refsect1>
 </refentry>

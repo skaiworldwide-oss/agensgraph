@@ -11,122 +11,290 @@ PostgreSQL documentation
  <refmeta>
   <refentrytitle>SET</refentrytitle>
   <manvolnum>7</manvolnum>
-  <refmiscinfo>SQL - Language Statements</refmiscinfo>
+  <refmiscinfo>Cypher - Language Statements</refmiscinfo>
  </refmeta>
 
  <refnamediv>
   <refname>SET</refname>
-  <refpurpose>modify properties of graph elements</refpurpose>
+  <refpurpose>change the properties of bound vertices and edges</refpurpose>
  </refnamediv>
 
  <refsynopsisdiv>
 <synopsis>
-SET { <replaceable class="parameter">expression</replaceable> = <replaceable class="parameter">expression</replaceable> | <replaceable class="parameter">expression</replaceable> += <replaceable class="parameter">expression</replaceable> } [ , ... ]
+SET <replaceable class="parameter">assignment</replaceable> [, <replaceable class="parameter">assignment</replaceable> ] ...
+
+where <replaceable class="parameter">assignment</replaceable> is one of:
+
+    <replaceable class="parameter">variable</replaceable>.<replaceable class="parameter">key</replaceable> [ .<replaceable class="parameter">key</replaceable> ] ... = <replaceable class="parameter">expression</replaceable>
+    <replaceable class="parameter">variable</replaceable> = <replaceable class="parameter">map</replaceable>
+    <replaceable class="parameter">variable</replaceable> = <replaceable class="parameter">element</replaceable>
+    <replaceable class="parameter">variable</replaceable> += <replaceable class="parameter">map</replaceable>
 </synopsis>
  </refsynopsisdiv>
- <refsect1>
+
+ <refsect1 id="cypher-set-description">
   <title>Description</title>
+
   <para>
-    The <command>SET</command> clause is a clause that modifies, copies, or removes properties.
+   <command>SET</command> writes properties onto elements an earlier clause has bound. What
+   happens depends on the left side and on the operator.
+  </para>
+
+  <para>
+   <literal>n.key = expression</literal> sets one property, adding the key if it is not there.
+   <literal>n.key = NULL</literal> removes that key instead of storing a null.
+   <xref linkend="cypher-remove"/> says the same thing more plainly.
+  </para>
+
+  <para>
+   <literal>n = <replaceable class="parameter">map</replaceable></literal> replaces the whole
+   property bag, so keys the map does not list are lost, and
+   <literal>n = <replaceable class="parameter">element</replaceable></literal> replaces it with
+   the bag of another vertex or edge. <literal>n += <replaceable class="parameter">map</replaceable></literal>
+   merges the map into the bag: the listed keys are set and the rest are kept.
+   <literal>=</literal> is a replacement and <literal>+=</literal> is an update, which is the
+   difference to be careful about. A key needs no quoting, inside a map or after a dot. Quote
+   one in single quotes when it is not a plain name, as in <literal>m.'release date'</literal>.
+  </para>
+
+  <para>
+   Assignments in one clause are separated by commas and applied left to right.
+   <command>SET</command> runs once per incoming row, so a <command>MATCH</command> that finds
+   ten vertices updates ten of them. It needs a bound variable and cannot introduce one, so it
+   cannot lead a query. It may end one. Add a <xref linkend="cypher-return"/> to see the
+   result.
+  </para>
+
+  <para>
+   <command>SET</command> writes properties only. It cannot add or change a label.
+   <literal>ON CREATE SET</literal> and <literal>ON MATCH SET</literal> on a
+   <xref linkend="cypher-merge"/> take this same assignment list.
   </para>
  </refsect1>
 
- <refsect1>
+ <refsect1 id="cypher-set-parameters">
   <title>Parameters</title>
+
   <variablelist>
    <varlistentry>
-    <term><replaceable class="parameter">expression</replaceable></term>
+    <term><replaceable class="parameter">variable</replaceable></term>
     <listitem>
      <para>
-      Expression that you want to modifiy property. Find the vertices or edges to which you want to add properties through the MATCH
-      clause, and specify the names and values of the properties to add to the SET clause.
-      When describing a property, mark it with single or double quotation marks.
+      A vertex or edge variable already in scope. Bare, it replaces or merges the whole bag.
+      Followed by one or more keys, it addresses a single property, nested as deep as the keys
+      go.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><replaceable class="parameter">expression</replaceable></term>
+    <term><replaceable class="parameter">map</replaceable></term>
+    <term><replaceable class="parameter">element</replaceable></term>
+    <listitem>
+     <para>
+      The value to store. Against a property it is any Cypher expression: a literal, a
+      property of another element, an arithmetic or <literal>CASE</literal> expression, a list
+      or a map. For <literal>+=</literal>, and for <literal>=</literal> against a bare
+      variable, it has to be a map or another graph element.
      </para>
     </listitem>
    </varlistentry>
   </variablelist>
  </refsect1>
 
- <refsect1>
+ <refsect1 id="cypher-set-examples">
   <title>Examples</title>
+
   <para>
-   Add Property:
+   These examples use the graph in <xref linkend="agensgraph-example-data"/>.
+  </para>
+
+  <para>
+   Add a film to work on:
 <programlisting>
-MATCH (E:person {name: 'Edward'})
-SET E.habit = 'play the guitar';
+CREATE (:movie {title: 'Tenet', year: 2020, genre: 'Action'});
+
+UPDATE 1
+</programlisting>
+   Set one property. <literal>properties()</literal> returns the whole bag, which is the
+   easiest way to see what a <command>SET</command> did:
+<programlisting>
+MATCH (m:movie {title: 'Tenet'})
+SET m.runtime = 150
+RETURN properties(m) AS props;
+
+                                props
+---------------------------------------------------------------------
+ {"year": 2020, "genre": "Action", "title": "Tenet", "runtime": 150}
+(1 row)
+</programlisting>
+   Several properties in one clause:
+<programlisting>
+MATCH (m:movie {title: 'Tenet'})
+SET m.genre = 'Sci-Fi', m.runtime = 151
+RETURN properties(m) AS props;
+
+                                props
+---------------------------------------------------------------------
+ {"year": 2020, "genre": "Sci-Fi", "title": "Tenet", "runtime": 151}
+(1 row)
 </programlisting>
   </para>
 
   <para>
-   Modify Property:
+   Assigning null deletes the key rather than storing a null:
 <programlisting>
-MATCH (E:person {name: 'Edward'})
-SET E.name = 'Edward Williams';
+MATCH (m:movie {title: 'Tenet'})
+SET m.runtime = NULL
+RETURN properties(m) AS props;
+
+                        props
+-----------------------------------------------------
+ {"year": 2020, "genre": "Sci-Fi", "title": "Tenet"}
+(1 row)
 </programlisting>
   </para>
 
   <para>
-   Remove Property:
+   <literal>+=</literal> sets the keys the map lists and leaves the others alone:
 <programlisting>
-MATCH (E:person {name: 'Edward'})
-SET E.hobby = NULL;
+MATCH (m:movie {title: 'Tenet'})
+SET m += {runtime: 150, imax: true}
+RETURN properties(m) AS props;
+
+                                       props
+-----------------------------------------------------------------------------------
+ {"imax": true, "year": 2020, "genre": "Sci-Fi", "title": "Tenet", "runtime": 150}
+(1 row)
 </programlisting>
   </para>
 
   <para>
-   Copy properties between nodes and relationships:
+   <literal>=</literal> against a bare variable throws away everything not in the map.
+   <literal>genre</literal>, <literal>runtime</literal> and <literal>imax</literal> are gone:
 <programlisting>
-MATCH (at {name:'Edward'}), (pn {name: 'Peter'})
-SET at = pn
-RETURN at.name, at.age, pn.name, pn.age;
-</programlisting>
-SET can be used to copy all properties from one vertex/edge to another vertex/edge.
-Caution: All properties of "pn" are copied to the properties of "at", and all existing properties of
-"at" are removed.
-  </para>
+MATCH (m:movie {title: 'Tenet'})
+SET m = {title: 'Tenet', year: 2020}
+RETURN properties(m) AS props;
 
-  <para>
-   Replace all properties using a map and =
-<programlisting>
-MATCH (p { name: 'Edward' })
-SET p = { name: 'Edward William', position: 'Enterpreneur' }
-RETURN p.name, p.age, p.position;
+              props
+----------------------------------
+ {"year": 2020, "title": "Tenet"}
+(1 row)
 </programlisting>
   </para>
 
   <para>
-   Remove all properties using an empty map and =
+   The right side can be another element, which copies its whole bag:
 <programlisting>
-MATCH (p { name: 'Edward' })
-SET p = { }
-RETURN p.name, p.age, p.position;
+CREATE (:person {name: 'Stand-in'});
+
+UPDATE 1
+</programlisting>
+<programlisting>
+MATCH (p:person {name: 'Stand-in'}), (k:person {name: 'Keanu Reeves'})
+SET p = k
+RETURN properties(p) AS props;
+
+                 props
+----------------------------------------
+ {"born": 1964, "name": "Keanu Reeves"}
+(1 row)
+</programlisting>
+   Copying a bag copies the identifying properties too, so there are now two vertices whose
+   <literal>name</literal> is <literal>Keanu Reeves</literal>. It does not copy edges, and it
+   does not merge the two vertices.
+  </para>
+
+  <para>
+   An edge takes properties exactly as a vertex does. This <command>MATCH</command> finds the
+   one edge that belongs to the original Keanu Reeves, because the copy has no edges:
+<programlisting>
+MATCH (:person {name: 'Keanu Reeves'})-[r:acted_in]-&gt;(:movie {title: 'The Matrix'})
+SET r.credited = true
+RETURN properties(r) AS props;
+
+               props
+-----------------------------------
+ {"role": "Neo", "credited": true}
+(1 row)
 </programlisting>
   </para>
 
   <para>
-   Mutate specific properties using a map and +=
+   An empty map removes every property and leaves the element in place. The vertex is then
+   unreachable by any property:
 <programlisting>
-MATCH (p { name: 'Edward' })
-SET p += { age: 38, hungry: TRUE, position: 'Enterpreneur' }
-RETURN p.name, p.age, p.hungry, p.position;
-</programlisting>
-Use the += operator to change existing properties of the vertex/edge or add new ones.
-  </para>
+MATCH (m:movie {title: 'Tenet'})
+SET m = {}
+RETURN properties(m) AS props;
 
-  <para>
-   Set multiple properties using one SET clause
-<programlisting>
-MATCH (n { name: 'Peter' })
-SET n.position = 'Developer', n.surname = 'Taylor';
+ props
+-------
+ {}
+(1 row)
 </programlisting>
   </para>
  </refsect1>
 
-  <refsect1>
+ <refsect1 id="cypher-set-notes">
+  <title>Notes</title>
+
+  <para>
+   The default setting <varname>allow_null_properties</varname> is off, which is what makes
+   <literal>SET n.key = NULL</literal> a deletion. Turn it on and the key is kept with a JSON
+   null value instead:
+<programlisting>
+SET allow_null_properties = true;
+CREATE (m:movie {title: 'Tenet', year: 2020})
+SET m.runtime = NULL
+RETURN properties(m) AS props;
+
+SET
+                       props
+---------------------------------------------------
+ {"year": 2020, "title": "Tenet", "runtime": null}
+(1 row)
+</programlisting>
+   Set it back to off when you are done. A stored null is not the same as an absent key.
+   <literal>m.runtime IS NULL</literal> is true either way, but the key shows up in
+   <literal>properties()</literal> and in a <type>jsonb</type> key test.
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-set-compatibility">
+  <title>Compatibility</title>
+
+  <para>
+   <command>SET</command> implements the property assignments of the GQL set statement,
+   ISO/IEC 39075:2024 section 13.3. The standard's set label item, which adds a label to an
+   element, is not accepted in either spelling, <literal>SET n:blockbuster</literal> or
+   <literal>SET n IS blockbuster</literal>:
+<programlisting>
+MATCH (m:movie {title: 'Inception'}) SET m:blockbuster RETURN m.title;
+
+ERROR:  syntax error at or near ":"
+LINE 1: MATCH (m:movie {title: 'Inception'}) SET m:blockbuster RETUR...
+                                                  ^
+</programlisting>
+   A label is the table an element lives in, so it is fixed when the element is created. To
+   move a vertex to another label, create it there and delete the original.
+  </para>
+
+  <para>
+   openCypher uses the same assignment forms, and AgensGraph accepts them unchanged. Its label
+   form <literal>SET n:Label</literal> is refused the same way.
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-set-see-also">
   <title>See Also</title>
   <simplelist type="inline">
+   <member><xref linkend="cypher-remove"/></member>
+   <member><xref linkend="cypher-merge"/></member>
    <member><xref linkend="cypher-match"/></member>
+   <member><xref linkend="cypher-delete"/></member>
   </simplelist>
  </refsect1>
 </refentry>
-

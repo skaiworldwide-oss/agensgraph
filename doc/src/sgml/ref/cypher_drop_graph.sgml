@@ -1,5 +1,5 @@
 <!--
-doc/src/sgml/ref/drop_graph.sgml
+doc/src/sgml/ref/cypher_drop_graph.sgml
 PostgreSQL documentation
 -->
 
@@ -11,35 +11,65 @@ PostgreSQL documentation
  <refmeta>
   <refentrytitle>DROP GRAPH</refentrytitle>
   <manvolnum>7</manvolnum>
-  <refmiscinfo>SQL - Language Statements</refmiscinfo>
+  <refmiscinfo>Cypher - Language Statements</refmiscinfo>
  </refmeta>
 
  <refnamediv>
   <refname>DROP GRAPH</refname>
-  <refpurpose>drop the graph</refpurpose>
+  <refpurpose>drop a graph and, with CASCADE, everything in it</refpurpose>
  </refnamediv>
 
  <refsynopsisdiv>
 <synopsis>
-DROP GRAPH [ IF EXISTS ] <replaceable class="parameter">graph_name</replaceable> [ , ... ] [ CASCADE | RESTRICT ]
+DROP GRAPH [ IF EXISTS ] <replaceable class="parameter">graph_name</replaceable> [, ...] [ CASCADE | RESTRICT ]
 </synopsis>
  </refsynopsisdiv>
 
- <refsect1>
+ <refsect1 id="cypher-dropgraph-description">
   <title>Description</title>
+
   <para>
-   <command>DROP GRAPH</command> statement drops the target graph.
+   <command>DROP GRAPH</command> drops the graph's catalog row and its schema. Everything the
+   graph holds depends on that schema: labels, the tables behind them, their rows, indexes,
+   constraints and sequences. So <literal>RESTRICT</literal>, which is the default, refuses
+   while any of it is there.
+  </para>
+
+  <para>
+   A graph made by the plain <xref linkend="cypher-creategraph"/> is never empty.
+   <literal>ag_vertex</literal>, <literal>ag_edge</literal> and
+   <literal>ag_label_seq</literal> are created with it, so every such graph needs
+   <literal>CASCADE</literal>. Only a graph made with <literal>CREATE GRAPH ONLY</literal>,
+   which creates none of those, can be dropped without it.
+  </para>
+
+  <para>
+   Dropping a graph does not require its labels to be empty.
+   <literal>CASCADE</literal> takes the rows with the tables.
+  </para>
+
+  <para>
+   If the dropped graph is the session's <varname>graph_path</varname>, the setting is
+   cleared.
+  </para>
+
+  <para>
+   The graph's schema cannot be dropped on its own. <command>DROP SCHEMA</command> on it is
+   refused with <literal>cannot drop schema clearance because graph clearance requires
+   it</literal>, so the catalog row and the schema always go together.
   </para>
  </refsect1>
 
- <refsect1>
+ <refsect1 id="cypher-dropgraph-parameters">
   <title>Parameters</title>
+
   <variablelist>
    <varlistentry>
     <term><literal>IF EXISTS</literal></term>
     <listitem>
      <para>
-      Do not throw an error if the graph does not exist.
+      Issue a notice instead of an error for a graph that is not there. Other names in the
+      same statement are still dropped.
      </para>
     </listitem>
    </varlistentry>
@@ -48,7 +78,7 @@ DROP GRAPH [ IF EXISTS ] <replaceable class="parameter">graph_name</replaceable>
     <term><replaceable class="parameter">graph_name</replaceable></term>
     <listitem>
      <para>
-      The name of the graph that will be dropped. 
+      Name of the graph to drop. Several names may be given, separated by commas.
      </para>
     </listitem>
    </varlistentry>
@@ -57,8 +87,8 @@ DROP GRAPH [ IF EXISTS ] <replaceable class="parameter">graph_name</replaceable>
     <term><literal>CASCADE</literal></term>
     <listitem>
      <para>
-      Automatically drop graph element (vertices, edges) that are
-      contained in the graph. And other graph dependent objects too.
+      Drop the objects that depend on the graph: its labels, their tables and rows, and the
+      label id sequence.
      </para>
     </listitem>
    </varlistentry>
@@ -67,35 +97,132 @@ DROP GRAPH [ IF EXISTS ] <replaceable class="parameter">graph_name</replaceable>
     <term><literal>RESTRICT</literal></term>
     <listitem>
      <para>
-      Drop fails if any dependent objects exist to the graph.
-      This is the default.
+      Refuse if anything depends on the graph. This is the default.
      </para>
     </listitem>
    </varlistentry>
   </variablelist>
  </refsect1>
 
- <refsect1>
+ <refsect1 id="cypher-dropgraph-examples">
   <title>Examples</title>
+
   <para>
-   To drop the graph:
+   These examples do not use the graph in <xref linkend="agensgraph-example-data"/>. They
+   build graphs of their own and drop them at the end. The first one holds a label and a
+   vertex:
 <programlisting>
-DROP GRAPH example_graph;
+CREATE GRAPH clearance;
+SET graph_path = clearance;
+CREATE VLABEL film;
+CREATE (:film {title: 'Arrival'});
 </programlisting>
   </para>
 
   <para>
-   To drop the multiple graph objects:
+   Without <literal>CASCADE</literal> the drop is refused, and the message lists what stands
+   in the way:
 <programlisting>
-DROP GRAPH IF EXISTS graph1, graph2, graph3;
+DROP GRAPH clearance;
+
+ERROR:  cannot drop graph clearance because other objects depend on it
+DETAIL:  sequence clearance.ag_label_seq depends on schema clearance
+vlabel ag_vertex depends on schema clearance
+elabel ag_edge depends on schema clearance
+vlabel film depends on schema clearance
+HINT:  Use DROP ... CASCADE to drop the dependent objects too.
+</programlisting>
+  </para>
+
+  <para>
+   <literal>CASCADE</literal> takes all four, and the vertex in <literal>film</literal> with
+   them:
+<programlisting>
+DROP GRAPH clearance CASCADE;
+
+NOTICE:  drop cascades to 4 other objects
+DETAIL:  drop cascades to sequence clearance.ag_label_seq
+drop cascades to vlabel ag_vertex
+drop cascades to elabel ag_edge
+drop cascades to vlabel film
+DROP GRAPH
+</programlisting>
+  </para>
+
+  <para>
+   <literal>clearance</literal> was the session's <varname>graph_path</varname>, so the
+   setting is now empty:
+<programlisting>
+SHOW graph_path;
+
+ graph_path
+------------
+
+(1 row)
+</programlisting>
+  </para>
+
+  <para>
+   Several graphs go in one statement, and <literal>IF EXISTS</literal> reports the name that
+   is not there instead of failing on it:
+<programlisting>
+CREATE GRAPH archive_2024;
+CREATE GRAPH archive_2025;
+DROP GRAPH IF EXISTS archive_2024, archive_2025, archive_2026 CASCADE;
+
+NOTICE:  graph "archive_2026" does not exist, skipping
+NOTICE:  drop cascades to 6 other objects
+DETAIL:  drop cascades to sequence archive_2025.ag_label_seq
+drop cascades to vlabel ag_vertex
+drop cascades to elabel ag_edge
+drop cascades to sequence archive_2024.ag_label_seq
+drop cascades to vlabel ag_vertex
+drop cascades to elabel ag_edge
+DROP GRAPH
 </programlisting>
   </para>
  </refsect1>
 
-  <refsect1>
+ <refsect1 id="cypher-dropgraph-notes">
+  <title>Notes</title>
+
+  <para>
+   To empty a graph without dropping it, run <literal>MATCH (n) DETACH DELETE n</literal> and
+   then drop the labels that are no longer wanted. The schema and the base labels stay in
+   place. A label has to be empty before <xref linkend="cypher-dropvlabel"/> will remove it,
+   so that delete is the usual first step. <literal>DROP GRAPH ... CASCADE</literal> skips
+   the requirement altogether, because it drops the tables rather than the labels one at a
+   time.
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-dropgraph-compatibility">
+  <title>Compatibility</title>
+
+  <para>
+   ISO/IEC 39075:2024 defines the drop graph statement in clause 12.5 as
+   <literal>DROP [PROPERTY] GRAPH [IF EXISTS]</literal> with one name. AgensGraph accepts the
+   <literal>DROP GRAPH</literal> and <literal>IF EXISTS</literal> parts of that. It adds a
+   name list and the <literal>CASCADE</literal> or <literal>RESTRICT</literal> choice, which
+   the standard does not have. The <literal>PROPERTY</literal> spelling is not accepted.
+  </para>
+
+  <para>
+   <command>DROP GRAPH</command> corresponds to <command>DROP SCHEMA</command>, and
+   <literal>IF EXISTS</literal>, the name list and
+   <literal>CASCADE</literal> or <literal>RESTRICT</literal> behave as they do there. It
+   differs in refusing to leave a half dropped graph behind, since the catalog row and the
+   schema can only be dropped together.
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-dropgraph-see-also">
   <title>See Also</title>
   <simplelist type="inline">
    <member><xref linkend="cypher-creategraph"/></member>
+   <member><xref linkend="cypher-dropvlabel"/></member>
+   <member><xref linkend="cypher-dropelabel"/></member>
+   <member><xref linkend="cypher-delete"/></member>
   </simplelist>
  </refsect1>
 </refentry>

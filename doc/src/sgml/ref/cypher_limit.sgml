@@ -1,0 +1,245 @@
+<!--
+doc/src/sgml/ref/cypher_limit.sgml
+PostgreSQL documentation
+-->
+
+<refentry id="cypher-limit">
+ <indexterm zone="cypher-limit">
+  <primary>LIMIT</primary>
+ </indexterm>
+
+ <refmeta>
+  <refentrytitle>LIMIT</refentrytitle>
+  <manvolnum>7</manvolnum>
+  <refmiscinfo>Cypher - Language Statements</refmiscinfo>
+ </refmeta>
+
+ <refnamediv>
+  <refname>LIMIT</refname>
+  <refpurpose>cap how many of the working rows are kept</refpurpose>
+ </refnamediv>
+
+ <refsynopsisdiv>
+<synopsis>
+LIMIT <replaceable class="parameter">count</replaceable>
+</synopsis>
+ </refsynopsisdiv>
+
+ <refsect1 id="cypher-limit-description">
+  <title>Description</title>
+
+  <para>
+   <command>LIMIT</command> keeps at most <replaceable class="parameter">count</replaceable>
+   rows and discards the rest. It is a clause of its own, so it can cap the rows anywhere
+   in a query. Write it after a <xref linkend="cypher-return"/> or a
+   <xref linkend="cypher-with"/>, or straight after a <xref linkend="cypher-match"/>.
+  </para>
+
+  <para>
+   <command>SKIP</command> and its synonym <command>OFFSET</command> discard rows from
+   the front instead. They are a separate clause with a page of their own, and either
+   clause may be used without the other. See <xref linkend="cypher-skip"/>.
+  </para>
+
+  <para>
+   The count is an expression, not only a literal, and it is evaluated once. A negative
+   count is an error. A count larger than the number of rows is not: the query returns
+   every row it has. A fractional count is rounded to the nearest integer.
+  </para>
+
+  <para>
+   Without an <xref linkend="cypher-orderby"/>, which rows are kept is not defined. Sort
+   first whenever the page has to be reproducible.
+  </para>
+
+  <para>
+   <command>LIMIT</command> cannot open a query and cannot end one. A query still has to
+   finish with <command>RETURN</command>, <command>FINISH</command> or a write clause.
+  </para>
+
+  <para>
+   Written after a projection, the modifiers have to be in the order
+   <command>ORDER BY</command>, then <command>SKIP</command> or
+   <command>OFFSET</command>, then <command>LIMIT</command>. Only that order folds into
+   the projection. In the middle of a query both orders parse and they mean different
+   things, because each clause applies to the rows the clause before it produced.
+  </para>
+
+  <para>
+   A <command>LIMIT</command> that follows a write clause does not truncate the write.
+   The write clause processes every row that reached it, and the
+   <command>LIMIT</command> caps only the rows the statement carries on with. So
+   <literal>MATCH (m:movie) SET m.seen = true RETURN m LIMIT 1</literal> updates every
+   film it matched and reports one of them. This holds for
+   <literal>LIMIT 0</literal> as well, and for anything else that stops reading a write
+   early, such as a join whose other side is empty.
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-limit-parameters">
+  <title>Parameters</title>
+
+  <variablelist>
+   <varlistentry>
+    <term><replaceable class="parameter">count</replaceable></term>
+    <listitem>
+     <para>
+      An integer expression that is not negative. At most that many rows are kept. A
+      fraction is rounded to the nearest integer, so <literal>LIMIT 1.5</literal> keeps
+      two rows.
+     </para>
+     <para>
+      A negative count is refused with
+      <literal>LIMIT must not be negative</literal>.
+     </para>
+    </listitem>
+   </varlistentry>
+  </variablelist>
+ </refsect1>
+
+ <refsect1 id="cypher-limit-examples">
+  <title>Examples</title>
+
+  <para>
+   These examples use the graph in <xref linkend="agensgraph-example-data"/>.
+  </para>
+
+  <para>
+   Take the first rows of a sorted result:
+<programlisting>
+MATCH (m:movie)
+RETURN m.title AS film
+ORDER BY film
+LIMIT 2;
+
+      film
+----------------
+ "Avatar"
+ "Blade Runner"
+(2 rows)
+</programlisting>
+  </para>
+
+  <para>
+   A fractional count rounds, so this keeps two rows as well:
+<programlisting>
+MATCH (m:movie)
+RETURN m.title AS film
+ORDER BY film
+LIMIT 1.5;
+
+      film
+----------------
+ "Avatar"
+ "Blade Runner"
+(2 rows)
+</programlisting>
+  </para>
+
+  <para>
+   In the middle of a query, <command>LIMIT</command> reduces the rows a later clause has
+   to join. The graph holds eighteen films and the second <command>MATCH</command> runs
+   against two of them:
+<programlisting>
+MATCH (m:movie)
+ORDER BY m.year DESC LIMIT 2
+MATCH (p:person)-[:directed]-&gt;(m)
+RETURN m.title AS film, p.name AS director
+ORDER BY film;
+
+            film            |      director
+----------------------------+--------------------
+ "Blade Runner 2049"        | "Denis Villeneuve"
+ "The Matrix Resurrections" | "Lana Wachowski"
+(2 rows)
+</programlisting>
+  </para>
+
+  <para>
+   A count past the end of the result is not an error. There are eighteen films, so
+   <literal>LIMIT 100</literal> on the query above returns all eighteen rather than
+   failing. A negative count is refused:
+<programlisting>
+MATCH (m:movie) RETURN m.title AS film ORDER BY film LIMIT -1;
+
+ERROR:  LIMIT must not be negative
+</programlisting>
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-limit-notes">
+  <title>Notes</title>
+
+  <para>
+   <command>LIMIT</command> cannot open a query, so a statement that starts with it is a
+   syntax error:
+<programlisting>
+LIMIT 3;
+
+ERROR:  syntax error at or near "LIMIT"
+LINE 1: LIMIT 3;
+        ^
+</programlisting>
+  </para>
+
+  <para>
+   And it cannot close one:
+<programlisting>
+MATCH (m:movie) LIMIT 3;
+
+ERROR:  Cypher query must end with RETURN, FINISH or update clause
+</programlisting>
+  </para>
+
+  <para>
+   The same error reports a modifier written out of order after a projection. Put
+   <command>LIMIT</command> before <command>SKIP</command> and the trailing
+   <command>SKIP</command> is read as a clause of its own, so the query no longer ends on
+   a projection:
+<programlisting>
+MATCH (m:movie) RETURN m.title AS film ORDER BY film LIMIT 3 SKIP 2;
+
+ERROR:  Cypher query must end with RETURN, FINISH or update clause
+</programlisting>
+  </para>
+
+  <para>
+   In the middle of a query both orders parse and answer differently.
+   <literal>SKIP 2 LIMIT 4</literal> takes rows three to six, while
+   <literal>LIMIT 4 SKIP 2</literal> cuts to four rows and then drops two of them,
+   leaving two. <xref linkend="cypher-skip"/> shows both.
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-limit-compatibility">
+  <title>Compatibility</title>
+
+  <para>
+   <command>LIMIT</command> implements the limit clause of ISO/IEC 39075:2024, clause
+   16.18, feature GQ13, as part of the order by and page statement of clause 14.9. The
+   standard's count is an integer that is not negative, and AgensGraph accepts any
+   integer expression in that position, rounding a fraction. The standard sorts an
+   unordered table in an order the implementation chooses before taking the first rows,
+   which is why a <command>LIMIT</command> without an <command>ORDER BY</command> is not
+   reproducible here either.
+  </para>
+
+  <para>
+   openCypher writes <command>LIMIT</command> only as a trailing modifier of
+   <command>RETURN</command> or <command>WITH</command>. Both of those forms are accepted
+   here unchanged, and the standalone clause, which caps the rows after a
+   <command>MATCH</command> or anywhere else in a query, is the addition.
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-limit-see-also">
+  <title>See Also</title>
+  <simplelist type="inline">
+   <member><xref linkend="cypher-skip"/></member>
+   <member><xref linkend="cypher-orderby"/></member>
+   <member><xref linkend="cypher-return"/></member>
+   <member><xref linkend="cypher-with"/></member>
+   <member><xref linkend="cypher-match"/></member>
+  </simplelist>
+ </refsect1>
+</refentry>

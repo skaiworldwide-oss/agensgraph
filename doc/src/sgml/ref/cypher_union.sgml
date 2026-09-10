@@ -1,0 +1,280 @@
+<!--
+doc/src/sgml/ref/cypher_union.sgml
+PostgreSQL documentation
+-->
+
+<refentry id="cypher-union">
+ <indexterm zone="cypher-union">
+  <primary>UNION</primary>
+ </indexterm>
+ <indexterm zone="cypher-union">
+  <primary>INTERSECT</primary>
+ </indexterm>
+ <indexterm zone="cypher-union">
+  <primary>EXCEPT</primary>
+ </indexterm>
+
+ <refmeta>
+  <refentrytitle>UNION</refentrytitle>
+  <manvolnum>7</manvolnum>
+  <refmiscinfo>Cypher - Language Statements</refmiscinfo>
+ </refmeta>
+
+ <refnamediv>
+  <refname>UNION</refname>
+  <refpurpose>combine the results of two or more queries into one</refpurpose>
+ </refnamediv>
+
+ <refsynopsisdiv>
+<synopsis>
+<replaceable class="parameter">query</replaceable> { UNION | INTERSECT | EXCEPT } [ ALL | DISTINCT ] <replaceable class="parameter">query</replaceable> [ ... ]
+</synopsis>
+ </refsynopsisdiv>
+
+ <refsect1 id="cypher-union-description">
+  <title>Description</title>
+
+  <para>
+   A set operator joins two complete queries into one result.
+   <command>UNION</command> returns the rows in either query.
+   <command>INTERSECT</command> returns the rows in both.
+   <command>EXCEPT</command> returns the rows in the first query and not in the second.
+   The three are one construct with three operations, and every rule below applies to
+   all of them. Each operand is a complete query with its own
+   <xref linkend="cypher-return"/>. An operand cannot end in a write clause and cannot be
+   a bare <xref linkend="cypher-match"/>.
+  </para>
+
+  <para>
+   Every operand must return the same number of columns. Columns are matched by
+   position, not by name, so the names need not agree. The result takes its names from
+   the first query. A query with a different number of columns is refused with
+   <literal>each UNION query must have the same number of columns</literal>, which names
+   <literal>UNION</literal> for all three operators.
+  </para>
+
+  <para>
+   Columns matched by position must also have a type in common. A Cypher result column
+   is jsonb, so operands normally meet without any work. A column that carries a type of
+   its own, such as a read of a promoted property, is converted to jsonb to meet a jsonb
+   column. A vertex, an edge and a path have no such conversion, so a graph element
+   column meets only a column of the same graph type.
+  </para>
+
+  <para>
+   <literal>DISTINCT</literal> is the default: duplicate rows are removed.
+   <literal>UNION</literal> and <literal>UNION DISTINCT</literal> are the same statement.
+   <literal>ALL</literal> keeps the duplicates and skips the work of removing them. The
+   operators chain, and a chain of one operator is evaluated left to right.
+  </para>
+
+  <para>
+   Row order in the result is not defined. An <xref linkend="cypher-orderby"/>,
+   <xref linkend="cypher-skip"/> or <xref linkend="cypher-limit"/> written after a set
+   operation does not sort or page the combined rows, as the notes below show. A set
+   operation may stand on either side of <xref linkend="cypher-next"/>, and that is the
+   way to sort or page what the operation produced: the query right of
+   <literal>NEXT</literal> receives the combined rows. Wrapping the set operation in a
+   <xref linkend="cypher-call"/> subquery body, or in a SQL <literal>SELECT</literal>,
+   does the same job.
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-union-parameters">
+  <title>Parameters</title>
+
+  <variablelist>
+   <varlistentry>
+    <term><replaceable class="parameter">query</replaceable></term>
+    <listitem>
+     <para>
+      A complete query ending in a <command>RETURN</command> with the same number of
+      columns as every other query in the chain.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><literal>ALL</literal></term>
+    <term><literal>DISTINCT</literal></term>
+    <listitem>
+     <para>
+      <literal>ALL</literal> keeps duplicate rows. <literal>DISTINCT</literal> removes
+      them, and is the default, so writing it changes nothing.
+     </para>
+    </listitem>
+   </varlistentry>
+  </variablelist>
+ </refsect1>
+
+ <refsect1 id="cypher-union-examples">
+  <title>Examples</title>
+
+  <para>
+   These examples use the graph in <xref linkend="agensgraph-example-data"/>.
+  </para>
+
+  <para>
+   Everyone connected to <literal>Inception</literal>, whichever way they are connected:
+<programlisting>
+MATCH (p:person)-[:directed]-&gt;(:movie {title: 'Inception'}) RETURN p.name AS name
+UNION
+MATCH (p:person)-[:acted_in]-&gt;(:movie {title: 'Inception'}) RETURN p.name AS name;
+
+        name
+---------------------
+ "Christopher Nolan"
+ "Leonardo DiCaprio"
+(2 rows)
+</programlisting>
+  </para>
+
+  <para>
+   <literal>UNION ALL</literal> keeps every row from both operands and skips the work of
+   removing duplicates. The two rows here are distinct anyway, so
+   <literal>ALL</literal> shows only in the cost:
+<programlisting>
+MATCH (m:movie {genre: 'Adventure'}) RETURN m.title AS film
+UNION ALL
+MATCH (m:movie) WHERE m.year = 2021 RETURN m.title AS film;
+
+            film
+----------------------------
+ "Jurassic Park"
+ "The Matrix Resurrections"
+(2 rows)
+</programlisting>
+  </para>
+
+  <para>
+   The rows in both queries:
+<programlisting>
+MATCH (m:movie {genre: 'Action'}) RETURN m.title AS film
+INTERSECT
+MATCH (m:movie) WHERE m.year &lt; 1995 RETURN m.title AS film;
+
+             film
+------------------------------
+ "The Terminator"
+ "Terminator 2: Judgment Day"
+(2 rows)
+</programlisting>
+  </para>
+
+  <para>
+   The people who directed something but never acted:
+<programlisting>
+MATCH (p:person)-[:directed]-&gt;(m:movie) RETURN p.name AS name
+EXCEPT
+MATCH (p:person)-[:acted_in]-&gt;(m:movie) RETURN p.name AS name
+NEXT ORDER BY name RETURN name;
+
+        name
+---------------------
+ "Andrew Niccol"
+ "Christopher Nolan"
+ "Denis Villeneuve"
+ "James Cameron"
+ "Joss Whedon"
+ "Lana Wachowski"
+ "Lilly Wachowski"
+ "Luc Besson"
+ "Neill Blomkamp"
+ "Paul Verhoeven"
+ "Ridley Scott"
+ "Steven Spielberg"
+(12 rows)
+</programlisting>
+  </para>
+
+  <para>
+   Sort and page the combined rows with <command>NEXT</command>:
+<programlisting>
+MATCH (m:movie) WHERE m.genre = 'Adventure' RETURN m.title AS film
+UNION
+MATCH (m:movie) WHERE m.genre = 'Sci-Fi' RETURN m.title AS film
+NEXT ORDER BY film LIMIT 3 RETURN film;
+
+        film
+---------------------
+ "Avatar"
+ "Blade Runner"
+ "Blade Runner 2049"
+(3 rows)
+</programlisting>
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-union-notes">
+  <title>Notes</title>
+
+  <para>
+   An <command>ORDER BY</command>, <command>SKIP</command> or <command>LIMIT</command>
+   written after a set operation attaches to the last query in the chain, not to the
+   combined result. It sorts or pages that one operand before the sets are combined, so
+   the <literal>LIMIT 1</literal> here does not produce one row:
+<programlisting>
+MATCH (m:movie) WHERE m.genre = 'Adventure' RETURN m.title AS film
+UNION
+MATCH (m:movie) WHERE m.genre = 'Sci-Fi' RETURN m.title AS film
+LIMIT 1;
+
+      film
+-----------------
+ "Inception"
+ "Jurassic Park"
+(2 rows)
+</programlisting>
+  </para>
+
+  <para>
+   One row survived the <command>LIMIT</command> in the Sci-Fi operand, which returns ten
+   films without it, and the single Adventure film joined that row afterwards. Name
+   resolution follows the same rule, so such a sort key has to name a column of the last
+   operand:
+<programlisting>
+MATCH (m:movie) RETURN m.title AS first_col
+UNION
+MATCH (p:person) RETURN p.name AS second_col
+ORDER BY first_col LIMIT 2;
+
+ERROR:  variable does not exist
+LINE 4: ORDER BY first_col LIMIT 2;
+                 ^
+</programlisting>
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-union-compatibility">
+  <title>Compatibility</title>
+
+  <para>
+   The three operators implement the set operator of ISO/IEC 39075:2024, clause 14.2:
+   <literal>UNION</literal>, <literal>EXCEPT</literal> or <literal>INTERSECT</literal>
+   with an optional set quantifier, <literal>DISTINCT</literal> implicit when none is
+   given. AgensGraph implements all three operators and both quantifiers, features GQ03
+   through GQ07. The standard's <literal>OTHERWISE</literal> conjunction, which takes the
+   second query's rows only when the first returns none, is not implemented. The standard
+   also applies the order by and page statement of clause 14.9 to the combined result,
+   while AgensGraph attaches it to the last query of the chain.
+  </para>
+
+  <para>
+   openCypher has only <command>UNION</command> and <literal>UNION ALL</literal>. Both
+   are accepted here unchanged. <command>INTERSECT</command> and
+   <command>EXCEPT</command>, and the explicit <literal>DISTINCT</literal> quantifier,
+   are available in AgensGraph and not in openCypher.
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-union-see-also">
+  <title>See Also</title>
+  <simplelist type="inline">
+   <member><xref linkend="cypher-return"/></member>
+   <member><xref linkend="cypher-next"/></member>
+   <member><xref linkend="cypher-call"/></member>
+   <member><xref linkend="cypher-orderby"/></member>
+   <member><xref linkend="cypher-limit"/></member>
+  </simplelist>
+ </refsect1>
+</refentry>

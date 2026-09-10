@@ -1,5 +1,5 @@
 <!--
-doc/src/sgml/ref/create_elabel.sgml
+doc/src/sgml/ref/cypher_create_elabel.sgml
 PostgreSQL documentation
 -->
 
@@ -11,38 +11,108 @@ PostgreSQL documentation
  <refmeta>
   <refentrytitle>CREATE ELABEL</refentrytitle>
   <manvolnum>7</manvolnum>
-  <refmiscinfo>SQL - Language Statements</refmiscinfo>
+  <refmiscinfo>Cypher - Language Statements</refmiscinfo>
  </refmeta>
 
  <refnamediv>
   <refname>CREATE ELABEL</refname>
-  <refpurpose>create the edge label</refpurpose>
+  <refpurpose>create an edge label</refpurpose>
  </refnamediv>
 
  <refsynopsisdiv>
 <synopsis>
+CREATE [ UNLOGGED ] ELABEL [ IF NOT EXISTS ] <replaceable class="parameter">label_name</replaceable>
+    [ ( <replaceable class="parameter">label_prop</replaceable> [, ...] ) ]
+    [ DISABLE INDEX ]
+    [ INHERITS ( <replaceable class="parameter">parent_label</replaceable> [, ...] ) ]
+    [ WITH ( <replaceable class="parameter">storage_parameter</replaceable> [= <replaceable class="parameter">value</replaceable>] [, ...] ) ]
+    [ TABLESPACE <replaceable class="parameter">tablespace_name</replaceable> ]
 
-CREATE [UNLOGGED] ELABEL [IF NOT EXISTS] <replaceable class="parameter">label_name</replaceable> [ option [ ... ] ]
+<phrase>where <replaceable class="parameter">label_prop</replaceable> is one of:</phrase>
 
-where option can be:
-
-    DISABLE INDEX
-    INHERITS ( <replaceable class="parameter">label_name</replaceable> [, ... ] )
-    WITH ( <replaceable class="parameter">storage_parameter</replaceable> [= <replaceable class="parameter">value</replaceable>] [, ... ] )
-    TABLESPACE <replaceable class="parameter">tablespace_name</replaceable>
-
+    <replaceable class="parameter">column_name</replaceable> <replaceable class="parameter">data_type</replaceable> GENERATED
+    <replaceable class="parameter">column_name</replaceable> <replaceable class="parameter">data_type</replaceable> GENERATED ( <replaceable class="parameter">property_key</replaceable> )
+    <replaceable class="parameter">column_name</replaceable> <replaceable class="parameter">data_type</replaceable> GENERATED ALWAYS AS ( <replaceable class="parameter">expression</replaceable> ) [ STORED ]
 </synopsis>
  </refsynopsisdiv>
 
- <refsect1>
+ <refsect1 id="cypher-createelabel-description">
   <title>Description</title>
 
   <para>
-   <command>CREATE ELABEL</command> statement creates the label of edge.
+   An edge label is a table with four columns: an <structfield>id</structfield> of type
+   <type>graphid</type>, the <type>graphid</type> of the edge's <structfield>start</structfield>
+   and <structfield>end</structfield> vertices, and a <structfield>properties</structfield>
+   column of type <type>jsonb</type>. The label inherits the graph's
+   <literal>ag_edge</literal> unless a parent is named. It is created in the graph named by
+   <varname>graph_path</varname>, and the name cannot carry the graph.
+  </para>
+
+  <para>
+   Creating one also creates the sequence that numbers its ids and three indexes: btree
+   indexes on <literal>(start, "end")</literal> and <literal>("end", start)</literal>, which
+   make a traversal fast in either direction, and a BRIN index on
+   <structfield>id</structfield>. An edge label gets no primary key, because edges are reached
+   through their endpoints. <structfield>start</structfield> and
+   <structfield>end</structfield> are plain <type>graphid</type> columns, not foreign keys, so
+   an edge label puts no restriction on which labels its endpoints have.
+  </para>
+
+  <para>
+   The options are position sensitive: <literal>DISABLE INDEX</literal>, then
+   <literal>INHERITS</literal>, then <literal>WITH</literal>, then
+   <literal>TABLESPACE</literal>. Any other order is a syntax error. Cypher also creates a
+   label on demand, so <literal>CREATE (a)-[:directed]-&gt;(b)</literal> against a graph with
+   no <literal>directed</literal> label creates one. Use <command>CREATE ELABEL</command> when
+   the label needs options, promoted columns or a parent.
+  </para>
+
+  <para>
+   A promoted property is a real typed column beside the property map, computed from the map
+   and stored. Reads of that property are answered from the column instead of walking the JSON
+   document, and the column can carry an index over the value's own type. This is worth doing
+   for an edge weight a traversal filters or orders on. The three forms differ only in where
+   the value comes from. <literal>rating numeric GENERATED</literal> mirrors the property whose
+   key is the column name. <literal>source text GENERATED (site)</literal> mirrors the named
+   key, so the column may be called something else. The long form computes the column from a
+   SQL expression over the label's own columns.
+  </para>
+
+  <para>
+   The property key comes from the generation expression, not from the column name, and is
+   recorded in <structname>ag_label_property</structname>. A query therefore keeps naming the
+   property, and the column name never appears in Cypher. Only a plain read of one key is
+   recorded, such as <literal>properties -&gt;&gt; 'rating'</literal> with or without a cast.
+   Wrap that read in anything else and the result is an ordinary generated column: SQL reads
+   it, and <literal>e.<replaceable class="parameter">key</replaceable></literal> does not.
+  </para>
+
+  <para>
+   Four things a promoted property cannot be. It cannot be left ungenerated, so a bare
+   <literal><replaceable class="parameter">column_name</replaceable> <replaceable
+   class="parameter">data_type</replaceable></literal> is refused. It cannot be
+   <literal>VIRTUAL</literal>, because a virtual generated column cannot carry an index;
+   <literal>STORED</literal> is the default and may be left out. It cannot be
+   <literal>GENERATED BY DEFAULT</literal>. And on an edge label it cannot be named
+   <structfield>id</structfield>, <structfield>properties</structfield>,
+   <structfield>start</structfield> or <structfield>end</structfield>, the structural columns
+   of a graph element. A key an ancestor label already promotes is refused too, unless the
+   column name is the same one.
+  </para>
+
+  <para>
+   The data type has to have an immutable text input function and cannot fix a length.
+   <type>date</type>, <type>timestamp</type>, <type>timestamptz</type> and array types are
+   refused with <literal>generation expression is not immutable</literal>, and
+   <type>varchar(n)</type> and <type>char(n)</type> because fitting a value to a length would
+   let the column and the property hold different values. Accepted are <type>smallint</type>,
+   <type>integer</type>, <type>bigint</type>, <type>numeric</type>, <type>real</type>,
+   <type>double precision</type>, <type>text</type>, <type>boolean</type>, <type>uuid</type>
+   and <type>jsonb</type>, and a type an extension provides such as <type>vector</type>.
   </para>
  </refsect1>
 
- <refsect1>
+ <refsect1 id="cypher-createelabel-parameters">
   <title>Parameters</title>
 
   <variablelist>
@@ -50,8 +120,8 @@ where option can be:
     <term><literal>UNLOGGED</literal></term>
     <listitem>
      <para>
-      If specified, the table of edge label is created as an unlogged table.  Refer
-      to <xref linkend="sql-createtable"/> for details.
+      Create the label's table as unlogged. Its contents are not written to the write ahead log
+      and are lost after a crash.
      </para>
     </listitem>
    </varlistentry>
@@ -60,8 +130,8 @@ where option can be:
     <term><literal>IF NOT EXISTS</literal></term>
     <listitem>
      <para>
-      Do not throw an error if a edge label with the same name already.
-      exists;
+      Issue a notice instead of an error when a label of that name already exists. Nothing is
+      created, and the existing label's options are left as they are.
      </para>
     </listitem>
    </varlistentry>
@@ -70,7 +140,19 @@ where option can be:
     <term><replaceable class="parameter">label_name</replaceable></term>
     <listitem>
      <para>
-      The name of the edge label that to be created.
+      Name of the label to create, in the graph named by <varname>graph_path</varname>.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><replaceable class="parameter">label_prop</replaceable></term>
+    <listitem>
+     <para>
+      A property to mirror into a typed column, in one of the three forms above. Columns are
+      added after <structfield>properties</structfield>, in the order written.
+      <replaceable class="parameter">property_key</replaceable> is an identifier and is folded
+      to lower case, matching the way Cypher stores map keys.
      </para>
     </listitem>
    </varlistentry>
@@ -79,56 +161,28 @@ where option can be:
     <term><literal>DISABLE INDEX</literal></term>
     <listitem>
      <para>
-      This commmand will disable all indexes of the given graph label
+      Create the label's three indexes but leave them invalid, so that loading rows does not
+      maintain them. Reads and writes still work and the planner ignores an invalid index.
+      Rebuild with <xref linkend="cypher-reindex"/>. There is no <literal>ENABLE INDEX</literal>.
      </para>
     </listitem>
    </varlistentry>
 
    <varlistentry>
-    <term><literal>INHERITS</literal></term>
+    <term><literal>INHERITS ( <replaceable class="parameter">parent_label</replaceable> [, ...] )</literal></term>
     <listitem>
      <para>
-      The optional <literal>INHERITS</literal> clause specify the names of the parent labels along with the
-      corresponding keyword after the child label name. There can be multiple parent labels
-      for inheritance.
-        <note>
-          <para>
-            If you want to check the inheritance of the label, 
-            You can use the <command>\d graph_name.label_name</command> command in the psql client.
-<programlisting>
-postgres=# CREATE ELABEL childElabelName inherits (parentElabelName1, parentElabelName2);
-CREATE ELABEL
-postgres=# \d g.childElabelName
-                                                            Table "g.childelabelname"
-   Column   |  Type   | Collation | Nullable |                                              Default                                              
-------------+---------+-----------+----------+---------------------------------------------------------------------------------------------------
- id         | graphid |           | not null | graphid(graph_labid('g.childelabelname'::cstring), nextval('g.childelabelname_id_seq'::regclass))
- start      | graphid |           | not null | 
- end        | graphid |           | not null | 
- properties | jsonb   |           | not null | jsonb_build_object()
-Indexes:
-    "childelabelname_end_idx" btree ("end", start)
-    "childelabelname_id_idx" brin (id)
-    "childelabelname_start_idx" btree (start, "end")
-Inherits: g.parentelabelname1,
-          g.parentelabelname2
-</programlisting>    
-          </para>
-        </note>
+      Parent labels, replacing the default parent <literal>ag_edge</literal>. Each has to be an
+      edge label in the same graph; naming a vertex label is refused.
      </para>
     </listitem>
    </varlistentry>
 
    <varlistentry>
-    <term><literal>WITH ( <replaceable class="parameter">storage_parameter</replaceable> [= <replaceable class="parameter">value</replaceable>] [, ... ] )</literal></term>
+    <term><literal>WITH ( <replaceable class="parameter">storage_parameter</replaceable> [= <replaceable class="parameter">value</replaceable>] [, ...] )</literal></term>
     <listitem>
      <para>
-      This clause specifies optional storage parameters for a table or index;
-      see <xref linkend="sql-createtable-storage-parameters"/> below for more
-      information.  For backward-compatibility the <literal>WITH</literal>
-      clause for a table can also include <literal>OIDS=FALSE</literal> to
-      specify that rows of the new table should not contain OIDs (object
-      identifiers), <literal>OIDS=TRUE</literal> is not supported anymore.
+      Storage parameters for the label's table, as for <command>CREATE TABLE</command>.
      </para>
     </listitem>
    </varlistentry>
@@ -137,55 +191,149 @@ Inherits: g.parentelabelname1,
     <term><literal>TABLESPACE</literal> <replaceable class="parameter">tablespace_name</replaceable></term>
     <listitem>
      <para>
-      The <replaceable class="parameter">tablespace_name</replaceable> is the name
-      of the tablespace in which the new label is to be created.
-      If not specified, default_tablespace is consulted.
+      Tablespace for the label's table. Without it, <varname>default_tablespace</varname> decides.
      </para>
     </listitem>
    </varlistentry>
   </variablelist>
  </refsect1>
 
- <refsect1>
+ <refsect1 id="cypher-createelabel-examples">
   <title>Examples</title>
 
   <para>
-   To create edge label:
+   These examples do not use the graph in <xref linkend="agensgraph-example-data"/>. They build
+   a graph of their own and drop it at the end:
 <programlisting>
-CREATE ELABEL elabelName;
+CREATE GRAPH elabeldemo;
+SET graph_path = elabeldemo;
+CREATE VLABEL person;
+CREATE VLABEL film;
+CREATE ELABEL worked_on;
+SELECT indexrelid::regclass AS index FROM pg_index
+ WHERE indrelid = 'elabeldemo.worked_on'::regclass ORDER BY 1;
+
+             index
+--------------------------------
+ elabeldemo.worked_on_id_idx
+ elabeldemo.worked_on_start_idx
+ elabeldemo.worked_on_end_idx
+(3 rows)
 </programlisting>
   </para>
 
   <para>
-   To create edge label only if not exists in the graph:
+   Grouping several edge types under one parent lets a pattern match either kind, and
+   <function>label()</function> still reports the label the edge was created with:
 <programlisting>
-CREATE ELABEL if not exists elabelName;
+CREATE ELABEL acted_in INHERITS (worked_on);
+CREATE ELABEL directed INHERITS (worked_on);
+CREATE (:person {name: 'Denis Villeneuve'})-[:directed {credited: true}]-&gt;(:film {title: 'Arrival'});
+MATCH (p)-[e:worked_on]-&gt;(f) RETURN label(e) AS type, e.credited AS credited;
+
+    type    | credited
+------------+----------
+ "directed" | true
+(1 row)
+</programlisting>
+   Asking for a label that is there reports it and changes nothing:
+<programlisting>
+CREATE ELABEL IF NOT EXISTS acted_in;
+
+NOTICE:  label "acted_in" already exists, skipping
+CREATE ELABEL
 </programlisting>
   </para>
 
   <para>
-   To create edge label with inherits:
-<programlisting>
-CREATE ELABEL childElabelName inherits (parentElabelName1, parentElabelName2);
-</programlisting>
+   <literal>CREATE UNLOGGED ELABEL staged DISABLE INDEX WITH (fillfactor = 70) TABLESPACE
+   pg_default</literal> takes every option at once. All three indexes are then invalid, so a
+   bulk load does not maintain them. Load the edges, then run
+   <literal>REINDEX ELABEL staged</literal> to build the three.
   </para>
 
   <para>
-   Create elable with disable index and specifying tablespace:
+   Promote two edge properties. <literal>rating</literal> takes its key from the column name
+   and <literal>source</literal> is filled from the key <literal>site</literal>, so Cypher
+   reads the second one as <literal>e.site</literal>:
 <programlisting>
-CREATE ELABEL elab DISABLE INDEX TABLESPACE my_tablespace;
+CREATE ELABEL scored (rating numeric GENERATED, source text GENERATED (site));
+MATCH (p:person), (f:film) CREATE (p)-[:scored {rating: 8.5, site: 'critics'}]-&gt;(f);
+MATCH ()-[e:scored]-&gt;() RETURN e.rating AS rating, e.site AS site;
+
+ rating |  site
+--------+---------
+    8.5 | critics
+(1 row)
 </programlisting>
+   SQL reads the same two values under the column names, as
+   <literal>SELECT rating, source FROM elabeldemo.scored</literal>.
+  </para>
+
+  <para>
+   An edge label can only inherit an edge label:
+<programlisting>
+CREATE ELABEL wrong INHERITS (person);
+
+ERROR:  parent graph label "person" is not edge label.
+</programlisting>
+   <literal>DROP GRAPH elabeldemo CASCADE</literal> drops the graph the examples built.
   </para>
  </refsect1>
 
- <refsect1>
-  <title>See Also</title>
+ <refsect1 id="cypher-createelabel-notes">
+  <title>Notes</title>
 
+  <para>
+   Creating an edge label also sets the statistics target of <structfield>start</structfield>
+   and <structfield>end</structfield> to 1000, because a traversal's row estimate depends on
+   how those two columns are distributed.
+  </para>
+
+  <para>
+   <application>pg_dump</application> writes a label with an explicit label id, as
+   <literal>CREATE ELABEL ONLY <replaceable class="parameter">label_name</replaceable> (
+   <replaceable class="parameter">label_id</replaceable> )</literal>, so that a restore keeps
+   the ids a dumped graph handed out. That form creates no parent, no id default and no
+   endpoint indexes. Write it only when reproducing a dump.
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-createelabel-compatibility">
+  <title>Compatibility</title>
+
+  <para>
+   ISO/IEC 39075:2024 has no label DDL. An edge is described by an edge type inside a graph
+   type, clause 12.6, which names the edge's endpoint node types and its properties and
+   constrains a graph that references it. AgensGraph declares edge labels one at a time, and an
+   edge label constrains neither its endpoints nor its properties.
+  </para>
+
+  <para>
+   <command>CREATE ELABEL</command> corresponds to <command>CREATE TABLE</command>.
+   <literal>UNLOGGED</literal>, <literal>IF NOT EXISTS</literal>, <literal>INHERITS</literal>,
+   <literal>WITH</literal> and <literal>TABLESPACE</literal> mean there what they mean here,
+   and each promoted property becomes a <literal>GENERATED ALWAYS AS ... STORED</literal>
+   column. The differences are the fixed four column shape, the three indexes created for you,
+   the registration in <structname>ag_label</structname> and
+   <structname>ag_label_property</structname>, the automatic parent, and a fixed option order.
+   Because <structfield>start</structfield> and <structfield>end</structfield> are not foreign
+   keys, nothing at the table level stops an edge from pointing at a vertex that has been
+   deleted; <xref linkend="cypher-dropvlabel"/> handles that. Going the other way, a label's
+   table cannot be reshaped with <command>ALTER TABLE</command> unless
+   <varname>enable_graph_ddl</varname> is on.
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-createelabel-see-also">
+  <title>See Also</title>
   <simplelist type="inline">
+   <member><xref linkend="cypher-createvlabel"/></member>
    <member><xref linkend="cypher-alterelabel"/></member>
    <member><xref linkend="cypher-dropelabel"/></member>
-   <member><xref linkend="sql-createtable"/></member>
+   <member><xref linkend="cypher-createpropertyindex"/></member>
+   <member><xref linkend="cypher-reindex"/></member>
+   <member><xref linkend="cypher-creategraph"/></member>
   </simplelist>
  </refsect1>
-
 </refentry>

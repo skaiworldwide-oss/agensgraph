@@ -1,195 +1,628 @@
 <!--
-doc/src/sgml/cypher_syntax.sgml
+doc/src/sgml/ref/cypher_path.sgml
 PostgreSQL documentation
 -->
 
 <appendix id="appendix-cypher">
  <title>Cypher Syntax</title>
-  <refentry id="cypher-path">
-   <indexterm zone="cypher-path">
-    <primary>Cypher Path</primary>
-   </indexterm>
-  
-   <refmeta>
-    <refentrytitle>Cypher Path</refentrytitle>
-    <manvolnum>7</manvolnum>
-    <refmiscinfo>SQL - Language Statements</refmiscinfo>
-   </refmeta>
-  
-   <refnamediv>
-    <refname>Cypher Path</refname>
-    <refpurpose>cypher path</refpurpose>
-   </refnamediv>
-  
-   <refsect1>
-    <title>Cypher Path Pattern</title>
-  
-    <refsect2 id="cypher-path-pattern" xreflabel="cypher-path-pattern">
-     <title><literal>path_pattern</literal></title>
+
+ <refentry id="cypher-path">
+  <indexterm zone="cypher-path">
+   <primary>Cypher Path</primary>
+  </indexterm>
+  <indexterm zone="cypher-path">
+   <primary>pattern</primary>
+  </indexterm>
+
+  <refmeta>
+   <refentrytitle>Cypher Path</refentrytitle>
+   <manvolnum>7</manvolnum>
+   <refmiscinfo>Cypher - Language Statements</refmiscinfo>
+  </refmeta>
+
+  <refnamediv>
+   <refname>Cypher Path</refname>
+   <refpurpose>the pattern and expression syntax every Cypher clause is built from</refpurpose>
+  </refnamediv>
+
+  <refsynopsisdiv>
+<synopsis>
+<replaceable class="parameter">pattern</replaceable>:
+
+    [ <replaceable class="parameter">path_variable</replaceable> = ] <replaceable class="parameter">node</replaceable> [ <replaceable class="parameter">edge</replaceable> <replaceable class="parameter">node</replaceable> ] ...
+
+<replaceable class="parameter">node</replaceable>:
+
+    ( [ <replaceable class="parameter">variable</replaceable> ] [ : <replaceable class="parameter">label</replaceable> [ ONLY ] ] [ { <replaceable class="parameter">property_map</replaceable> } ] )
+
+<replaceable class="parameter">edge</replaceable>, one of:
+
+    -[ <replaceable class="parameter">edge_body</replaceable> ]-&gt;      left to right
+    &lt;-[ <replaceable class="parameter">edge_body</replaceable> ]-      right to left
+    -[ <replaceable class="parameter">edge_body</replaceable> ]-       either direction
+
+<replaceable class="parameter">edge_body</replaceable>:
+
+    [ <replaceable class="parameter">variable</replaceable> ] [ : <replaceable class="parameter">label</replaceable> [ ONLY ] ] [ * [ <replaceable class="parameter">min</replaceable> ] [ .. [ <replaceable class="parameter">max</replaceable> ] ] ] [ { <replaceable class="parameter">property_map</replaceable> } ]
+
+shortest path forms, each one a whole <replaceable class="parameter">pattern</replaceable>:
+
+    [ <replaceable class="parameter">path_variable</replaceable> = ] shortestpath( <replaceable class="parameter">node</replaceable> <replaceable class="parameter">edge</replaceable> <replaceable class="parameter">node</replaceable> )
+    [ <replaceable class="parameter">path_variable</replaceable> = ] allshortestpaths( <replaceable class="parameter">node</replaceable> <replaceable class="parameter">edge</replaceable> <replaceable class="parameter">node</replaceable> )
+    <replaceable class="parameter">path_variable</replaceable> = dijkstra( <replaceable class="parameter">node</replaceable> <replaceable class="parameter">edge</replaceable> <replaceable class="parameter">node</replaceable>, <replaceable class="parameter">weight</replaceable> [, <replaceable class="parameter">qualifier</replaceable> ] [, LIMIT <replaceable class="parameter">count</replaceable> ] )
+    ( <replaceable class="parameter">path_variable</replaceable>, <replaceable class="parameter">weight_variable</replaceable> ) = dijkstra( <replaceable class="parameter">node</replaceable> <replaceable class="parameter">edge</replaceable> <replaceable class="parameter">node</replaceable>, <replaceable class="parameter">weight</replaceable> [, <replaceable class="parameter">qualifier</replaceable> ] [, LIMIT <replaceable class="parameter">count</replaceable> ] )
+</synopsis>
+  </refsynopsisdiv>
+
+  <refsect1 id="cypher-path-description">
+   <title>Description</title>
+
+   <para>
+    A pattern describes a shape in the graph. <xref linkend="cypher-match"/> looks for it,
+    <xref linkend="cypher-create"/>, <xref linkend="cypher-merge"/> and
+    <xref linkend="cypher-insert"/> build it. The syntax is the same in all four, so this page
+    is the one definition of it.
+   </para>
+
+   <para>
+    A pattern is a chain that starts with a node, and continues with an edge and another node
+    as often as needed. Each element may carry a variable, a label and a property map, and
+    each of the three is optional. An element with no variable is matched but cannot be
+    referred to again. A whole pattern may be given a name with
+    <replaceable class="parameter">path_variable</replaceable> and <literal>=</literal>.
+   </para>
+
+   <para>
+    A variable bound by a node pattern holds a value of type <type>vertex</type>, one bound by
+    an edge pattern a value of type <type>edge</type>, and one bound to a whole pattern a value
+    of type <type>graphpath</type>. A variable name is an identifier, so it folds to lower case
+    unless it is double quoted, and it may not begin with a digit. A name already in scope is
+    not rebound: reusing it constrains the new element to the value the name already holds.
+   </para>
+
+   <refsect2 id="cypher-path-nodes">
+    <title>Node Patterns</title>
+
     <para>
-      A cypher pattern is an expression that represents a graph. 
-      As a pattern is represented by a combination of one or more vertices or edges, 
-      how you create vertices and edges as a pattern is critical.
+     A node pattern is written in parentheses. Empty parentheses match every vertex in the
+     graph. A colon and a name restrict it to a label, an identifier in front of the colon
+     names it, and a map in braces constrains its properties.
     </para>
-  
-     <refsect3 id="cypher-pattern-vertex" xreflabel="cypher-pattern-vertex">
-     <title><literal>Vertex</literal></title>
+
+<synopsis>
+( )
+(:person)
+(v)
+(v:person)
+(v:person {name: 'Jack'})
+({name: 'Jack'})
+(v:person ONLY {name: 'Jack'})
+</synopsis>
+
     <para>
-      <literal>Vertex</literal> Vertex is expressed using parentheses, 
-      and can be specified with vlabel, property, and variable to further refine the vertex to be searched. 
-      Vertex is represented by <literal>( )</literal>. 
-      A pattern that does not have vlabel or property in parentheses, 
-      as in the example below, means all vertices.
-  <synopsis>
-  ( )
-  </synopsis>
-      To represent vlabel in a vertex, use <literal>(:vlabelName)</literal>. The name of vlabel is indicated with a
-      colon in parentheses indicating the vertex. The below example represents a vertex with
-      vlabel named "person."
-  <synopsis>
-  (:person)
-  </synopsis>
-  
-      If you want to assign a variable to the vertex, use <literal>(variableName)</literal>. 
-      A variable can be named a combination of alphanumeric (a~z, 0~9) and underbars.
-      When you want to display the variable and vlabel at the same time in
-      vertex, use <literal>(variableName: vlabelName)</literal>.
-  
-      <note>
-       <para>
-        Cypher variable can not start with a number.
-       </para>
-      </note>
-  
-  <synopsis>
-  (v)
-  (var)
-  (var_1)
-  (v:person)
-  </synopsis>
-  
-      You can further refine the properties by listing them in the vertex. If you want to represent
-      a property, use <literal>({propertyName:propertyValue})</literal>. 
-      If the value is a string, the value must be wrapped with <literal>' '</literal>. 
-      If you want to represent multiple properties, <literal>,</literal> should be used.
-  
-  <synopsis>
-  ({name: 'Jack'})
-  (v:person {name: 'Jack'})
-  (v:person {name: 'Jack', age: 24})
-  </synopsis>
-     </para>
-     </refsect3>
-  
-  
-      <refsect3 id="cypher-pattern-edge" xreflabel="cypher-pattern-edge">
-      <title><literal>Edge</literal></title>
-      <para>
-        An edge is expressed with two dashes, 
-        and can be marked along with elabel, property, and variable.
-  
-          <note>
-            <para>
-              The brackets are mendatory for the cypher edge expression. It does not mean optional.
-            </para>
-          </note>
-      </para>
-  
-  <synopsis>
-  -[]-
-  -[]-&gt;
-  &lt;-[]-
-  </synopsis>
-      <para>
-        An edge is expressed using <literal>-[]-</literal>. You can express direction with &lt; &gt;. In the above example,
-        <literal>-[ ]-</literal> expressed as dashes only means "all edges" since no constraint is indicated. <literal>-[ ]-&gt; &lt;-[ ]-</literal>
-        with additional angle brackets means "all edges with one directionality."
-      </para>
-      <para>
-        If you want to express other elements in the edge, specify them in <literal>[ ]</literal>. If you want to
-        represent elabel on the edge, use <literal>-[:elabelName]-&gt;</literal>. The above example means an edge
-        with elabel named "knows."
-      </para>
-  <synopsis>
-  -[:knows]-&gt;
-  </synopsis>
-  
-      <para>
-        If you want to assign a variable to an edge, use <literal>-[variableName]-&gt;</literal>. When you want to
-        display variable and elabel simultaneously on the edge, use <literal>-[variableName:elabelName]-&gt;</literal>
-      </para>
-  <synopsis>
-  -[{why: 'She is lovely'}]-&gt;
-  -[:likes {why: 'She is lovely'}]-&gt;
-  -[e:likes {why: 'She is lovely'}]-&gt;
-  </synopsis>
-      </refsect3>
-  
-      <refsect3 id="cypher-pattern-vertices-and-edges" xreflabel="cypher-pattern-vertices-and-edges">
-        <title><literal>Vertices and Edges</literal></title>
-        <para>
-          The basic frame of a pattern consisting of a combination of vertices and edges is <literal>( )-[]-
-          &gt;( )</literal>. It is good to give meaning to the pattern by specifying properties and labels on
-          vertices and edges. Variables can be assigned to individual vertices and edges, or the entire
-          pattern. If you want to assign a variable to the entire pattern, use <literal>=</literal>. In the above example, p
-          is a variable and is applied to the entire pattern by using <literal>=</literal>.
-        </para>
-  <synopsis>
-  ()-[]-&gt;()
-  (jack:person {name: 'Jack'})-[k:knows]-&gt;(emily:person {name: 'Emily'})
-  p = (:person)-[:knows]-&gt;(:person)
-  </synopsis>
-  
-      </refsect3>
-  
-      <refsect3 id="cypher-pattern-path" xreflabel="cypher-pattern-path">
-        <title><literal>Path</literal></title>
-        <para>
-          The number of vertices and edges in a pattern may continue to increase. The unit for a
-          series of path in a pattern is called a path.
-          In the case of a long path, it can be written in abbreviated form for better readability and
-          ease of writing. If n vertices go through an edge n-1 times, you can put an asterisk <literal>(*)</literal> and <literal>n-
-          1</literal> in brackets (see example below).
-        </para>
-  <synopsis>
-  (a)-[]-&gt;( )-[]-&gt;(c)
-  (a)-[*2]-&gt;(c)
-  (a)-[]-&gt;( )-[]-&gt;( )-[]-&gt;(d)
-  (a)-[*3]-&gt;(d)
-  (a)-[]-&gt;( )-[]-&gt;( )-[]-&gt;( )-[]-&gt;(e)
-  (a)-[*4]-&gt;(e)
-  </synopsis>
-  
-      </refsect3>
-  
-      <refsect3 id="cypher-pattern-flexible-length-path" xreflabel="cypher-pattern-flexible-length-path">
-        <title><literal>Flexible Length Path</literal></title>
-        <para>
-          Depending on the situation, you may need to dynamically change the number of edges that
-          must be gone through in a query. If you want to give a dynamic change to the length of the path, <literal>..</literal> can be used. 
-          The example above shows a path with two or more edges, a path with seven or fewer paths, a path with
-          three or more and five or fewer paths, and an infinite path (in sequence from top to bottom).
-        </para>
-  <synopsis>
-  (a)-[*2..]-&gt;(b)
-  (a)-[*..7]-&gt;(b)
-  (a)-[*3..5]-&gt;(b)
-  (a)-[*]-&gt;(b)
-  </synopsis>
-      </refsect3>
-  
-    </refsect2>
-  
-    <refsect2 id="cypher-expr" xreflabel="cypher-expr">
-     <title><literal>cypher_expr</literal></title>
-     <para>
-        Cypher expressions are similar to common SQL expressions, 
-        So the expression form is almost the same as in SQL.
-        The main difference is that Cypher handles labels and their properties using a Jsonb object structure. 
-        Therefore, properties within a label can be accessed using dot notation, which is similar to member access in Jsonb type.
-        For more information about expression of cypher, See <xref linkend="sql-expressions"/>
-     </para>
-    </refsect2>
-   </refsect1>
-  </refentry>
+     A property map is an equality test on each key it lists, so
+     <literal>(v:person {name: 'Jack', age: 24})</literal> requires both properties to have
+     those values. The comparison is a <type>jsonb</type> comparison, which matters when the
+     literal's type differs from the stored one. The map may also be a query parameter holding
+     a map, which is how an application passes values it did not write into the statement.
+    </para>
+
+    <para>
+     A label matches its own rows and the rows of every label that inherits from it, because a
+     label is a table. <literal>ONLY</literal> narrows the match to the one label. It goes
+     after the label and before the property map, and it needs a label:
+     <literal>(n ONLY)</literal> raises
+     <literal>ONLY must have one label preceding it</literal>.
+    </para>
+   </refsect2>
+
+   <refsect2 id="cypher-path-edges">
+    <title>Edge Patterns</title>
+
+    <para>
+     An edge pattern is a pair of dashes with square brackets between them. The brackets are
+     part of the syntax and are not optional. An arrowhead on one side gives the edge a
+     direction, and no arrowhead means either direction. Arrowheads on both sides,
+     <literal>&lt;-[ ]-&gt;</literal>, mean the same as none.
+    </para>
+
+<synopsis>
+-[]-&gt;
+&lt;-[]-
+-[]-
+-[:knows]-&gt;
+-[e]-&gt;
+-[e:knows]-&gt;
+-[e:knows {since: 2015}]-&gt;
+-[e:knows ONLY]-&gt;
+-[e:knows*1..3]-&gt;
+</synopsis>
+
+    <para>
+     An edge pattern carries at most one label. Two names separated by <literal>|</literal> are
+     refused with <literal>multiple types for relationship not supported</literal>, on a fixed
+     length edge, on a variable length edge and inside <literal>shortestpath</literal> alike.
+     To match a set of edge labels, leave the edge unlabelled and test
+     <literal>label(e)</literal> in <xref linkend="cypher-where"/>.
+    </para>
+   </refsect2>
+
+   <refsect2 id="cypher-path-varlen">
+    <title>Variable Length Edge Patterns</title>
+
+    <para>
+     An asterisk after the label turns one edge into a run of edges. The bounds follow the
+     asterisk, and both are optional.
+    </para>
+
+    <informaltable>
+     <tgroup cols="2">
+      <thead>
+       <row>
+        <entry>Written</entry>
+        <entry>Means</entry>
+       </row>
+      </thead>
+      <tbody>
+       <row><entry><literal>-[:related_to*2]-&gt;</literal></entry><entry>exactly two edges</entry></row>
+       <row><entry><literal>-[:related_to*1..3]-&gt;</literal></entry><entry>one, two or three edges</entry></row>
+       <row><entry><literal>-[:related_to*2..]-&gt;</literal></entry><entry>two or more</entry></row>
+       <row><entry><literal>-[:related_to*..3]-&gt;</literal></entry><entry>up to three, and at least one</entry></row>
+       <row><entry><literal>-[:related_to*]-&gt;</literal></entry><entry>one or more, no upper bound</entry></row>
+       <row><entry><literal>-[:related_to*0..1]-&gt;</literal></entry><entry>the vertex itself, or one edge away</entry></row>
+      </tbody>
+     </tgroup>
+    </informaltable>
+
+    <para>
+     A lower bound of <literal>0</literal> includes the zero length path, which binds both ends
+     of the pattern to the same vertex. A lower bound above the upper bound is rejected when
+     the statement is parsed, with <literal>invalid range</literal>.
+    </para>
+
+    <para>
+     An unbounded traversal terminates even on a cyclic graph, because no path may use the same
+     edge twice. A vertex may repeat, so a run may return to where it started, but each run is
+     a walk over distinct edges and there are finitely many of those. That is a guarantee about
+     termination and not about cost: an unbounded search over a dense graph can still enumerate
+     an enormous number of paths. Give the range an upper bound whenever you have any idea what
+     it should be.
+    </para>
+   </refsect2>
+
+   <refsect2 id="cypher-path-named">
+    <title>Named Paths</title>
+
+    <para>
+     <replaceable class="parameter">path_variable</replaceable> and <literal>=</literal> in
+     front of a pattern bind the whole path, with its vertices and edges in order.
+     <literal>length()</literal> returns the edge count, <literal>nodes()</literal> the
+     vertices and <literal>relationships()</literal> the edges.
+     <literal>edges()</literal> is a synonym for <literal>relationships()</literal>.
+    </para>
+
+    <para>
+     This position takes a narrower set of names than an element variable does. An unreserved
+     keyword such as <literal>path</literal> is an acceptable element variable but is rejected
+     as a path variable unless it is double quoted, so <literal>MATCH path = ...</literal> is a
+     syntax error while <literal>MATCH (path) ...</literal> is not. A name that is
+     <literal>_agens_default_</literal> or starts with it is refused as well, because the
+     server reserves that prefix.
+    </para>
+   </refsect2>
+
+   <refsect2 id="cypher-path-shortest">
+    <title>Shortest and Cheapest Paths</title>
+
+    <para>
+     Three functions take a pattern rather than a value, and each one stands where a whole
+     pattern stands. All three take a chain of exactly one edge between two nodes. A longer
+     chain raises <literal>only one relationship is allowed</literal>.
+    </para>
+
+    <para>
+     <literal>shortestpath()</literal> returns one path of minimum length, or no row if there
+     is none. It is a bidirectional search that stops as soon as the two frontiers meet, so it
+     does not enumerate the paths it rejects. <literal>allshortestpaths()</literal> is the same
+     search returning every path of that minimum length rather than one of them. Both accept a
+     variable length edge, and the upper bound is what keeps an untyped search affordable.
+    </para>
+
+    <para>
+     Both endpoints of a shortest path search have to be bound to variables, even when the
+     names are never used. Leaving one out raises
+     <literal>node must be a reference to a specific node</literal>. This is the one place
+     where leaving a variable out is refused rather than merely wasteful.
+    </para>
+
+    <para>
+     <literal>dijkstra()</literal> minimises total weight rather than edge count, and the two
+     are often different paths. It takes a weight expression naming the edge variable bound
+     inside its own pattern, evaluated once per edge as the search expands. Its pattern holds
+     one plain edge, because the function does its own expansion: a <literal>*</literal> in
+     there raises <literal>variable length relationship is not supported</literal>.
+    </para>
+
+    <para>
+     A third argument is a qualifier, a boolean the search applies to each candidate edge, so
+     edges can be excluded without filtering the graph first. <literal>LIMIT</literal> inside
+     the parentheses caps how many paths come back, and its default is one.
+     <literal>(p, total) = dijkstra(...)</literal> binds two things, the path and the total
+     weight along it, while <literal>p = dijkstra(...)</literal> binds the path alone.
+    </para>
+   </refsect2>
+  </refsect1>
+
+  <refsect1 id="cypher-expr">
+   <title>Cypher Expressions</title>
+
+   <para>
+    A Cypher expression is built the way a SQL expression is, from literals, variables,
+    operators and function calls. The difference is the data. A label's properties are one
+    <type>jsonb</type> object per element, so <literal>n.name</literal> reads a member of that
+    object and the result is <type>jsonb</type>, not a SQL scalar. Arithmetic, comparison and
+    the string operators all run against <type>jsonb</type> values.
+   </para>
+
+   <para>
+    An expression may appear wherever a clause takes one: a <literal>WHERE</literal> condition,
+    a <xref linkend="cypher-return"/> item, a property value in a pattern, a
+    <xref linkend="cypher-set"/> right side, a sort key, a function argument.
+   </para>
+
+   <refsect2 id="cypher-expr-precedence">
+    <title>Operator Precedence</title>
+
+    <para>
+     Operators bind in this order, loosest first. Two operators on the same row have equal
+     precedence and associate as the row says.
+    </para>
+
+    <informaltable>
+     <tgroup cols="3">
+      <thead>
+       <row>
+        <entry>Precedence</entry>
+        <entry>Operators</entry>
+        <entry>Associativity</entry>
+       </row>
+      </thead>
+      <tbody>
+       <row><entry>1 (loosest)</entry><entry><literal>UNION</literal> <literal>EXCEPT</literal></entry><entry>left</entry></row>
+       <row><entry>2</entry><entry><literal>INTERSECT</literal></entry><entry>left</entry></row>
+       <row><entry>3</entry><entry><literal>OR</literal> <literal>XOR</literal></entry><entry>left</entry></row>
+       <row><entry>4</entry><entry><literal>AND</literal></entry><entry>left</entry></row>
+       <row><entry>5</entry><entry><literal>NOT</literal></entry><entry>right</entry></row>
+       <row><entry>6</entry><entry><literal>IS NULL</literal> <literal>IS NOT NULL</literal> <literal>IS [NOT] UNKNOWN</literal></entry><entry>none</entry></row>
+       <row><entry>7</entry><entry><literal>&lt;</literal> <literal>&lt;=</literal> <literal>&gt;</literal> <literal>&gt;=</literal> <literal>=</literal> <literal>&lt;&gt;</literal> <literal>!=</literal></entry><entry>none</entry></row>
+       <row><entry>8</entry><entry><literal>IN</literal> <literal>BETWEEN</literal></entry><entry>none</entry></row>
+       <row><entry>9</entry><entry>any other operator, including <literal>||</literal> and the <type>jsonb</type> operators</entry><entry>left</entry></row>
+       <row><entry>10</entry><entry><literal>+</literal> <literal>-</literal> (binary)</entry><entry>left</entry></row>
+       <row><entry>11</entry><entry><literal>*</literal> <literal>/</literal> <literal>%</literal></entry><entry>left</entry></row>
+       <row><entry>12</entry><entry><literal>^</literal></entry><entry>left</entry></row>
+       <row><entry>13</entry><entry><literal>-</literal> (unary)</entry><entry>right</entry></row>
+       <row><entry>14</entry><entry><literal>STARTS WITH</literal> <literal>ENDS WITH</literal> <literal>CONTAINS</literal> <literal>=~</literal></entry><entry>none</entry></row>
+       <row><entry>15</entry><entry><literal>[ ]</literal> (subscript), <literal>( )</literal> (call)</entry><entry>left</entry></row>
+       <row><entry>16</entry><entry><literal>::</literal></entry><entry>left</entry></row>
+       <row><entry>17 (tightest)</entry><entry><literal>.</literal></entry><entry>left</entry></row>
+      </tbody>
+     </tgroup>
+    </informaltable>
+
+    <para>
+     Three rows differ from a common expectation. <literal>^</literal> is left associative and
+     binds looser than unary minus, which is PostgreSQL's rule rather than arithmetic's, so
+     <literal>2 ^ 3 ^ 2</literal> is <literal>(2 ^ 3) ^ 2</literal> and
+     <literal>-2 ^ 2</literal> is <literal>(-2) ^ 2</literal>. The string matching operators
+     bind tighter than concatenation and tighter than arithmetic. And comparisons do not chain:
+     <literal>1 &lt; 2 &lt; 3</literal> is a syntax error rather than two comparisons.
+    </para>
+
+    <para>
+     SQL has a few operators at levels of its own, <literal>AT TIME ZONE</literal>,
+     <literal>COLLATE</literal>, <literal>LIKE</literal>, <literal>ILIKE</literal> and
+     <literal>SIMILAR TO</literal>. Cypher's expression grammar accepts none of them.
+    </para>
+   </refsect2>
+
+   <refsect2 id="cypher-expr-strings">
+    <title>String Matching Operators</title>
+
+    <informaltable>
+     <tgroup cols="2">
+      <thead>
+       <row>
+        <entry>Operator</entry>
+        <entry>Test</entry>
+       </row>
+      </thead>
+      <tbody>
+       <row><entry><replaceable>string</replaceable> <literal>STARTS WITH</literal> <replaceable>prefix</replaceable></entry><entry>The string begins with the prefix.</entry></row>
+       <row><entry><replaceable>string</replaceable> <literal>ENDS WITH</literal> <replaceable>suffix</replaceable></entry><entry>The string ends with the suffix.</entry></row>
+       <row><entry><replaceable>string</replaceable> <literal>CONTAINS</literal> <replaceable>substring</replaceable></entry><entry>The substring occurs anywhere in the string.</entry></row>
+       <row><entry><replaceable>string</replaceable> <literal>=~</literal> <replaceable>pattern</replaceable></entry><entry>The whole string matches the POSIX regular expression.</entry></row>
+      </tbody>
+     </tgroup>
+    </informaltable>
+
+    <para>
+     PostgreSQL's regular expression operators <literal>~</literal>, <literal>~*</literal>,
+     <literal>!~</literal> and <literal>!~*</literal> also work in Cypher. None of the four
+     operators above can be answered from an index. A predicate that has to be sargable needs
+     <literal>=</literal> or a range.
+    </para>
+   </refsect2>
+
+   <refsect2 id="cypher-expr-comments">
+    <title>Comments</title>
+
+    <para>
+     A comment runs from <literal>--</literal> to the end of the line, or from
+     <literal>/*</literal> to a matching <literal>*/</literal>. Block comments nest, so a
+     commented out region containing a comment stays balanced. <literal>//</literal> is not a
+     comment and is a syntax error.
+    </para>
+   </refsect2>
+
+   <refsect2 id="cypher-expr-identifiers">
+    <title>Identifiers and Case Folding</title>
+
+    <para>
+     An identifier names a graph, a label, a variable, a property key, a column, an index or a
+     constraint. An unquoted identifier folds to lower case, exactly as PostgreSQL folds an
+     unquoted SQL identifier, so <literal>MOVIE</literal>, <literal>Movie</literal> and
+     <literal>movie</literal> all name the same label. A double quoted identifier is taken as
+     written, and <literal>"MOVIE"</literal> is a different name from <literal>movie</literal>.
+     A quoted variable has to be quoted at every mention.
+    </para>
+
+    <para>
+     Property keys fold the same way. <literal>{MixedKey: 1}</literal> stores the key
+     <literal>mixedkey</literal> and <literal>{"MixedKey": 1}</literal> stores
+     <literal>MixedKey</literal>. The two are different keys and one element can carry both, so
+     quote a key consistently or not at all.
+    </para>
+
+    <para>
+     An unquoted identifier starts with a letter or an underscore and continues with letters,
+     digits, underscores and dollar signs. Letter includes non ASCII letters. The length limit
+     is PostgreSQL's 63 bytes, counted in bytes rather than characters, and a longer name is
+     truncated. Backticks are not a quoting character: <literal>`movie`</literal> is a syntax
+     error. A string literal takes single quotes, so double quotes never make a string.
+    </para>
+
+    <para>
+     A reserved word is read as a keyword and not as a name, so a pattern variable cannot be
+     called <literal>both</literal>, <literal>let</literal>, <literal>finish</literal>,
+     <literal>insert</literal>, <literal>offset</literal> or <literal>xor</literal>. Quoting
+     lifts the restriction, because a quoted identifier is never read as a keyword. A reserved
+     word is still allowed as a <command>RETURN</command> alias and as a property key, since
+     neither position can be confused with a keyword.
+    </para>
+   </refsect2>
+  </refsect1>
+
+  <refsect1 id="cypher-path-examples">
+   <title>Examples</title>
+
+   <para>
+    These examples use the graph in <xref linkend="agensgraph-example-data"/>.
+   </para>
+
+   <para>
+    A range unions the lengths in it, so the shorter reaches come back alongside the longer
+    ones:
+<programlisting>
+MATCH (a:movie {title: 'The Matrix'})-[:related_to*1..2]-&gt;(b:movie)
+RETURN b.title AS reached ORDER BY reached;
+
+           reached
+------------------------------
+ "Inception"
+ "Terminator 2: Judgment Day"
+ "The Matrix Reloaded"
+ "The Matrix Revolutions"
+ "The Terminator"
+ "Total Recall"
+(6 rows)
+</programlisting>
+   </para>
+
+   <para>
+    A named path can be taken apart. The <literal>[x IN list | expression]</literal> form is a
+    list comprehension, and it is how a route is rendered readably:
+<programlisting>
+MATCH p = (a:movie {title: 'The Matrix'})-[:related_to*2]-&gt;(b:movie)
+RETURN length(p) AS hops,
+       [x IN nodes(p) | x.title] AS route,
+       [r IN relationships(p) | r.weight] AS weights
+ORDER BY route;
+
+ hops |                              route                              | weights
+------+-----------------------------------------------------------------+---------
+ 2    | ["The Matrix", "The Matrix Reloaded", "The Matrix Revolutions"] | [1, 1]
+ 2    | ["The Matrix", "The Terminator", "Terminator 2: Judgment Day"]  | [3, 1]
+ 2    | ["The Matrix", "Total Recall", "Inception"]                     | [4, 2]
+(3 rows)
+</programlisting>
+   </para>
+
+   <para>
+    <literal>shortestpath()</literal> over an untyped, undirected edge crosses two edge labels,
+    forwards along one and backwards along the other:
+<programlisting>
+MATCH p = shortestpath((a:person {name: 'Keanu Reeves'})-[e*..6]-(b:person {name: 'Arnold Schwarzenegger'}))
+RETURN length(p) AS hops,
+       [x IN nodes(p) | label(x)] AS labels,
+       [r IN relationships(p) | label(r)] AS via;
+
+ hops |                 labels                 |                  via
+------+----------------------------------------+----------------------------------------
+ 3    | ["person", "movie", "movie", "person"] | ["acted_in", "related_to", "acted_in"]
+(1 row)
+</programlisting>
+   </para>
+
+   <para>
+    Both ends have to be named, even when the names are never read:
+<programlisting>
+MATCH p = shortestpath((:person {name: 'Keanu Reeves'})-[e*..6]-(:person {name: 'Arnold Schwarzenegger'}))
+RETURN length(p);
+
+ERROR:  node must be a reference to a specific node
+</programlisting>
+   </para>
+
+   <para>
+    <literal>allshortestpaths()</literal> returns one row per route of the minimum length.
+    There is one here, because this dataset's <literal>related_to</literal> edges form a tree:
+<programlisting>
+MATCH p = allshortestpaths((a:movie {title: 'The Matrix'})-[:related_to*..4]-&gt;(b:movie {title: 'Inception'}))
+RETURN length(p) AS hops, [x IN nodes(p) | x.title] AS route;
+
+ hops |                    route
+------+---------------------------------------------
+ 2    | ["The Matrix", "Total Recall", "Inception"]
+(1 row)
+</programlisting>
+   </para>
+
+   <para>
+    <literal>dijkstra()</literal> minimises the weight. The two variable form binds the total
+    as well as the path:
+<programlisting>
+MATCH (a:movie {title: 'The Matrix'}), (b:movie {title: 'Inception'})
+MATCH (p, total) = dijkstra((a)-[e:related_to]-&gt;(b), e.weight)
+RETURN total AS weight, [x IN nodes(p) | x.title] AS route, [r IN relationships(p) | r.weight] AS legs;
+
+ weight |                    route                    |  legs
+--------+---------------------------------------------+--------
+ 6      | ["The Matrix", "Total Recall", "Inception"] | [4, 2]
+(1 row)
+</programlisting>
+   </para>
+
+   <para>
+    An unquoted label name folds to lower case, so <literal>MOVIE</literal> finds the
+    <literal>movie</literal> label:
+<programlisting>
+MATCH (n:MOVIE {title: 'The Matrix'}) RETURN n.title AS title;
+
+    title
+--------------
+ "The Matrix"
+(1 row)
+</programlisting>
+   </para>
+
+   <para>
+    Quoting keeps the case as written. No label is called <literal>MOVIE</literal>, so
+    <literal>(n:"MOVIE")</literal> matches nothing rather than failing.
+   </para>
+
+   <para>
+    <literal>^</literal> groups to the left and binds looser than unary minus:
+<programlisting>
+RETURN 2 ^ 3 ^ 2 AS pow, -2 ^ 2 AS neg;
+
+ pow | neg
+-----+-----
+ 64  | 4
+(1 row)
+</programlisting>
+   </para>
+
+   <para>
+    The four string matching operators:
+<programlisting>
+RETURN 'Matrix' STARTS WITH 'Mat' AS sw, 'Matrix' ENDS WITH 'rix' AS ew,
+       'Matrix' CONTAINS 'atr' AS c, 'Matrix' =~ '^M.*x$' AS re;
+
+ sw | ew | c | re
+----+----+---+----
+ t  | t  | t | t
+(1 row)
+</programlisting>
+   </para>
+
+   <para>
+    Both comment forms, in one statement:
+<programlisting>
+MATCH (m:movie {title: 'The Matrix'})   -- one film
+/* a block comment
+   over two lines */
+RETURN m.title AS title;
+
+    title
+--------------
+ "The Matrix"
+(1 row)
+</programlisting>
+   </para>
+  </refsect1>
+
+  <refsect1 id="cypher-path-notes">
+   <title>Notes</title>
+
+   <para>
+    Within one pattern match no edge is used twice, so a two hop pattern never doubles back
+    along the edge it arrived on. A node variable may be repeated, which constrains both
+    positions to the same vertex, but an edge variable may be used once per pattern and
+    reusing it raises <literal>duplicate variable</literal>.
+   </para>
+
+   <para>
+    A pattern is not a value. It cannot be used as a boolean, so
+    <literal>WHERE (m)-[:related_to]-&gt;(:movie)</literal> does not parse. Wrap it in
+    <literal>EXISTS { MATCH ... }</literal>, described in
+    <xref linkend="cypher-subqueryexpressions"/>. A label test is
+    <literal>label(n) = 'movie'</literal>, not a colon in a condition.
+   </para>
+
+   <para>
+    A variable length edge appears in a plan as
+    <literal>Graph VLE on <replaceable>label</replaceable> [min..max]</literal>. Left
+    unlabelled it becomes <literal>Graph VLE on ag_edge</literal>, which walks every edge label
+    in the graph at every hop, so naming the label is the single largest thing that reduces the
+    cost of a traversal.
+   </para>
+  </refsect1>
+
+  <refsect1 id="cypher-path-compatibility">
+   <title>Compatibility</title>
+
+   <para>
+    The standard's label expression, ISO/IEC 39075:2024 section 16.8, combines label names with
+    <literal>|</literal>, <literal>&amp;</literal> and <literal>!</literal>. AgensGraph accepts
+    a single label name per element, so none of the three is available. The standard's element
+    pattern filler, section 16.7, has no <literal>ONLY</literal>; AgensGraph adds it because a
+    label here is a table that child labels inherit from. The graph pattern quantifier of
+    section 16.11 is written <literal>{1,3}</literal> after an element; AgensGraph writes the
+    same idea as <literal>*1..3</literal> inside the edge brackets.
+    <literal>shortestpath</literal>, <literal>allshortestpaths</literal> and
+    <literal>dijkstra</literal> are not in the standard.
+   </para>
+
+   <para>
+    Three lexical differences will catch a reader who knows Cypher from elsewhere. Identifiers
+    fold to lower case and backticks are not a quoting character. A string literal takes single
+    quotes only. And <literal>//</literal> is not a comment. <literal>XOR</literal>,
+    <literal>STARTS WITH</literal>, <literal>ENDS WITH</literal>, <literal>CONTAINS</literal>
+    and <literal>=~</literal> are all present and mean what they mean in openCypher.
+   </para>
+  </refsect1>
+
+  <refsect1 id="cypher-path-see-also">
+   <title>See Also</title>
+   <simplelist type="inline">
+    <member><xref linkend="cypher-match"/></member>
+    <member><xref linkend="cypher-create"/></member>
+    <member><xref linkend="cypher-merge"/></member>
+    <member><xref linkend="cypher-insert"/></member>
+    <member><xref linkend="cypher-where"/></member>
+    <member><xref linkend="cypher-subqueryexpressions"/></member>
+    <member><xref linkend="agensgraph-datatypes"/></member>
+   </simplelist>
+  </refsect1>
+ </refentry>
 </appendix>

@@ -1,5 +1,5 @@
 <!--
-doc/src/sgml/ref/create_property_index.sgml
+doc/src/sgml/ref/cypher_create_property_index.sgml
 PostgreSQL documentation
 -->
 
@@ -11,47 +11,66 @@ PostgreSQL documentation
  <refmeta>
   <refentrytitle>CREATE PROPERTY INDEX</refentrytitle>
   <manvolnum>7</manvolnum>
-  <refmiscinfo>SQL - Language Statements</refmiscinfo>
+  <refmiscinfo>Cypher - Language Statements</refmiscinfo>
  </refmeta>
 
  <refnamediv>
   <refname>CREATE PROPERTY INDEX</refname>
-  <refpurpose>create the property index</refpurpose>
+  <refpurpose>build an index on one or more properties of a label</refpurpose>
  </refnamediv>
 
  <refsynopsisdiv>
 <synopsis>
-CREATE [ UNIQUE ] PROPERTY INDEX [ CONCURRENTLY ] [ [ IF NOT EXISTS ] <replaceable class="parameter">property_index_name</replaceable> ] ON [ ONLY ] <replaceable class="parameter">label_name</replaceable> [ USING <replaceable class="parameter">method</replaceable> ]
-    ( { <replaceable class="parameter">property_name</replaceable> | ( <replaceable class="parameter">expression</replaceable> ) } [ COLLATE <replaceable class="parameter">collation</replaceable> ] [ <replaceable class="parameter">opclass</replaceable> [ ( <replaceable class="parameter">opclass_parameter</replaceable> = <replaceable class="parameter">value</replaceable> [, ... ] ) ] ] [ ASC | DESC ] [ NULLS { FIRST | LAST } ] [ , ... ] )
-    [ INCLUDE ( <replaceable class="parameter">column_name</replaceable> [, ...] ) ]
+CREATE [ UNIQUE ] PROPERTY INDEX [ CONCURRENTLY ] [ [ IF NOT EXISTS ] <replaceable class="parameter">index_name</replaceable> ]
+    ON [ ONLY ] <replaceable class="parameter">label_name</replaceable> [ USING <replaceable class="parameter">method</replaceable> ]
+    ( { <replaceable class="parameter">property</replaceable> | ( <replaceable class="parameter">expression</replaceable> ) } [ COLLATE <replaceable class="parameter">collation</replaceable> ] [ <replaceable class="parameter">opclass</replaceable> ] [ ASC | DESC ] [ NULLS { FIRST | LAST } ] [, ...] )
     [ NULLS [ NOT ] DISTINCT ]
-    [ WITH ( <replaceable class="parameter">storage_parameter</replaceable> [= <replaceable class="parameter">value</replaceable>] [, ... ] ) ]
+    [ WITH ( <replaceable class="parameter">storage_parameter</replaceable> [= <replaceable class="parameter">value</replaceable>] [, ...] ) ]
     [ TABLESPACE <replaceable class="parameter">tablespace_name</replaceable> ]
     [ WHERE <replaceable class="parameter">condition</replaceable> ]
 </synopsis>
  </refsynopsisdiv>
 
- <refsect1>
+ <refsect1 id="cypher-createpropertyindex-description">
   <title>Description</title>
+
   <para>
-    <command>CREATE PROPERTY INDEX</command> constructs an index on the specified property(properties) of the specified vertex/edge label.
-    Indexes are primarily used to enhance database performance (though inappropriate use can result in slower performance).
-    The key field(s) for the index are specified as property names, or alternatively as expressions written in parentheses. 
-    See <xref linkend="sql-createindex"/> for details.
+   There is no separate kind of index behind this statement. A property index is an ordinary
+   index over an expression that reads the property out of the label's <type>jsonb</type>
+   bag. <literal>CREATE PROPERTY INDEX ON movie (title)</literal> builds a btree whose key is
+   <literal>(properties.'title')</literal>, and the planner has to see the predicate in the
+   same form to use it.
+  </para>
+
+  <para>
+   That expression is the whole story of the statement's limits. The indexed value is of type
+   <type>jsonb</type>, so the access method has to have a default operator class for
+   <type>jsonb</type>. Three do: <literal>btree</literal>, the default,
+   <literal>hash</literal> and <literal>gin</literal>. <literal>gist</literal>,
+   <literal>spgist</literal> and <literal>brin</literal> do not. For the same reason no
+   collation applies to the value, and the value can never be an included column:
+   <literal>INCLUDE</literal> is refused with
+   <literal>expressions are not supported in included columns</literal>.
+  </para>
+
+  <para>
+   An index on a promoted property is different, because the value is then the column, and
+   the column's own type decides what is allowed. A bare key, <literal>( year )</literal>,
+   indexes the promoted column. A parenthesised expression,
+   <literal>( (lower(title)) )</literal>, still reads the bag, promoted key or not.
   </para>
  </refsect1>
 
- <refsect1>
+ <refsect1 id="cypher-createpropertyindex-parameters">
   <title>Parameters</title>
+
   <variablelist>
    <varlistentry>
     <term><literal>UNIQUE</literal></term>
     <listitem>
      <para>
-      Causes the system to check for duplicate values in the table 
-      when the index is created (if data already exist) and each time data is added.
-      Attempts to insert or update data 
-      which would result in duplicate entries will generate an error. 
+      Reject a row whose indexed value duplicates an existing one, checking the rows that are
+      already there when the index is built.
      </para>
     </listitem>
    </varlistentry>
@@ -60,26 +79,21 @@ CREATE [ UNIQUE ] PROPERTY INDEX [ CONCURRENTLY ] [ [ IF NOT EXISTS ] <replaceab
     <term><literal>CONCURRENTLY</literal></term>
     <listitem>
      <para>
-      Support for the building indexes without locking out writes.
-      See <xref linkend="sql-createindex-concurrently"/> for details.
+      Build the index without locking out writes to the label, at the cost of two table
+      scans.
      </para>
     </listitem>
    </varlistentry>
 
    <varlistentry>
     <term><literal>IF NOT EXISTS</literal></term>
+    <term><replaceable class="parameter">index_name</replaceable></term>
     <listitem>
      <para>
-      Do not throw an error if a property index with the same name already exists.
-     </para>
-    </listitem>
-   </varlistentry>
-
-   <varlistentry>
-    <term><replaceable class="parameter">property_index_name</replaceable></term>
-    <listitem>
-     <para>
-      The name of the property index that to be created.
+      Name for the index. Left out, a name is derived from the label and the indexed
+      properties, so <literal>movie</literal> and <literal>year</literal> give
+      <literal>movie_year_idx</literal>. <literal>IF NOT EXISTS</literal> issues a notice
+      instead of an error when a relation of that name already exists, so it needs a name.
      </para>
     </listitem>
    </varlistentry>
@@ -87,368 +101,219 @@ CREATE [ UNIQUE ] PROPERTY INDEX [ CONCURRENTLY ] [ [ IF NOT EXISTS ] <replaceab
    <varlistentry>
     <term><literal>ONLY</literal></term>
     <listitem>
-      <para>
-      Indicates not to recurse creating indexes on partitions, if the
-      label is partitioned.  The default is to recurse.
-      </para>
+     <para>
+      Accepted, and without effect. An index on a parent label covers that label's own rows
+      either way, so a hierarchy needs one index for each label that will be scanned.
+     </para>
     </listitem>
    </varlistentry>
-    
+
    <varlistentry>
     <term><replaceable class="parameter">label_name</replaceable></term>
     <listitem>
      <para>
-      The name of the vertex or edge label to be property indexed.
+      Label whose rows are indexed, in the graph named by <varname>graph_path</varname>. It
+      cannot be qualified with a graph name.
      </para>
     </listitem>
    </varlistentry>
 
    <varlistentry>
-    <term><replaceable class="parameter">method</replaceable></term>
-    <listitem>
-      <para>
-      The name of the index method to be used.  
-      Choices are
-      <literal>btree</literal>, <literal>hash</literal>, <literal>gin</literal>.
-      The default method is <literal>btree</literal>.
-      
-      <note>
-        <para>
-          Property index is based on the <literal>jsonb</literal> object. 
-          So it's limited to using the method above that supports <literal>jsonb</literal> operations.
-          For instance, It cannot be used with <literal>gist</literal>, <literal>spgist</literal>, <literal>brin</literal> to the property index method.
-        </para>
-      </note>
-
-      </para>
-    </listitem>
-   </varlistentry>
-
-   <varlistentry>
-    <term><replaceable class="parameter">property_name</replaceable></term>
+    <term><literal>USING</literal> <replaceable class="parameter">method</replaceable></term>
     <listitem>
      <para>
-      The property name of label.
+      Index access method. Over a property read the choice is <literal>btree</literal>, the
+      default, <literal>hash</literal> or <literal>gin</literal>. Over a promoted column, any
+      method with a default operator class for that column's type.
      </para>
     </listitem>
    </varlistentry>
 
    <varlistentry>
-    <term><replaceable class="parameter">expression</replaceable></term>
+    <term><replaceable class="parameter">property</replaceable></term>
+    <term>( <replaceable class="parameter">expression</replaceable> )</term>
     <listitem>
      <para>
-        An expression based on one or more properties of the label.  The
-        expression usually must be written with surrounding parentheses,
-        as shown in the syntax.  However, the parentheses can be omitted
-        if the expression has the form of a function call. See <xref linkend="cypher-expr"/> for more details.
+      The key. A property is written the way Cypher writes it: <literal>title</literal>, or
+      <literal>name.first</literal> for a key inside a nested map. An expression is any
+      parenthesised Cypher expression over the label's properties, for example
+      <literal>(year / 10)</literal>. See <xref linkend="cypher-expr"/>.
      </para>
     </listitem>
    </varlistentry>
 
    <varlistentry>
-    <term><replaceable class="parameter">collation</replaceable></term>
-    <listitem>
-     <para>
-      The name of the collation to use for the property index.  By default,
-      the index uses the collation declared for the property to be
-      indexed or the result collation of the expression to be
-      indexed. Indexes with non-default collations can be useful for
-      queries that involve expressions using non-default collations.
-     </para>
-    </listitem>
-   </varlistentry>
-
-   <varlistentry>
+    <term><literal>COLLATE</literal> <replaceable class="parameter">collation</replaceable></term>
     <term><replaceable class="parameter">opclass</replaceable></term>
     <listitem>
      <para>
-      The name of an operator class. See below for details.
+      Collation and operator class for the indexed value, for example
+      <literal>jsonb_path_ops</literal> for a gin index. A collation is usable only over a
+      promoted column of a collatable type, since a property read fails with
+      <literal>collations are not supported by type jsonb</literal>. Operator class
+      parameters are not part of the statement.
      </para>
     </listitem>
    </varlistentry>
 
    <varlistentry>
-    <term><replaceable class="parameter">opclass_parameter</replaceable></term>
+    <term><literal>ASC</literal> | <literal>DESC</literal> | <literal>NULLS FIRST</literal> | <literal>NULLS LAST</literal></term>
+    <term><literal>NULLS</literal> [ <literal>NOT</literal> ] <literal>DISTINCT</literal></term>
     <listitem>
      <para>
-      The name of an operator class parameter. See below for details.
+      Sort order stored in the index. <literal>ASC</literal> and <literal>NULLS LAST</literal>
+      are the defaults, and <literal>NULLS FIRST</literal> is the default under
+      <literal>DESC</literal>. <literal>NULLS [ NOT ] DISTINCT</literal> decides, for a unique
+      index, whether two nulls count as different values.
+      <literal>NULLS DISTINCT</literal>, the default, lets an index hold many nulls.
      </para>
     </listitem>
    </varlistentry>
 
    <varlistentry>
-    <term><literal>ASC</literal></term>
+    <term><literal>WITH</literal> ( <replaceable class="parameter">storage_parameter</replaceable> [= <replaceable class="parameter">value</replaceable>] [, ...] )</term>
+    <term><literal>TABLESPACE</literal> <replaceable class="parameter">tablespace_name</replaceable></term>
     <listitem>
      <para>
-      Specifies ascending sort order (which is the default).
+      Where the index is stored, and how. The storage parameters are those of the access
+      method that was chosen, such as <literal>fillfactor</literal> for btree or
+      <literal>fastupdate</literal> for gin. Without a tablespace,
+      <varname>default_tablespace</varname> decides.
      </para>
     </listitem>
    </varlistentry>
 
    <varlistentry>
-    <term><literal>DESC</literal></term>
+    <term><literal>WHERE</literal> <replaceable class="parameter">condition</replaceable></term>
     <listitem>
      <para>
-      Specifies descending sort order.
-     </para>
-    </listitem>
-   </varlistentry>
-
-   <varlistentry>
-    <term><literal>NULLS FIRST</literal></term>
-    <listitem>
-     <para>
-      Specifies that nulls sort before non-nulls.  This is the default
-      when <literal>DESC</literal> is specified.
-     </para>
-    </listitem>
-   </varlistentry>
-
-   <varlistentry>
-    <term><literal>NULLS LAST</literal></term>
-    <listitem>
-     <para>
-      Specifies that nulls sort after non-nulls.  This is the default
-      when <literal>DESC</literal> is not specified.
-     </para>
-    </listitem>
-   </varlistentry>
-
-   <varlistentry>
-    <term><literal>NULLS DISTINCT</literal></term>
-    <term><literal>NULLS NOT DISTINCT</literal></term>
-    <listitem>
-     <para>
-      Specifies whether for a unique index, null values should be considered
-      distinct (not equal).  The default is that they are distinct, so that
-      a unique index could contain multiple null values in a column.
-     </para>
-    </listitem>
-   </varlistentry>
-
-   <varlistentry>
-    <term><replaceable class="parameter">storage_parameter</replaceable></term>
-    <listitem>
-     <para>
-      The name of an index-method-specific storage parameter. 
-      See below for details.
-     </para>
-    </listitem>
-   </varlistentry>
- 
-   <varlistentry>
-    <term><replaceable class="parameter">tablespace_name</replaceable></term>
-    <listitem>
-     <para>
-      The tablespace in which to create the index.  If not specified,
-        default_tablespace consulted, or temp_tablespaces for indexes on temporary
-        tables.
-     </para>
-    </listitem>
-   </varlistentry>
-
-   <varlistentry>
-    <term><replaceable class="parameter">condition</replaceable></term>
-    <listitem>
-     <para>
-      The constraint expression for a property index
+      Build a partial index, covering only the rows the condition accepts.
      </para>
     </listitem>
    </varlistentry>
   </variablelist>
-
-  <refsect2>
-   <title>Property Index Storage Parameters</title>
-
-   <para>
-    The optional <literal>WITH</literal> clause specifies <firstterm>storage
-    parameters</firstterm> for the index.  Each index method has its own set of allowed
-    storage parameters.  The B-tree, hash, GiST and SP-GiST index methods all
-    accept this parameter:
-   </para>
-
-   <variablelist>
-   <varlistentry>
-    <term><literal>fillfactor</literal> (<type>integer</type>)
-     <indexterm>
-      <primary><varname>fillfactor</varname> storage parameter</primary>
-     </indexterm>
-    </term>
-    <listitem>
-     <para>
-      The fillfactor for an index is a percentage that determines how full
-      the index method will try to pack index pages.  For B-trees, leaf pages
-      are filled to this percentage during initial index builds, and also
-      when extending the index at the right (adding new largest key values).
-      If pages
-      subsequently become completely full, they will be split, leading to
-      fragmentation of the on-disk index structure.  B-trees use a default
-      fillfactor of 90, but any integer value from 10 to 100 can be selected.
-     </para>
-     <para>
-      B-tree indexes on tables where many inserts and/or updates are
-      anticipated can benefit from lower fillfactor settings at
-      <command>CREATE INDEX</command> time (following bulk loading into the
-      table).  Values in the range of 50 - 90 can usefully <quote>smooth
-       out</quote> the <emphasis>rate</emphasis> of page splits during the
-      early life of the B-tree index (lowering fillfactor like this may even
-      lower the absolute number of page splits, though this effect is highly
-      workload dependent).  The B-tree bottom-up index deletion technique
-      described in <xref linkend="btree-deletion"/> is dependent on having
-      some <quote>extra</quote> space on pages to store <quote>extra</quote>
-      tuple versions, and so can be affected by fillfactor (though the effect
-      is usually not significant).
-     </para>
-     <para>
-      In other specific cases it might be useful to increase fillfactor to
-      100 at <command>CREATE INDEX</command> time as a way of maximizing
-      space utilization.  You should only consider this when you are
-      completely sure that the table is static (i.e. that it will never be
-      affected by either inserts or updates).  A fillfactor setting of 100
-      otherwise risks <emphasis>harming</emphasis> performance: even a few
-      updates or inserts will cause a sudden flood of page splits.
-     </para>
-     <para>
-      The other index methods use fillfactor in different but roughly
-      analogous ways; the default fillfactor varies between methods.
-     </para>
-    </listitem>
-   </varlistentry>
-   </variablelist>
-
-   <para>
-    B-tree indexes additionally accept this parameter:
-   </para>
-   <variablelist>
-   <varlistentry>
-    <term><literal>deduplicate_items</literal> (<type>boolean</type>)
-     <indexterm>
-      <primary><varname>deduplicate_items</varname> storage parameter</primary>
-     </indexterm>
-    </term>
-    <listitem>
-    <para>
-      Controls usage of the B-tree deduplication technique described
-      in <xref linkend="btree-deduplication"/>.  Set to
-      <literal>ON</literal> or <literal>OFF</literal> to enable or
-      disable the optimization.  (Alternative spellings of
-      <literal>ON</literal> and <literal>OFF</literal> are allowed as
-      described in <xref linkend="config-setting"/>.) The default is
-      <literal>ON</literal>.
-    </para>
-    <note>
-     <para>
-      Turning <literal>deduplicate_items</literal> off via
-      <command>ALTER INDEX</command> prevents future insertions from
-      triggering deduplication, but does not in itself make existing
-      posting list tuples use the standard tuple representation.
-     </para>
-    </note>
-    </listitem>
-   </varlistentry>
-   </variablelist>
-
-   <para>
-    GIN indexes accept different parameters:
-   </para>
-   <variablelist>
-   <varlistentry>
-    <term><literal>fastupdate</literal> (<type>boolean</type>)
-     <indexterm>
-      <primary><varname>fastupdate</varname> storage parameter</primary>
-     </indexterm>
-    </term>
-    <listitem>
-    <para>
-     This setting controls usage of the fast update technique described in
-     <xref linkend="gin-fast-update"/>.  It is a Boolean parameter:
-     <literal>ON</literal> enables fast update, <literal>OFF</literal> disables it.
-     The default is <literal>ON</literal>.
-    </para>
-
-    <note>
-     <para>
-      Turning <literal>fastupdate</literal> off via <command>ALTER INDEX</command> prevents
-      future insertions from going into the list of pending index entries,
-      but does not in itself flush previous entries.  You might want to
-      <command>VACUUM</command> the table or call <function>gin_clean_pending_list</function>
-      function afterward to ensure the pending list is emptied.
-     </para>
-    </note>
-    </listitem>
-   </varlistentry>
-   </variablelist>
-
-   <variablelist>
-   <varlistentry>
-    <term><literal>gin_pending_list_limit</literal> (<type>integer</type>)
-     <indexterm>
-      <primary><varname>gin_pending_list_limit</varname></primary>
-      <secondary>storage parameter</secondary>
-     </indexterm>
-    </term>
-    <listitem>
-    <para>
-     Custom <xref linkend="guc-gin-pending-list-limit"/> parameter.
-     This value is specified in kilobytes.
-    </para>
-    </listitem>
-   </varlistentry>
-   </variablelist>
-  </refsect2>
  </refsect1>
 
- <refsect1>
+ <refsect1 id="cypher-createpropertyindex-examples">
   <title>Examples</title>
+
   <para>
-   To create anonymous property index to label person:
+   These examples do not use the graph in <xref linkend="agensgraph-example-data"/>. They
+   build a graph of their own and drop it at the end:
 <programlisting>
-CREATE PROPERTY INDEX ON person (name);
+CREATE GRAPH indexdemo;
+SET graph_path = indexdemo;
+CREATE VLABEL movie;
+CREATE (:movie {title: 'Arrival', year: 2016, genre: 'Sci-Fi'}),
+       (:movie {title: 'Dune', year: 2021, genre: 'Sci-Fi'}),
+       (:movie {title: 'Sicario', year: 2015, genre: 'Thriller'});
 </programlisting>
   </para>
 
   <para>
-   To create a unique PROPERTY INDEX "pidx_name" on the property <literal>name</literal> in
-   the label <literal>person</literal>:
+   Index a property:
 <programlisting>
-CREATE UNIQUE PROPERTY INDEX pidx_name ON person (name);
+CREATE PROPERTY INDEX movie_title_idx ON movie (title);
+
+CREATE PROPERTY INDEX
 </programlisting>
   </para>
 
   <para>
-   To create PROPERTY INDEX using gin index method:
+   The planner matches an equality on <literal>title</literal> to the index expression. Three
+   vertices are far too few for it to prefer an index scan, so the setting below makes the
+   plan visible:
 <programlisting>
-CREATE PROPERTY INDEX pidx_gin ON person USING gin (name);
+SET enable_seqscan = off;
+EXPLAIN (COSTS OFF) MATCH (m:movie {title: 'Dune'}) RETURN m.year;
+
+                      QUERY PLAN
+------------------------------------------------------
+ Index Scan using movie_title_idx on movie m
+   Index Cond: (properties.'title' = '"Dune"'::jsonb)
+(2 rows)
 </programlisting>
   </para>
 
   <para>
-   To create PROPERTY INDEX with deduplication disabled:
+   <literal>gin</literal> and <literal>hash</literal> are the alternatives to btree over a
+   property read. The other three access methods have no default operator class for
+   <type>jsonb</type>, so they cannot index one. <literal>spgist</literal> and
+   <literal>brin</literal> fail the way <literal>gist</literal> does here:
 <programlisting>
-CREATE PROPERTY INDEX pidx_dupoff_name ON person (name) WITH (deduplicate_items = off);
+CREATE PROPERTY INDEX movie_genre_gist ON movie USING gist (genre);
+
+ERROR:  data type jsonb has no default operator class for access method "gist"
+HINT:  You must specify an operator class for the index or define a default operator class for the data type.
 </programlisting>
   </para>
 
   <para>
-   To create PROPERTY INDEX on the tablespace:
+   Reject duplicate values. The <literal>Key</literal> in the message is the index
+   expression, which is how a unique property index differs from a unique column constraint:
 <programlisting>
-CREATE PROPERTY INDEX pidx_default_tbspace ON person (name) TABLESPACE pg_default;
+CREATE UNIQUE PROPERTY INDEX movie_title_uniq ON movie (title);
+CREATE (:movie {title: 'Dune', year: 1984});
+
+ERROR:  duplicate key value violates unique constraint "movie_title_uniq"
+DETAIL:  Key ((properties.'title'))=("Dune") already exists.
 </programlisting>
   </para>
 
   <para>
-   To create PROPERTY INDEX with partial index:
+   A label whose property is promoted to a column indexes the column instead, and the plan
+   then compares integers rather than <type>jsonb</type>. On this label
+   <literal>(name COLLATE "C")</literal>, <literal>(name text_pattern_ops)</literal> and
+   <literal>USING brin (year)</literal> are accepted too. None reads the bag:
 <programlisting>
-CREATE PROPERTY INDEX pidx_fname_notnull ON person (name.first) WHERE (name IS NOT NULL);
+CREATE VLABEL title (year int GENERATED, name text GENERATED);
+CREATE (:title {name: 'Arrival', year: 2016}), (:title {name: 'Dune', year: 2021});
+CREATE PROPERTY INDEX title_year_idx ON title (year);
+EXPLAIN (COSTS OFF) MATCH (t:title) WHERE t.year &gt; 2010 RETURN t.name;
+
+                 QUERY PLAN
+--------------------------------------------
+ Index Scan using title_year_idx on title t
+   Index Cond: (year &gt; 2010)
+(2 rows)
 </programlisting>
+  </para>
+
+  <para>
+   <literal>RESET enable_seqscan</literal> and
+   <literal>DROP GRAPH indexdemo CASCADE</literal> undo what the examples did.
   </para>
  </refsect1>
 
- <refsect1>
+ <refsect1 id="cypher-createpropertyindex-compatibility">
+  <title>Compatibility</title>
+
+  <para>
+   ISO/IEC 39075:2024 has no index DDL. Its catalog modifying statements reach only schemas,
+   graphs and graph types, in clause 12, so this statement is an AgensGraph extension.
+  </para>
+
+  <para>
+   <command>CREATE PROPERTY INDEX</command> corresponds to <command>CREATE INDEX</command> on
+   an expression, and <literal>UNIQUE</literal>, <literal>CONCURRENTLY</literal>,
+   <literal>USING</literal>, <literal>COLLATE</literal>, the operator class, the sort order,
+   <literal>NULLS [ NOT ] DISTINCT</literal>, <literal>WITH</literal>,
+   <literal>TABLESPACE</literal> and <literal>WHERE</literal> all mean there what they mean
+   here. Three differences matter. The index target is written as a Cypher property rather
+   than a column, so the parser builds the <literal>properties</literal> read for it.
+   <literal>INCLUDE</literal> and operator class parameters cannot be used. And
+   <xref linkend="cypher-droppropertyindex"/> takes only a property index, while
+   <command>DROP INDEX</command> takes any index of a label, a property index included.
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-createpropertyindex-see-also">
   <title>See Also</title>
   <simplelist type="inline">
    <member><xref linkend="cypher-droppropertyindex"/></member>
-   <member><xref linkend="sql-createindex"/></member>
+   <member><xref linkend="cypher-reindex"/></member>
+   <member><xref linkend="cypher-createconstraint"/></member>
+   <member><xref linkend="cypher-createvlabel"/></member>
   </simplelist>
  </refsect1>
 </refentry>

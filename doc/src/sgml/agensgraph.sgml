@@ -1,0 +1,2784 @@
+<!--
+doc/src/sgml/agensgraph.sgml
+PostgreSQL documentation
+-->
+
+<appendix id="agensgraph">
+ <title>AgensGraph</title>
+
+ <indexterm zone="agensgraph">
+  <primary>AgensGraph</primary>
+ </indexterm>
+
+ <para>
+  AgensGraph stores a property graph inside PostgreSQL. A graph is a schema, a label is a
+  table, and a vertex or an edge is a row in one of those tables. Cypher and GQL run on the
+  same engine as SQL, in the same transaction, so a single statement can read a graph and a
+  table together.
+ </para>
+
+ <para>
+  This appendix collects the parts of AgensGraph that are not a single command: the example
+  data every reference page uses, the configuration settings, the system catalogs, the data
+  types, the functions, and the <application>psql</application> support. The commands
+  themselves are in <xref linkend="cypher-commands"/>, and pattern syntax is in
+  <xref linkend="cypher-path"/>.
+ </para>
+
+ <sect1 id="agensgraph-example-data">
+  <title>The Example Dataset</title>
+
+  <indexterm zone="agensgraph-example-data">
+   <primary>example dataset</primary>
+  </indexterm>
+
+  <para>
+   Every example in the Cypher reference pages runs against one small graph of films and the
+   people who made them, in a graph named <literal>moviekb</literal>. Create it once and every
+   page will work. Alongside the graph there is an ordinary table, <literal>rating</literal>,
+   so the examples that mix SQL and Cypher have real relational data to join against.
+  </para>
+
+  <para>
+   The graph has two vertex labels and three edge labels. A person acts in a film and directs
+   a film, and a film is related to another film with a weight.
+  </para>
+
+  <sect2 id="agensgraph-example-data-create">
+   <title>Creating the Graph</title>
+
+<programlisting>
+CREATE GRAPH moviekb;
+SET graph_path = moviekb;
+
+CREATE VLABEL movie;
+CREATE VLABEL person;
+CREATE ELABEL acted_in;
+CREATE ELABEL directed;
+CREATE ELABEL related_to;
+</programlisting>
+
+   <para>
+    <varname>graph_path</varname> tells the session which graph an unqualified label name
+    belongs to. It is a per session setting, so set it again in every new session, or set it
+    once for the database:
+   </para>
+
+<programlisting>
+ALTER DATABASE mydb SET graph_path = moviekb;
+</programlisting>
+  </sect2>
+
+  <sect2 id="agensgraph-example-data-films">
+   <title>Loading the Films</title>
+
+   <para>
+    Each film carries a <literal>plot</literal> and an <literal>embedding</literal> of that
+    plot. A real embedding comes from a model and has hundreds of dimensions. These are
+    reduced to four so that the numbers stay readable on the page.
+   </para>
+
+<programlisting>
+CREATE (:movie {title: 'The Matrix', year: 1999, genre: 'Action', plot: 'A computer hacker learns about the true nature of reality and joins a rebellion to free humanity from a simulated world controlled by machines.', embedding: [-0.07594558, 0.04081754, 0.29592122, -0.11921061]}),
+       (:movie {title: 'The Matrix Reloaded', year: 2003, genre: 'Action', plot: 'The rebels continue their fight against the machines, uncovering deeper truths about the Matrix and the nature of their mission.', embedding: [0.30228977, -0.22839354, 0.35070436, 0.01262819]}),
+       (:movie {title: 'The Matrix Revolutions', year: 2003, genre: 'Action', plot: 'The final battle between humans and machines reaches its climax as the fate of both worlds hangs in the balance.', embedding: [0.12240622, -0.29752459, 0.22620453, 0.24454723]}),
+       (:movie {title: 'The Matrix Resurrections', year: 2021, genre: 'Action', plot: 'Neo returns to a new version of the Matrix and must once again fight to save the people from the control of the machines.', embedding: [0.34717246, -0.13820869, 0.29214213, 0.08090488]}),
+       (:movie {title: 'Inception', year: 2010, genre: 'Sci-Fi', plot: 'A skilled thief is given a chance at redemption if he can successfully perform an inception: planting an idea into someone''s subconscious.', embedding: [0.03923657, 0.39284106, -0.20927092, -0.17770818]}),
+       (:movie {title: 'Interstellar', year: 2014, genre: 'Sci-Fi', plot: 'A group of explorers travel through a wormhole in space in an attempt to ensure humanity''s survival.', embedding: [-0.29302418, -0.39615033, -0.23393948, -0.09601383]}),
+       (:movie {title: 'Avatar', year: 2009, genre: 'Sci-Fi', plot: 'A paraplegic Marine is sent to the moon Pandora, where he becomes torn between following orders and protecting the world he feels is his home.', embedding: [-0.13663386, 0.00635589, -0.03038832, -0.08252723]}),
+       (:movie {title: 'Blade Runner', year: 1982, genre: 'Sci-Fi', plot: 'A blade runner must pursue and terminate four replicants who have stolen a ship in space and returned to Earth.', embedding: [0.27215557, -0.1479577, -0.09972772, -0.08234394]}),
+       (:movie {title: 'Blade Runner 2049', year: 2017, genre: 'Sci-Fi', plot: 'A new blade runner unearths a long-buried secret that has the potential to plunge what''s left of society into chaos.', embedding: [0.21560573, -0.07505179, -0.01331814, 0.13403069]}),
+       (:movie {title: 'Minority Report', year: 2002, genre: 'Sci-Fi', plot: 'In a future where a special police unit can arrest murderers before they commit their crimes, a top officer is accused of a future murder.', embedding: [0.24008012, 0.44954908, -0.30905488, 0.15195407]}),
+       (:movie {title: 'Total Recall', year: 1990, genre: 'Sci-Fi', plot: 'A construction worker discovers that his memories have been implanted and becomes embroiled in a conspiracy on Mars.', embedding: [-0.17471036, 0.14695261, -0.06272433, -0.21795064]}),
+       (:movie {title: 'Elysium', year: 2013, genre: 'Sci-Fi', plot: 'In a future where the rich live on a luxurious space station while the rest of humanity lives in squalor, a man fights to bring equality.', embedding: [-0.33280967, 0.07733926, 0.11015328, 0.53382836]}),
+       (:movie {title: 'Gattaca', year: 1997, genre: 'Sci-Fi', plot: 'In a future where genetic engineering determines social class, a man defies his fate to achieve his dreams.', embedding: [-0.21629286, 0.31114665, 0.08303899, 0.46199759]}),
+       (:movie {title: 'The Fifth Element', year: 1997, genre: 'Sci-Fi', plot: 'In a futuristic world, a cab driver becomes the key to saving humanity from an impending cosmic threat.', embedding: [-0.11528205, -0.0208782, -0.0735215, 0.14327449]}),
+       (:movie {title: 'The Terminator', year: 1984, genre: 'Action', plot: 'A cyborg assassin is sent back in time to kill the mother of the future resistance leader.', embedding: [0.33666933, 0.18040994, -0.01075103, -0.11117851]}),
+       (:movie {title: 'Terminator 2: Judgment Day', year: 1991, genre: 'Action', plot: 'A reprogrammed Terminator is sent to protect the future leader of the human resistance from a more advanced Terminator.', embedding: [0.34698868, 0.06439331, 0.06232323, -0.19534876]}),
+       (:movie {title: 'Jurassic Park', year: 1993, genre: 'Adventure', plot: 'Scientists clone dinosaurs to create a theme park, but things go awry when the creatures escape.', embedding: [0.01794725, -0.11434246, -0.46831815, -0.01049593]}),
+       (:movie {title: 'The Avengers', year: 2012, genre: 'Action', plot: 'Superheroes assemble to face a global threat from an alien invasion led by Loki.', embedding: [0.00546514, -0.37005171, -0.42612838, 0.07968612]});
+</programlisting>
+  </sect2>
+
+  <sect2 id="agensgraph-example-data-people">
+   <title>Loading the People</title>
+
+<programlisting>
+CREATE (:person {name: 'Keanu Reeves', born: 1964}),
+       (:person {name: 'Laurence Fishburne', born: 1961}),
+       (:person {name: 'Carrie-Anne Moss', born: 1967}),
+       (:person {name: 'Lana Wachowski', born: 1965}),
+       (:person {name: 'Lilly Wachowski', born: 1967}),
+       (:person {name: 'Leonardo DiCaprio', born: 1974}),
+       (:person {name: 'Matthew McConaughey', born: 1969}),
+       (:person {name: 'Christopher Nolan', born: 1970}),
+       (:person {name: 'Harrison Ford', born: 1942}),
+       (:person {name: 'Ryan Gosling', born: 1980}),
+       (:person {name: 'Ridley Scott', born: 1937}),
+       (:person {name: 'Denis Villeneuve', born: 1967}),
+       (:person {name: 'Tom Cruise', born: 1962}),
+       (:person {name: 'Sam Neill', born: 1947}),
+       (:person {name: 'Steven Spielberg', born: 1946}),
+       (:person {name: 'Arnold Schwarzenegger', born: 1947}),
+       (:person {name: 'Linda Hamilton', born: 1956}),
+       (:person {name: 'James Cameron', born: 1954}),
+       (:person {name: 'Sam Worthington', born: 1976}),
+       (:person {name: 'Paul Verhoeven', born: 1938}),
+       (:person {name: 'Matt Damon', born: 1970}),
+       (:person {name: 'Neill Blomkamp', born: 1979}),
+       (:person {name: 'Ethan Hawke', born: 1970}),
+       (:person {name: 'Andrew Niccol', born: 1964}),
+       (:person {name: 'Bruce Willis', born: 1955}),
+       (:person {name: 'Luc Besson', born: 1959}),
+       (:person {name: 'Robert Downey Jr.', born: 1965}),
+       (:person {name: 'Joss Whedon', born: 1964});
+</programlisting>
+  </sect2>
+
+  <sect2 id="agensgraph-example-data-edges">
+   <title>Connecting Them</title>
+
+   <para>
+    An <literal>acted_in</literal> edge carries the character name as an edge property.
+   </para>
+
+<programlisting>
+MATCH (p:person {name:'Keanu Reeves'}),          (m:movie {title:'The Matrix'})                 CREATE (p)-[:acted_in {role:'Neo'}]->(m);
+MATCH (p:person {name:'Keanu Reeves'}),          (m:movie {title:'The Matrix Reloaded'})        CREATE (p)-[:acted_in {role:'Neo'}]->(m);
+MATCH (p:person {name:'Keanu Reeves'}),          (m:movie {title:'The Matrix Revolutions'})     CREATE (p)-[:acted_in {role:'Neo'}]->(m);
+MATCH (p:person {name:'Keanu Reeves'}),          (m:movie {title:'The Matrix Resurrections'})   CREATE (p)-[:acted_in {role:'Neo'}]->(m);
+MATCH (p:person {name:'Laurence Fishburne'}),    (m:movie {title:'The Matrix'})                 CREATE (p)-[:acted_in {role:'Morpheus'}]->(m);
+MATCH (p:person {name:'Laurence Fishburne'}),    (m:movie {title:'The Matrix Reloaded'})        CREATE (p)-[:acted_in {role:'Morpheus'}]->(m);
+MATCH (p:person {name:'Carrie-Anne Moss'}),      (m:movie {title:'The Matrix'})                 CREATE (p)-[:acted_in {role:'Trinity'}]->(m);
+MATCH (p:person {name:'Carrie-Anne Moss'}),      (m:movie {title:'The Matrix Resurrections'})   CREATE (p)-[:acted_in {role:'Trinity'}]->(m);
+MATCH (p:person {name:'Leonardo DiCaprio'}),     (m:movie {title:'Inception'})                  CREATE (p)-[:acted_in {role:'Dom Cobb'}]->(m);
+MATCH (p:person {name:'Matthew McConaughey'}),   (m:movie {title:'Interstellar'})               CREATE (p)-[:acted_in {role:'Cooper'}]->(m);
+MATCH (p:person {name:'Harrison Ford'}),         (m:movie {title:'Blade Runner'})               CREATE (p)-[:acted_in {role:'Rick Deckard'}]->(m);
+MATCH (p:person {name:'Harrison Ford'}),         (m:movie {title:'Blade Runner 2049'})          CREATE (p)-[:acted_in {role:'Rick Deckard'}]->(m);
+MATCH (p:person {name:'Ryan Gosling'}),          (m:movie {title:'Blade Runner 2049'})          CREATE (p)-[:acted_in {role:'K'}]->(m);
+MATCH (p:person {name:'Tom Cruise'}),            (m:movie {title:'Minority Report'})            CREATE (p)-[:acted_in {role:'John Anderton'}]->(m);
+MATCH (p:person {name:'Sam Neill'}),             (m:movie {title:'Jurassic Park'})              CREATE (p)-[:acted_in {role:'Alan Grant'}]->(m);
+MATCH (p:person {name:'Arnold Schwarzenegger'}), (m:movie {title:'The Terminator'})             CREATE (p)-[:acted_in {role:'The Terminator'}]->(m);
+MATCH (p:person {name:'Arnold Schwarzenegger'}), (m:movie {title:'Terminator 2: Judgment Day'}) CREATE (p)-[:acted_in {role:'The Terminator'}]->(m);
+MATCH (p:person {name:'Arnold Schwarzenegger'}), (m:movie {title:'Total Recall'})               CREATE (p)-[:acted_in {role:'Douglas Quaid'}]->(m);
+MATCH (p:person {name:'Linda Hamilton'}),        (m:movie {title:'The Terminator'})             CREATE (p)-[:acted_in {role:'Sarah Connor'}]->(m);
+MATCH (p:person {name:'Linda Hamilton'}),        (m:movie {title:'Terminator 2: Judgment Day'}) CREATE (p)-[:acted_in {role:'Sarah Connor'}]->(m);
+MATCH (p:person {name:'Sam Worthington'}),       (m:movie {title:'Avatar'})                     CREATE (p)-[:acted_in {role:'Jake Sully'}]->(m);
+MATCH (p:person {name:'Matt Damon'}),            (m:movie {title:'Elysium'})                    CREATE (p)-[:acted_in {role:'Max Da Costa'}]->(m);
+MATCH (p:person {name:'Ethan Hawke'}),           (m:movie {title:'Gattaca'})                    CREATE (p)-[:acted_in {role:'Vincent Freeman'}]->(m);
+MATCH (p:person {name:'Bruce Willis'}),          (m:movie {title:'The Fifth Element'})          CREATE (p)-[:acted_in {role:'Korben Dallas'}]->(m);
+MATCH (p:person {name:'Robert Downey Jr.'}),     (m:movie {title:'The Avengers'})               CREATE (p)-[:acted_in {role:'Tony Stark'}]->(m);
+</programlisting>
+
+   <para>
+    A <literal>directed</literal> edge carries no properties.
+   </para>
+
+<programlisting>
+MATCH (p:person {name:'Lana Wachowski'}),    (m:movie {title:'The Matrix'})                 CREATE (p)-[:directed]->(m);
+MATCH (p:person {name:'Lilly Wachowski'}),   (m:movie {title:'The Matrix'})                 CREATE (p)-[:directed]->(m);
+MATCH (p:person {name:'Lana Wachowski'}),    (m:movie {title:'The Matrix Reloaded'})        CREATE (p)-[:directed]->(m);
+MATCH (p:person {name:'Lilly Wachowski'}),   (m:movie {title:'The Matrix Reloaded'})        CREATE (p)-[:directed]->(m);
+MATCH (p:person {name:'Lana Wachowski'}),    (m:movie {title:'The Matrix Revolutions'})     CREATE (p)-[:directed]->(m);
+MATCH (p:person {name:'Lilly Wachowski'}),   (m:movie {title:'The Matrix Revolutions'})     CREATE (p)-[:directed]->(m);
+MATCH (p:person {name:'Lana Wachowski'}),    (m:movie {title:'The Matrix Resurrections'})   CREATE (p)-[:directed]->(m);
+MATCH (p:person {name:'Christopher Nolan'}), (m:movie {title:'Inception'})                  CREATE (p)-[:directed]->(m);
+MATCH (p:person {name:'Christopher Nolan'}), (m:movie {title:'Interstellar'})               CREATE (p)-[:directed]->(m);
+MATCH (p:person {name:'Ridley Scott'}),      (m:movie {title:'Blade Runner'})               CREATE (p)-[:directed]->(m);
+MATCH (p:person {name:'Denis Villeneuve'}),  (m:movie {title:'Blade Runner 2049'})          CREATE (p)-[:directed]->(m);
+MATCH (p:person {name:'Steven Spielberg'}),  (m:movie {title:'Minority Report'})            CREATE (p)-[:directed]->(m);
+MATCH (p:person {name:'Steven Spielberg'}),  (m:movie {title:'Jurassic Park'})              CREATE (p)-[:directed]->(m);
+MATCH (p:person {name:'James Cameron'}),     (m:movie {title:'The Terminator'})             CREATE (p)-[:directed]->(m);
+MATCH (p:person {name:'James Cameron'}),     (m:movie {title:'Terminator 2: Judgment Day'}) CREATE (p)-[:directed]->(m);
+MATCH (p:person {name:'James Cameron'}),     (m:movie {title:'Avatar'})                     CREATE (p)-[:directed]->(m);
+MATCH (p:person {name:'Paul Verhoeven'}),    (m:movie {title:'Total Recall'})               CREATE (p)-[:directed]->(m);
+MATCH (p:person {name:'Neill Blomkamp'}),    (m:movie {title:'Elysium'})                    CREATE (p)-[:directed]->(m);
+MATCH (p:person {name:'Andrew Niccol'}),     (m:movie {title:'Gattaca'})                    CREATE (p)-[:directed]->(m);
+MATCH (p:person {name:'Luc Besson'}),        (m:movie {title:'The Fifth Element'})          CREATE (p)-[:directed]->(m);
+MATCH (p:person {name:'Joss Whedon'}),       (m:movie {title:'The Avengers'})               CREATE (p)-[:directed]->(m);
+</programlisting>
+
+   <para>
+    A <literal>related_to</literal> edge carries a <literal>weight</literal>, which the
+    weighted path examples use.
+   </para>
+
+<programlisting>
+MATCH (a:movie {title:'The Matrix'}),             (b:movie {title:'The Matrix Reloaded'})       CREATE (a)-[:related_to {weight: 1}]->(b);
+MATCH (a:movie {title:'The Matrix Reloaded'}),    (b:movie {title:'The Matrix Revolutions'})    CREATE (a)-[:related_to {weight: 1}]->(b);
+MATCH (a:movie {title:'The Matrix Revolutions'}), (b:movie {title:'The Matrix Resurrections'})  CREATE (a)-[:related_to {weight: 1}]->(b);
+MATCH (a:movie {title:'The Matrix'}),             (b:movie {title:'Total Recall'})              CREATE (a)-[:related_to {weight: 4}]->(b);
+MATCH (a:movie {title:'The Matrix'}),             (b:movie {title:'The Terminator'})            CREATE (a)-[:related_to {weight: 3}]->(b);
+MATCH (a:movie {title:'Total Recall'}),           (b:movie {title:'Inception'})                 CREATE (a)-[:related_to {weight: 2}]->(b);
+MATCH (a:movie {title:'The Terminator'}),         (b:movie {title:'Terminator 2: Judgment Day'})CREATE (a)-[:related_to {weight: 1}]->(b);
+MATCH (a:movie {title:'Blade Runner'}),           (b:movie {title:'Blade Runner 2049'})         CREATE (a)-[:related_to {weight: 1}]->(b);
+MATCH (a:movie {title:'Interstellar'}),           (b:movie {title:'Avatar'})                    CREATE (a)-[:related_to {weight: 5}]->(b);
+MATCH (a:movie {title:'Jurassic Park'}),          (b:movie {title:'The Avengers'})              CREATE (a)-[:related_to {weight: 5}]->(b);
+MATCH (a:movie {title:'Minority Report'}),        (b:movie {title:'Inception'})                 CREATE (a)-[:related_to {weight: 2}]->(b);
+</programlisting>
+  </sect2>
+
+  <sect2 id="agensgraph-example-data-table">
+   <title>Adding the Relational Table</title>
+
+<programlisting>
+CREATE TABLE rating (title text, source text, score numeric(3,1));
+
+INSERT INTO rating VALUES
+  ('The Matrix', 'critics', 8.7),                 ('The Matrix', 'audience', 9.1),
+  ('The Matrix Reloaded', 'critics', 7.2),        ('The Matrix Revolutions', 'critics', 6.7),
+  ('The Matrix Resurrections', 'critics', 5.7),   ('Inception', 'critics', 8.8),
+  ('Inception', 'audience', 9.0),                 ('Interstellar', 'critics', 8.7),
+  ('Interstellar', 'audience', 8.6),              ('Blade Runner', 'critics', 8.1),
+  ('Blade Runner 2049', 'critics', 8.0),          ('Jurassic Park', 'critics', 8.2),
+  ('The Terminator', 'critics', 8.0),             ('Terminator 2: Judgment Day', 'critics', 8.6),
+  ('Avatar', 'critics', 7.9),                     ('Total Recall', 'critics', 7.5),
+  ('Minority Report', 'critics', 7.6),            ('Gattaca', 'critics', 7.8),
+  ('The Fifth Element', 'critics', 7.6),          ('Elysium', 'critics', 6.6),
+  ('The Avengers', 'critics', 8.0);
+</programlisting>
+  </sect2>
+
+  <sect2 id="agensgraph-example-data-check">
+   <title>Checking What You Loaded</title>
+
+<programlisting>
+MATCH (n) RETURN label(n) AS label, count(*) AS n ORDER BY label;
+
+  label   | n
+----------+----
+ "movie"  | 18
+ "person" | 28
+(2 rows)
+</programlisting>
+
+<programlisting>
+MATCH ()-[e]->() RETURN label(e) AS label, count(*) AS n ORDER BY label;
+
+    label     | n
+--------------+----
+ "acted_in"   | 25
+ "directed"   | 21
+ "related_to" | 11
+(3 rows)
+</programlisting>
+  </sect2>
+
+  <sect2 id="agensgraph-example-data-tables">
+   <title>The Same Data as Tables</title>
+
+   <para>
+    A graph is a schema and a label is a table, so the graph you just created is also a set of
+    ordinary tables that SQL can read. <command>\dGv</command> lists the vertex labels,
+    <command>\dGe</command> the edge labels, and <command>\d</command> shows the shape of one
+    label.
+   </para>
+
+<programlisting>
+SELECT id, properties->>'title' AS title FROM moviekb.movie ORDER BY id LIMIT 3;
+
+ id  |         title
+-----+------------------------
+ 3.1 | The Matrix
+ 3.2 | The Matrix Reloaded
+ 3.3 | The Matrix Revolutions
+(3 rows)
+</programlisting>
+
+   <para>
+    An edge table carries the two endpoint ids as well.
+   </para>
+
+<programlisting>
+SELECT id, start, "end", properties FROM moviekb.acted_in ORDER BY id LIMIT 3;
+
+ id  | start | end |   properties
+-----+-------+-----+-----------------
+ 5.1 | 4.1   | 3.1 | {"role": "Neo"}
+ 5.2 | 4.1   | 3.2 | {"role": "Neo"}
+ 5.3 | 4.1   | 3.3 | {"role": "Neo"}
+(3 rows)
+</programlisting>
+  </sect2>
+
+  <sect2 id="agensgraph-example-data-drop">
+   <title>Starting Over</title>
+
+<programlisting>
+DROP GRAPH moviekb CASCADE;
+DROP TABLE rating;
+</programlisting>
+  </sect2>
+ </sect1>
+
+ <sect1 id="agensgraph-config">
+  <title>Configuration Settings</title>
+
+  <indexterm zone="agensgraph-config">
+   <primary>configuration</primary>
+   <secondary>AgensGraph parameters</secondary>
+  </indexterm>
+
+  <para>
+   These parameters are added by AgensGraph. Everything else in
+   <xref linkend="runtime-config"/> applies unchanged. Each one can be set the usual ways: in
+   <filename>postgresql.conf</filename>, on the command line, or with <command>SET</command> in a
+   session, subject to the context noted in its description.
+  </para>
+
+  <variablelist>
+
+   <varlistentry id="guc-graph-path" xreflabel="graph_path">
+    <term>
+     <varname>graph_path</varname> (<type>string</type>)
+     <indexterm>
+      <primary><varname>graph_path</varname> configuration parameter</primary>
+     </indexterm>
+    </term>
+    <listitem>
+     <para>
+      Sets the graph that unqualified label names belong to. It is the graph
+      equivalent of <xref linkend="guc-search-path"/>. A session that has not set it cannot resolve
+      an unqualified label, and a Cypher statement that names one raises an error.
+     </para>
+     <para>
+      The default is the empty string, which means no graph is selected. Set it per session,
+      or once for a database with <command>ALTER DATABASE ... SET graph_path</command>.
+     </para>
+     <para>
+      The server reports this parameter to the client, so a driver is told the value at
+      connection time and again whenever it changes.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry id="guc-agversion" xreflabel="agversion">
+    <term>
+     <varname>agversion</varname> (<type>string</type>)
+     <indexterm>
+      <primary><varname>agversion</varname> configuration parameter</primary>
+     </indexterm>
+    </term>
+    <listitem>
+     <para>
+      Shows the AgensGraph server version. This parameter is set when the
+      server is built and cannot be changed.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry id="guc-allow-null-properties" xreflabel="allow_null_properties">
+    <term>
+     <varname>allow_null_properties</varname> (<type>boolean</type>)
+     <indexterm>
+      <primary><varname>allow_null_properties</varname> configuration parameter</primary>
+     </indexterm>
+    </term>
+    <listitem>
+     <para>
+      Controls what happens to a property whose value is null.
+      When this is on the property is stored with a null value. When it is off, which is the
+      default, the property is left out of the property map.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry id="guc-auto-gather-graphmeta" xreflabel="auto_gather_graphmeta">
+    <term>
+     <varname>auto_gather_graphmeta</varname> (<type>boolean</type>)
+     <indexterm>
+      <primary><varname>auto_gather_graphmeta</varname> configuration parameter</primary>
+     </indexterm>
+    </term>
+    <listitem>
+     <para>
+      Keeps the <structname>ag_graphmeta</structname>
+      connectivity catalog current, and lets the planner use it to prune label scans. The default is
+      off. Only a superuser can change it.
+     </para>
+     <para>
+      Turning it on builds a baseline once from the edges that already exist. After that
+      every edge write keeps the catalog current, including Cypher writes, SQL
+      <command>INSERT</command> and <command>UPDATE</command>, <command>COPY</command> into an edge
+      label, and logical replication apply.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry id="guc-cypher-allow-unsafe-ddl" xreflabel="cypher_allow_unsafe_ddl">
+    <term>
+     <varname>cypher_allow_unsafe_ddl</varname> (<type>boolean</type>)
+     <indexterm>
+      <primary><varname>cypher_allow_unsafe_ddl</varname> configuration parameter</primary>
+     </indexterm>
+    </term>
+    <listitem>
+     <para>
+      Skips two catalog checks that normally protect a graph
+      from DDL that would leave it inconsistent. The default is off. Turn it on only to repair a
+      graph, and turn it off again afterwards.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry id="guc-eager-mem" xreflabel="eager_mem">
+    <term>
+     <varname>eager_mem</varname> (<type>integer</type>)
+     <indexterm>
+      <primary><varname>eager_mem</varname> configuration parameter</primary>
+     </indexterm>
+    </term>
+    <listitem>
+     <para>
+      Sets the maximum memory an eager plan node may use. The default is
+      4MB and the minimum is 1MB. If the value is given without units it is taken as kilobytes.
+     </para>
+     <para>
+      The limit applies to each node separately, so a plan with several eager nodes, or a
+      query running in several parallel workers, can use a multiple of this value.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry id="guc-enable-eager" xreflabel="enable_eager">
+    <term>
+     <varname>enable_eager</varname> (<type>boolean</type>)
+     <indexterm>
+      <primary><varname>enable_eager</varname> configuration parameter</primary>
+     </indexterm>
+    </term>
+    <listitem>
+     <para>
+      Lets the planner materialize the output of a write clause before a
+      later clause reads it. The default is on. Turning it off is a debugging aid and can make a
+      statement that reads its own writes fail.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry id="guc-enable-graph-ddl" xreflabel="enable_graph_ddl">
+    <term>
+     <varname>enable_graph_ddl</varname> (<type>boolean</type>)
+     <indexterm>
+      <primary><varname>enable_graph_ddl</varname> configuration parameter</primary>
+     </indexterm>
+    </term>
+    <listitem>
+     <para>
+      Allows SQL DDL to reshape a graph label. The default is off.
+     </para>
+     <para>
+      While it is off, <command>ALTER TABLE</command> on a label, renaming a label column,
+      moving a label to another schema, and a SQL <command>MERGE</command> that writes a label are
+      all refused. Use <command>ALTER VLABEL</command> or <command>ALTER ELABEL</command> instead.
+      Changing the type of the columns every vertex or edge is made of, which are
+      <structfield>id</structfield>, <structfield>properties</structfield>,
+      <structfield>start</structfield> and <structfield>end</structfield>, stays refused even when
+      this is on.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry id="guc-enable-graph-dml" xreflabel="enable_graph_dml">
+    <term>
+     <varname>enable_graph_dml</varname> (<type>boolean</type>)
+     <indexterm>
+      <primary><varname>enable_graph_dml</varname> configuration parameter</primary>
+     </indexterm>
+    </term>
+    <listitem>
+     <para>
+      Allows SQL <command>INSERT</command>,
+      <command>UPDATE</command>, <command>DELETE</command> and <command>MERGE</command> to write a
+      label table directly. The default is off, which keeps writes going through Cypher, where the
+      graph invariants are enforced. Only a superuser can change it.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry id="guc-enable-graph-endpoint-elision" xreflabel="enable_graph_endpoint_elision">
+    <term>
+     <varname>enable_graph_endpoint_elision</varname> (<type>boolean</type>)
+     <indexterm>
+      <primary><varname>enable_graph_endpoint_elision</varname> configuration parameter</primary>
+     </indexterm>
+    </term>
+    <listitem>
+     <para>
+      Lets the planner remove the scan and the join for
+      a pattern endpoint that the query never reads, such as the <literal>()</literal> in
+      <literal>MATCH (a)-[b]-&gt;()</literal>. The default is on.
+     </para>
+     <para>
+      The rewrite is safe because a vertex id is a primary key, so the join matches one
+      row, and every edge endpoint points at a live vertex, so the join removes none. Results do not
+      change. Turn it off to compare plans.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry id="guc-enable-multiple-update" xreflabel="enable_multiple_update">
+    <term>
+     <varname>enable_multiple_update</varname> (<type>boolean</type>)
+     <indexterm>
+      <primary><varname>enable_multiple_update</varname> configuration parameter</primary>
+     </indexterm>
+    </term>
+    <listitem>
+     <para>
+      Controls whether one statement may write the same graph
+      element more than once. The default is on.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry id="guc-enable-property-promotion" xreflabel="enable_property_promotion">
+    <term>
+     <varname>enable_property_promotion</varname> (<type>boolean</type>)
+     <indexterm>
+      <primary><varname>enable_property_promotion</varname> configuration parameter</primary>
+     </indexterm>
+    </term>
+    <listitem>
+     <para>
+      Resolves a property read such as
+      <literal>n.key</literal> to a promoted typed column when the label has one. The default is
+      on.
+     </para>
+     <para>
+      Unlike the other planner switches, turning this one off can change an answer, not
+      only a plan. A resolved read compares and orders using the rules of the column type. The
+      fallback reads the property map and uses the rules of <type>jsonb</type>.
+     </para>
+    </listitem>
+   </varlistentry>
+  </variablelist>
+ </sect1>
+
+ <sect1 id="agensgraph-catalogs">
+  <title>System Catalogs and Views</title>
+
+  <indexterm zone="agensgraph-catalogs">
+   <primary>system catalog</primary>
+   <secondary>AgensGraph</secondary>
+  </indexterm>
+
+  <para>
+   AgensGraph adds four catalogs to <literal>pg_catalog</literal> and two views. Everything in
+   <xref linkend="catalogs"/> applies unchanged. A graph is a schema and a label is a table, so a
+   graph also appears in <structname>pg_namespace</structname> and a label in
+   <structname>pg_class</structname>. The catalogs here record what makes them a graph.
+  </para>
+
+  <sect2 id="catalog-ag-graph">
+   <title><structname>ag_graph</structname></title>
+
+   <indexterm zone="catalog-ag-graph"><primary>ag_graph</primary></indexterm>
+
+   <para>One row for each graph.</para>
+
+  <table id="catalog-ag-graph-table">
+   <title><structname>ag_graph</structname> Columns</title>
+   <tgroup cols="3">
+    <thead>
+     <row>
+       <entry>Column</entry>
+       <entry>Type</entry>
+       <entry>Description</entry>
+     </row>
+    </thead>
+    <tbody>
+      <row>
+       <entry><structfield>oid</structfield></entry>
+       <entry><type>oid</type></entry>
+       <entry>Row identifier.</entry>
+      </row>
+      <row>
+       <entry><structfield>graphname</structfield></entry>
+       <entry><type>name</type></entry>
+       <entry>Name of the graph, which is also the name of its schema.</entry>
+      </row>
+      <row>
+       <entry><structfield>nspid</structfield></entry>
+       <entry><type>oid</type></entry>
+       <entry>The schema that holds the graph, in <structname>pg_namespace</structname>.</entry>
+      </row>
+      <row>
+       <entry><structfield>graphmeta_valid</structfield></entry>
+       <entry><type>bool</type></entry>
+       <entry>True when this graph has a complete <structname>ag_graphmeta</structname> baseline that has been kept current since it was gathered, which is what lets the planner prune scans against it. <function>regather_graphmeta()</function> sets it. It is cleared when an edge write commits while <xref linkend="guc-auto-gather-graphmeta"/> is off, because that write changed connectivity without recording it. A new empty graph is valid.</entry>
+      </row>
+    </tbody>
+   </tgroup>
+  </table>
+  </sect2>
+
+  <sect2 id="catalog-ag-label">
+   <title><structname>ag_label</structname></title>
+
+   <indexterm zone="catalog-ag-label"><primary>ag_label</primary></indexterm>
+
+   <para>One row for each vertex label and each edge label.</para>
+
+  <table id="catalog-ag-label-table">
+   <title><structname>ag_label</structname> Columns</title>
+   <tgroup cols="3">
+    <thead>
+     <row>
+       <entry>Column</entry>
+       <entry>Type</entry>
+       <entry>Description</entry>
+     </row>
+    </thead>
+    <tbody>
+      <row>
+       <entry><structfield>oid</structfield></entry>
+       <entry><type>oid</type></entry>
+       <entry>Row identifier.</entry>
+      </row>
+      <row>
+       <entry><structfield>labname</structfield></entry>
+       <entry><type>name</type></entry>
+       <entry>Name of the label.</entry>
+      </row>
+      <row>
+       <entry><structfield>graphid</structfield></entry>
+       <entry><type>oid</type></entry>
+       <entry>The graph the label belongs to, in <structname>ag_graph</structname>.</entry>
+      </row>
+      <row>
+       <entry><structfield>labid</structfield></entry>
+       <entry><type>int4</type></entry>
+       <entry>Identifier of the label within its graph. This value is carried in the high bits of every <type>graphid</type> the label issues, so a label is a contiguous range of graph ids.</entry>
+      </row>
+      <row>
+       <entry><structfield>relid</structfield></entry>
+       <entry><type>oid</type></entry>
+       <entry>The table that stores the label, in <structname>pg_class</structname>.</entry>
+      </row>
+      <row>
+       <entry><structfield>labkind</structfield></entry>
+       <entry><type>char</type></entry>
+       <entry><literal>v</literal> for a vertex label, <literal>e</literal> for an edge label.</entry>
+      </row>
+    </tbody>
+   </tgroup>
+  </table>
+  </sect2>
+
+  <sect2 id="catalog-ag-label-property">
+   <title><structname>ag_label_property</structname></title>
+
+   <indexterm zone="catalog-ag-label-property"><primary>ag_label_property</primary></indexterm>
+
+   <para>
+    One row for each property that a label mirrors into a typed column. This is the catalog that
+    makes a promoted property resolvable, because it maps the Cypher key to the column that holds
+    it. A label with no promoted property has no row here.
+   </para>
+
+  <table id="catalog-ag-label-property-table">
+   <title><structname>ag_label_property</structname> Columns</title>
+   <tgroup cols="3">
+    <thead>
+     <row>
+       <entry>Column</entry>
+       <entry>Type</entry>
+       <entry>Description</entry>
+     </row>
+    </thead>
+    <tbody>
+      <row>
+       <entry><structfield>laboid</structfield></entry>
+       <entry><type>oid</type></entry>
+       <entry>The label that owns the property, in <structname>ag_label</structname>.</entry>
+      </row>
+      <row>
+       <entry><structfield>propname</structfield></entry>
+       <entry><type>name</type></entry>
+       <entry>The Cypher property key, down cased. It comes from the generation expression of the column rather than from the column name, so a query keeps naming the property.</entry>
+      </row>
+      <row>
+       <entry><structfield>attnum</structfield></entry>
+       <entry><type>int2</type></entry>
+       <entry>Attribute number of the typed column in the label table.</entry>
+      </row>
+      <row>
+       <entry><structfield>semantics</structfield></entry>
+       <entry><type>char</type></entry>
+       <entry>Comparison semantics recorded for the property.</entry>
+      </row>
+    </tbody>
+   </tgroup>
+  </table>
+
+   <para>
+    The pair <literal>(laboid, propname)</literal> is unique, so one key resolves to at most one
+    column in a label.
+   </para>
+  </sect2>
+
+  <sect2 id="catalog-ag-graphmeta">
+   <title><structname>ag_graphmeta</structname></title>
+
+   <indexterm zone="catalog-ag-graphmeta"><primary>ag_graphmeta</primary></indexterm>
+
+   <para>
+    One row for each combination of start label, edge label and end label that actually occurs in a
+    graph. That is the graph's real connectivity, and the planner uses it to scan an unlabelled
+    pattern element only over the labels it can match. The catalog is maintained when
+    <xref linkend="guc-auto-gather-graphmeta"/> is on, and rebuilt by
+    <function>regather_graphmeta()</function>.
+   </para>
+
+  <table id="catalog-ag-graphmeta-table">
+   <title><structname>ag_graphmeta</structname> Columns</title>
+   <tgroup cols="3">
+    <thead>
+     <row>
+       <entry>Column</entry>
+       <entry>Type</entry>
+       <entry>Description</entry>
+     </row>
+    </thead>
+    <tbody>
+      <row>
+       <entry><structfield>graph</structfield></entry>
+       <entry><type>oid</type></entry>
+       <entry>The graph, in <structname>ag_graph</structname>.</entry>
+      </row>
+      <row>
+       <entry><structfield>edge</structfield></entry>
+       <entry><type>int2</type></entry>
+       <entry>Label id of the edge label.</entry>
+      </row>
+      <row>
+       <entry><structfield>start</structfield></entry>
+       <entry><type>int2</type></entry>
+       <entry>Label id of the label the edge starts at.</entry>
+      </row>
+      <row>
+       <entry><structfield>end</structfield></entry>
+       <entry><type>int2</type></entry>
+       <entry>Label id of the label the edge ends at.</entry>
+      </row>
+      <row>
+       <entry><structfield>edgecount</structfield></entry>
+       <entry><type>int8</type></entry>
+       <entry>Number of edges recorded for that combination.</entry>
+      </row>
+    </tbody>
+   </tgroup>
+  </table>
+  </sect2>
+
+  <sect2 id="view-ag-property-indexes">
+   <title><structname>ag_property_indexes</structname></title>
+
+   <indexterm zone="view-ag-property-indexes"><primary>ag_property_indexes</primary></indexterm>
+
+   <para>
+    Lists the property indexes of every label in a readable form. It shows both kinds, an
+    expression index over the property map and a plain column index that binds a promoted typed
+    column. This is what <command>\dGi</command> reads.
+   </para>
+
+  <table id="view-ag-property-indexes-table">
+   <title><structname>ag_property_indexes</structname> Columns</title>
+   <tgroup cols="3">
+    <thead>
+     <row>
+       <entry>Column</entry>
+       <entry>Type</entry>
+       <entry>Description</entry>
+     </row>
+    </thead>
+    <tbody>
+      <row>
+       <entry><structfield>graphname</structfield></entry>
+       <entry><type>name</type></entry>
+       <entry>Graph that holds the label.</entry>
+      </row>
+      <row>
+       <entry><structfield>labelname</structfield></entry>
+       <entry><type>name</type></entry>
+       <entry>Label the index is on.</entry>
+      </row>
+      <row>
+       <entry><structfield>indexname</structfield></entry>
+       <entry><type>name</type></entry>
+       <entry>Name of the index.</entry>
+      </row>
+      <row>
+       <entry><structfield>tablespace</structfield></entry>
+       <entry><type>name</type></entry>
+       <entry>Tablespace holding the index, when it is not the default.</entry>
+      </row>
+      <row>
+       <entry><structfield>unique</structfield></entry>
+       <entry><type>bool</type></entry>
+       <entry>True when the index is unique.</entry>
+      </row>
+      <row>
+       <entry><structfield>indexdef</structfield></entry>
+       <entry><type>text</type></entry>
+       <entry>The command that would recreate the index.</entry>
+      </row>
+      <row>
+       <entry><structfield>owner</structfield></entry>
+       <entry><type>name</type></entry>
+       <entry>Owner of the label.</entry>
+      </row>
+      <row>
+       <entry><structfield>size</structfield></entry>
+       <entry><type>text</type></entry>
+       <entry>Size of the index on disk.</entry>
+      </row>
+      <row>
+       <entry><structfield>description</structfield></entry>
+       <entry><type>text</type></entry>
+       <entry>Comment on the index.</entry>
+      </row>
+    </tbody>
+   </tgroup>
+  </table>
+  </sect2>
+
+  <sect2 id="view-ag-graphmeta-view">
+   <title><structname>ag_graphmeta_view</structname></title>
+
+   <indexterm zone="view-ag-graphmeta-view"><primary>ag_graphmeta_view</primary></indexterm>
+
+   <para>
+    The same rows as <structname>ag_graphmeta</structname>, with the graph and the three label ids
+    resolved to names.
+   </para>
+
+  <table id="view-ag-graphmeta-view-table">
+   <title><structname>ag_graphmeta_view</structname> Columns</title>
+   <tgroup cols="3">
+    <thead>
+     <row>
+       <entry>Column</entry>
+       <entry>Type</entry>
+       <entry>Description</entry>
+     </row>
+    </thead>
+    <tbody>
+      <row>
+       <entry><structfield>graphname</structfield></entry>
+       <entry><type>name</type></entry>
+       <entry>Name of the graph.</entry>
+      </row>
+      <row>
+       <entry><structfield>start</structfield></entry>
+       <entry><type>name</type></entry>
+       <entry>Name of the label the edge starts at.</entry>
+      </row>
+      <row>
+       <entry><structfield>edge</structfield></entry>
+       <entry><type>name</type></entry>
+       <entry>Name of the edge label.</entry>
+      </row>
+      <row>
+       <entry><structfield>end</structfield></entry>
+       <entry><type>name</type></entry>
+       <entry>Name of the label the edge ends at.</entry>
+      </row>
+      <row>
+       <entry><structfield>edgecount</structfield></entry>
+       <entry><type>int8</type></entry>
+       <entry>Number of edges recorded for that combination.</entry>
+      </row>
+    </tbody>
+   </tgroup>
+  </table>
+  </sect2>
+ </sect1>
+
+ <sect1 id="agensgraph-datatypes">
+  <title>Data Types</title>
+
+  <indexterm zone="agensgraph-datatypes">
+   <primary>data type</primary>
+   <secondary>AgensGraph</secondary>
+  </indexterm>
+
+  <para>
+   AgensGraph adds the types below. A property value is a <type>jsonb</type>, so everything in
+   <xref linkend="datatype-json"/> applies to properties.
+  </para>
+
+  <table id="agensgraph-datatypes-table">
+   <title>AgensGraph Data Types</title>
+   <tgroup cols="3">
+    <thead>
+     <row>
+       <entry>Name</entry>
+       <entry>Storage Size</entry>
+       <entry>Description</entry>
+     </row>
+    </thead>
+    <tbody>
+      <row>
+       <entry><type>graphid</type></entry>
+       <entry>8 bytes</entry>
+       <entry>Identity of a vertex or an edge.</entry>
+      </row>
+      <row>
+       <entry><type>vertex</type></entry>
+       <entry>variable</entry>
+       <entry>A vertex, with its identity and its properties.</entry>
+      </row>
+      <row>
+       <entry><type>edge</type></entry>
+       <entry>variable</entry>
+       <entry>An edge, with its identity, its two endpoints and its properties.</entry>
+      </row>
+      <row>
+       <entry><type>graphpath</type></entry>
+       <entry>variable</entry>
+       <entry>A path, as the vertices and the edges along it.</entry>
+      </row>
+      <row>
+       <entry><type>rowid</type></entry>
+       <entry>10 bytes</entry>
+       <entry>Location of a row. Used internally.</entry>
+      </row>
+    </tbody>
+   </tgroup>
+  </table>
+
+  <sect2 id="datatype-graphid">
+   <title><type>graphid</type></title>
+
+   <indexterm zone="datatype-graphid"><primary>graphid</primary></indexterm>
+
+   <para>
+    A <type>graphid</type> identifies one vertex or one edge. It is eight bytes. The high 16 bits
+    are the label id, which is <structfield>labid</structfield> in
+    <structname>ag_label</structname>, and the low 48 bits are the position within that label. It
+    prints as the two parts joined by a dot, so <literal>3.1</literal> is the first row of the
+    label whose id is 3.
+   </para>
+
+   <para>
+    Because the label is part of the value, a graph id says which label a vertex belongs to without
+    reading any table, and one label occupies a contiguous range of graph ids. A graph may hold up
+    to 65535 labels, and a label up to 281474976710655 rows.
+   </para>
+
+   <para>
+    <function>id()</function> returns the graph id of a vertex or an edge.
+    <function>graphid_labid()</function> and <function>graphid_locid()</function> return the two
+    parts.
+   </para>
+  </sect2>
+
+  <sect2 id="datatype-vertex-edge">
+   <title><type>vertex</type> and <type>edge</type></title>
+
+   <indexterm zone="datatype-vertex-edge"><primary>vertex</primary></indexterm>
+   <indexterm zone="datatype-vertex-edge"><primary>edge</primary></indexterm>
+
+   <para>
+    A <type>vertex</type> carries its graph id and its property map. An <type>edge</type> carries
+    its graph id, the graph ids of the vertices it starts and ends at, and its property map.
+    <function>properties()</function> returns the map, <function>label()</function> the label name,
+    and <function>start_id()</function> and <function>end_id()</function> the endpoints of an edge.
+   </para>
+
+   <para>
+    Both compare, sort and group by identity, which is what <literal>=</literal> has always meant
+    for them. Equal properties do not make two vertices equal.
+   </para>
+  </sect2>
+
+  <sect2 id="datatype-graphpath">
+   <title><type>graphpath</type></title>
+
+   <indexterm zone="datatype-graphpath"><primary>graphpath</primary></indexterm>
+
+   <para>
+    A <type>graphpath</type> holds the vertices and the edges of a path, in order. A path of
+    <replaceable>n</replaceable> edges has <replaceable>n</replaceable> plus one vertices.
+    <function>nodes()</function> and <function>relationships()</function> return the two arrays,
+    and <function>length()</function> returns the number of edges.
+   </para>
+  </sect2>
+ </sect1>
+
+ <sect1 id="agensgraph-psql">
+  <title>psql Support</title>
+
+  <indexterm zone="agensgraph-psql">
+   <primary>psql</primary>
+   <secondary>graph meta commands</secondary>
+  </indexterm>
+
+  <para>
+   <application>psql</application> gains five meta commands for graphs. They follow the conventions
+   of the rest of the <command>\d</command> family described in <xref linkend="app-psql"/>. Append
+   <literal>+</literal> for more detail, and give a pattern to restrict what is listed. The
+   <literal>G</literal> is upper case, because <command>\dg</command> already lists roles.
+  </para>
+
+  <variablelist>
+   <varlistentry>
+    <term><command>\dG[+] [ <replaceable class="parameter">pattern</replaceable> ]</command></term>
+    <listitem><para>Lists graphs.</para></listitem>
+   </varlistentry>
+   <varlistentry>
+    <term><command>\dGl[+] [ <replaceable class="parameter">pattern</replaceable> ]</command></term>
+    <listitem><para>Lists labels of both kinds.</para></listitem>
+   </varlistentry>
+   <varlistentry>
+    <term><command>\dGv[+] [ <replaceable class="parameter">pattern</replaceable> ]</command></term>
+    <listitem><para>Lists vertex labels.</para></listitem>
+   </varlistentry>
+   <varlistentry>
+    <term><command>\dGe[+] [ <replaceable class="parameter">pattern</replaceable> ]</command></term>
+    <listitem><para>Lists edge labels.</para></listitem>
+   </varlistentry>
+   <varlistentry>
+    <term><command>\dGi[+] [ <replaceable class="parameter">pattern</replaceable> ]</command></term>
+    <listitem>
+     <para>
+      Lists property indexes, reading <structname>ag_property_indexes</structname>. Both kinds are
+      shown, an expression index over the property map and a plain index that binds a promoted
+      typed column.
+     </para>
+    </listitem>
+   </varlistentry>
+  </variablelist>
+
+  <para>
+   For <command>\dGl</command>, <command>\dGv</command> and <command>\dGe</command> the second
+   part of a pattern names a label. For <command>\dGi</command> it names an index. A label is an
+   ordinary table, so <command>\d</command> on it shows its columns and its indexes.
+  </para>
+ </sect1>
+
+ <sect1 id="agensgraph-functions">
+  <title>Functions</title>
+
+  <indexterm zone="agensgraph-functions">
+   <primary>function</primary>
+   <secondary>AgensGraph</secondary>
+  </indexterm>
+
+  <para>
+   The functions below are added by AgensGraph and are callable from Cypher. Everything in
+   <xref linkend="functions"/> is callable too, and a Cypher expression may use any SQL function.
+   A function that takes or returns <type>jsonb</type> is the Cypher facing form, because a
+   property is a <type>jsonb</type> value. Several names carry more than one signature, and where
+   two entries share a name they are two different functions. <function>length</function> over a
+   string is not <function>length</function> over a path, and the signature tells them apart.
+  </para>
+
+  <para>
+   Aggregates are marked in their description. The three shortest path functions are usable only
+   inside a <xref linkend="cypher-match"/> pattern, not as ordinary expressions.
+  </para>
+
+  <table id="agensgraph-functions-table">
+   <title>AgensGraph Functions</title>
+   <tgroup cols="3">
+    <colspec colname="c1" colwidth="1*"/>
+    <colspec colname="c2" colwidth="2*"/>
+    <colspec colname="c3" colwidth="2*"/>
+    <thead>
+     <row>
+      <entry>Function</entry>
+      <entry>Signature</entry>
+      <entry>Description</entry>
+     </row>
+    </thead>
+    <tbody>
+      <row>
+       <entry><function>abs</function></entry>
+       <entry><simplelist type="vert" columns="1"><member><literal>abs ( x jsonb ) -&gt; jsonb</literal></member><member><literal>abs ( x numeric ) -&gt; numeric</literal></member></simplelist></entry>
+       <entry>Returns the absolute value of a number.</entry>
+      </row>
+      <row>
+       <entry><function>acos</function></entry>
+       <entry><simplelist type="vert" columns="1"><member><literal>acos ( x jsonb ) -&gt; jsonb</literal></member><member><literal>acos ( x double precision ) -&gt; double precision</literal></member></simplelist></entry>
+       <entry>Returns the arc cosine of <literal>x</literal>, in radians.</entry>
+      </row>
+      <row>
+       <entry><function>ag_get_graphconstraintdef</function></entry>
+       <entry><literal>ag_get_graphconstraintdef ( constraint oid ) -&gt; text</literal></entry>
+       <entry>Reconstructs the <literal>CREATE CONSTRAINT</literal> command for a graph constraint, given its OID.</entry>
+      </row>
+      <row>
+       <entry><function>ag_get_propindexdef</function></entry>
+       <entry><literal>ag_get_propindexdef ( index oid ) -&gt; text</literal></entry>
+       <entry>Reconstructs the <literal>CREATE PROPERTY INDEX</literal> command for a property index, given its OID.</entry>
+      </row>
+      <row>
+       <entry><function>ag_property_text</function></entry>
+       <entry><literal>ag_property_text ( properties jsonb, key text, expected_kind "char" ) -&gt; text</literal></entry>
+       <entry>Returns a property's value as <literal>text</literal>, but only when the stored value is of the JSON kind asked for. New in 2.18.</entry>
+      </row>
+      <row>
+       <entry><function>agversion</function></entry>
+       <entry><literal>agversion ( ) -&gt; text</literal></entry>
+       <entry>The AgensGraph version of the running server.</entry>
+      </row>
+      <row>
+       <entry><function>all</function></entry>
+       <entry><literal>all ( variable IN list WHERE predicate ) -&gt; boolean</literal></entry>
+       <entry>Returns true when the predicate holds for every element of the list.</entry>
+      </row>
+      <row>
+       <entry><function>allshortestpaths</function></entry>
+       <entry><literal>allshortestpaths ( pattern ) -&gt; graphpath</literal></entry>
+       <entry>Every shortest path between two vertices.</entry>
+      </row>
+      <row>
+       <entry><function>any</function></entry>
+       <entry><literal>any ( variable IN list WHERE predicate ) -&gt; boolean</literal></entry>
+       <entry>Returns true when the predicate holds for at least one element of the list.</entry>
+      </row>
+      <row>
+       <entry><function>array_size</function></entry>
+       <entry><simplelist type="vert" columns="1"><member><literal>array_size ( list jsonb ) -&gt; integer</literal></member><member><literal>array_size ( list json ) -&gt; integer</literal></member><member><literal>array_size ( list anyarray ) -&gt; integer</literal></member></simplelist></entry>
+       <entry>Returns the number of elements in an array.</entry>
+      </row>
+      <row>
+       <entry><function>asin</function></entry>
+       <entry><simplelist type="vert" columns="1"><member><literal>asin ( x jsonb ) -&gt; jsonb</literal></member><member><literal>asin ( x double precision ) -&gt; double precision</literal></member></simplelist></entry>
+       <entry>Returns the arc sine of <literal>x</literal>, in radians.</entry>
+      </row>
+      <row>
+       <entry><function>atan</function></entry>
+       <entry><simplelist type="vert" columns="1"><member><literal>atan ( x jsonb ) -&gt; jsonb</literal></member><member><literal>atan ( x double precision ) -&gt; double precision</literal></member></simplelist></entry>
+       <entry>Returns the arc tangent of <literal>x</literal>, in radians.</entry>
+      </row>
+      <row>
+       <entry><function>atan2</function></entry>
+       <entry><simplelist type="vert" columns="1"><member><literal>atan2 ( y jsonb, x jsonb ) -&gt; jsonb</literal></member><member><literal>atan2 ( y double precision, x double precision ) -&gt; double precision</literal></member></simplelist></entry>
+       <entry>Arc tangent of <literal>y / x</literal> in radians, using both signs to fix the quadrant.</entry>
+      </row>
+      <row>
+       <entry><function>avg</function></entry>
+       <entry><literal>avg ( expression numeric ) -&gt; numeric</literal></entry>
+       <entry>Returns the arithmetic mean of the non null values in the group.</entry>
+      </row>
+      <row>
+       <entry><function>cardinality</function></entry>
+       <entry><simplelist type="vert" columns="1"><member><literal>cardinality ( value jsonb ) -&gt; jsonb</literal></member><member><literal>cardinality ( p graphpath ) -&gt; jsonb</literal></member></simplelist></entry>
+       <entry>Returns the number of elements in a list, entries in a map, or vertices and edges in a path. New in 2.18.</entry>
+      </row>
+      <row>
+       <entry><function>ceil</function></entry>
+       <entry><simplelist type="vert" columns="1"><member><literal>ceil ( x jsonb ) -&gt; jsonb</literal></member><member><literal>ceil ( x numeric ) -&gt; numeric</literal></member></simplelist></entry>
+       <entry>Returns the smallest integer that is not less than <literal>x</literal>.</entry>
+      </row>
+      <row>
+       <entry><function>coalesce</function></entry>
+       <entry><literal>coalesce ( value [, value ] ... ) -&gt; jsonb</literal></entry>
+       <entry>Returns the first argument that is not null.</entry>
+      </row>
+      <row>
+       <entry><function>collect</function></entry>
+       <entry><simplelist type="vert" columns="1"><member><literal>collect ( expression anyelement ) -&gt; jsonb</literal></member><member><literal>collect ( v vertex ) -&gt; vertex[]</literal></member><member><literal>collect ( e edge ) -&gt; edge[]</literal></member><member><literal>collect ( p graphpath ) -&gt; graphpath[]</literal></member></simplelist></entry>
+       <entry>Gathers the group's values into a list; a graph element gives a native array.</entry>
+      </row>
+      <row>
+       <entry><function>cos</function></entry>
+       <entry><simplelist type="vert" columns="1"><member><literal>cos ( x jsonb ) -&gt; jsonb</literal></member><member><literal>cos ( x double precision ) -&gt; double precision</literal></member></simplelist></entry>
+       <entry>Returns the cosine of an angle given in radians.</entry>
+      </row>
+      <row>
+       <entry><function>cosd</function></entry>
+       <entry><literal>cosd ( x double precision ) -&gt; double precision</literal></entry>
+       <entry>Returns the cosine of an angle given in degrees.</entry>
+      </row>
+      <row>
+       <entry><function>cot</function></entry>
+       <entry><simplelist type="vert" columns="1"><member><literal>cot ( x jsonb ) -&gt; jsonb</literal></member><member><literal>cot ( x double precision ) -&gt; double precision</literal></member></simplelist></entry>
+       <entry>Returns the cotangent of an angle given in radians, the reciprocal of the tangent.</entry>
+      </row>
+      <row>
+       <entry><function>count</function></entry>
+       <entry><simplelist type="vert" columns="1"><member><literal>count ( * ) -&gt; bigint</literal></member><member><literal>count ( expression ) -&gt; bigint</literal></member></simplelist></entry>
+       <entry>Counts rows in the group.</entry>
+      </row>
+      <row>
+       <entry><function>cypher_to_jsonb</function></entry>
+       <entry><literal>cypher_to_jsonb ( value anyelement ) -&gt; jsonb</literal></entry>
+       <entry>Boxes a value to <literal>jsonb</literal> using Cypher's rules; refuses a graph type.</entry>
+      </row>
+      <row>
+       <entry><function>datetime</function></entry>
+       <entry><simplelist type="vert" columns="1"><member><literal>datetime ( ) -&gt; timestamp with time zone</literal></member><member><literal>datetime ( timezone "any" ) -&gt; timestamp without time zone</literal></member><member><literal>datetime ( year integer, month integer, mday integer, hour integer, min integer, sec integer, millisec integer, nanosec integer, timezone "any" ) -&gt; timestamp without time zone</literal></member></simplelist></entry>
+       <entry>The current transaction timestamp, the time in a named zone, or a timestamp built from parts.</entry>
+      </row>
+      <row>
+       <entry><function>degrees</function></entry>
+       <entry><simplelist type="vert" columns="1"><member><literal>degrees ( x jsonb ) -&gt; jsonb</literal></member><member><literal>degrees ( x double precision ) -&gt; double precision</literal></member></simplelist></entry>
+       <entry>Converts radians to degrees.</entry>
+      </row>
+      <row>
+       <entry><function>dijkstra</function></entry>
+       <entry><simplelist type="vert" columns="1"><member><literal>dijkstra ( pattern, weight ) -&gt; graphpath</literal></member><member><literal>dijkstra ( pattern, weight, condition ) -&gt; graphpath</literal></member><member><literal>dijkstra ( pattern, weight, LIMIT count ) -&gt; graphpath</literal></member><member><literal>dijkstra ( pattern, weight, condition, LIMIT count ) -&gt; graphpath</literal></member></simplelist></entry>
+       <entry>Finds the cheapest path between two vertices, where each edge costs what <literal>weight</literal> evaluates to.</entry>
+      </row>
+      <row>
+       <entry><function>e</function></entry>
+       <entry><literal>e ( ) -&gt; numeric</literal></entry>
+       <entry>Returns Euler's number as a <literal>numeric</literal>.</entry>
+      </row>
+      <row>
+       <entry><function>edge_to_jsonb</function></entry>
+       <entry><literal>edge_to_jsonb ( e edge ) -&gt; jsonb</literal></entry>
+       <entry>Returns an edge's property bag.</entry>
+      </row>
+      <row>
+       <entry><function>edges</function></entry>
+       <entry><literal>edges ( p graphpath ) -&gt; edge[]</literal></entry>
+       <entry>Returns the edges of a path, in order.</entry>
+      </row>
+      <row>
+       <entry><function>end_id</function></entry>
+       <entry><literal>end_id ( e edge ) -&gt; graphid</literal></entry>
+       <entry>Returns the <literal>graphid</literal> of the vertex an edge points at, without reading that vertex.</entry>
+      </row>
+      <row>
+       <entry><function>end_vertex</function></entry>
+       <entry><literal>end_vertex ( e edge ) -&gt; vertex</literal></entry>
+       <entry>Returns the vertex an edge points at.</entry>
+      </row>
+      <row>
+       <entry><function>endNode</function></entry>
+       <entry><literal>endNode ( e edge ) -&gt; vertex</literal></entry>
+       <entry>Returns the vertex an edge points at.</entry>
+      </row>
+      <row>
+       <entry><function>exists</function></entry>
+       <entry><simplelist type="vert" columns="1"><member><literal>exists ( pattern ) -&gt; boolean</literal></member><member><literal>exists ( property_reference ) -&gt; boolean</literal></member></simplelist></entry>
+       <entry>True when a pattern matches at least once, or when a property is present and not null.</entry>
+      </row>
+      <row>
+       <entry><function>exp</function></entry>
+       <entry><simplelist type="vert" columns="1"><member><literal>exp ( x jsonb ) -&gt; jsonb</literal></member><member><literal>exp ( x numeric ) -&gt; numeric</literal></member></simplelist></entry>
+       <entry>Returns *e* raised to the power <literal>x</literal>.</entry>
+      </row>
+      <row>
+       <entry><function>floor</function></entry>
+       <entry><simplelist type="vert" columns="1"><member><literal>floor ( x jsonb ) -&gt; jsonb</literal></member><member><literal>floor ( x numeric ) -&gt; numeric</literal></member></simplelist></entry>
+       <entry>Returns the largest integer that is not greater than <literal>x</literal>.</entry>
+      </row>
+      <row>
+       <entry><function>get_last_graph_write_stats</function></entry>
+       <entry><literal>get_last_graph_write_stats ( ) -&gt; record</literal></entry>
+       <entry>What the most recent graph write in this session changed, as five counters.</entry>
+      </row>
+      <row>
+       <entry><function>get_time</function></entry>
+       <entry><simplelist type="vert" columns="1"><member><literal>get_time ( ) -&gt; time without time zone</literal></member><member><literal>get_time ( timezone "any" ) -&gt; time without time zone</literal></member></simplelist></entry>
+       <entry>Returns the current time of day, either locally or in a named zone.</entry>
+      </row>
+      <row>
+       <entry><function>graph_labid</function></entry>
+       <entry><literal>graph_labid ( qualified_label cstring ) -&gt; integer</literal></entry>
+       <entry>Returns the label id of a label named as <literal>graph.label</literal>.</entry>
+      </row>
+      <row>
+       <entry><function>graphid</function></entry>
+       <entry><simplelist type="vert" columns="1"><member><literal>graphid ( labid integer, locid bigint ) -&gt; graphid</literal></member><member><literal>graphid ( id numeric ) -&gt; graphid</literal></member></simplelist></entry>
+       <entry>Builds a <literal>graphid</literal> from a label id and a local id, or from its printed form.</entry>
+      </row>
+      <row>
+       <entry><function>graphid_in_jsonb_array</function></entry>
+       <entry><literal>graphid_in_jsonb_array ( id graphid, elements jsonb ) -&gt; boolean</literal></entry>
+       <entry>Returns true when a <literal>graphid</literal> is one of the graph elements in a <literal>jsonb</literal> array.</entry>
+      </row>
+      <row>
+       <entry><function>graphid_labid</function></entry>
+       <entry><literal>graphid_labid ( id graphid ) -&gt; integer</literal></entry>
+       <entry>Returns the label part of a <literal>graphid</literal>, the number before the dot.</entry>
+      </row>
+      <row>
+       <entry><function>graphid_locid</function></entry>
+       <entry><literal>graphid_locid ( id graphid ) -&gt; bigint</literal></entry>
+       <entry>Returns the local part of a <literal>graphid</literal>, the number after the dot, taken from the label's sequence.</entry>
+      </row>
+      <row>
+       <entry><function>head</function></entry>
+       <entry><simplelist type="vert" columns="1"><member><literal>head ( list jsonb ) -&gt; jsonb</literal></member><member><literal>head ( list anyarray ) -&gt; anyelement</literal></member></simplelist></entry>
+       <entry>Returns the first element of a list.</entry>
+      </row>
+      <row>
+       <entry><function>id</function></entry>
+       <entry><simplelist type="vert" columns="1"><member><literal>id ( v vertex ) -&gt; graphid</literal></member><member><literal>id ( e edge ) -&gt; graphid</literal></member></simplelist></entry>
+       <entry>Returns a graph element's identity.</entry>
+      </row>
+      <row>
+       <entry><function>isEmpty</function></entry>
+       <entry><literal>isEmpty ( value jsonb ) -&gt; boolean</literal></entry>
+       <entry>Returns true when a list has no elements or a map has no keys.</entry>
+      </row>
+      <row>
+       <entry><function>jsonb_add</function></entry>
+       <entry><literal>jsonb_add ( a jsonb, b jsonb ) -&gt; jsonb</literal></entry>
+       <entry>Implements the backtick <literal>+</literal> operator: addition, or concatenation of two strings or two lists.</entry>
+      </row>
+      <row>
+       <entry><function>jsonb_array_length</function></entry>
+       <entry><literal>jsonb_array_length ( list jsonb ) -&gt; integer</literal></entry>
+       <entry>Returns the number of elements in a <literal>jsonb</literal> array, as an <literal>integer</literal>.</entry>
+      </row>
+      <row>
+       <entry><function>jsonb_div</function></entry>
+       <entry><literal>jsonb_div ( a jsonb, b jsonb ) -&gt; jsonb</literal></entry>
+       <entry>Implements the backtick <literal>/</literal> operator. Integer division when both operands are integers.</entry>
+      </row>
+      <row>
+       <entry><function>jsonb_mod</function></entry>
+       <entry><literal>jsonb_mod ( a jsonb, b jsonb ) -&gt; jsonb</literal></entry>
+       <entry>Implements the backtick <literal>%</literal> operator.</entry>
+      </row>
+      <row>
+       <entry><function>jsonb_mul</function></entry>
+       <entry><literal>jsonb_mul ( a jsonb, b jsonb ) -&gt; jsonb</literal></entry>
+       <entry>Implements the backtick <literal>*</literal> operator.</entry>
+      </row>
+      <row>
+       <entry><function>jsonb_pow</function></entry>
+       <entry><literal>jsonb_pow ( a jsonb, b jsonb ) -&gt; jsonb</literal></entry>
+       <entry>Implements the backtick <literal>^</literal> operator.</entry>
+      </row>
+      <row>
+       <entry><function>jsonb_sub</function></entry>
+       <entry><literal>jsonb_sub ( a jsonb, b jsonb ) -&gt; jsonb</literal></entry>
+       <entry>Implements the backtick binary <literal>-</literal> operator.</entry>
+      </row>
+      <row>
+       <entry><function>jsonb_uminus</function></entry>
+       <entry><literal>jsonb_uminus ( a jsonb ) -&gt; jsonb</literal></entry>
+       <entry>Implements the backtick prefix <literal>-</literal> operator.</entry>
+      </row>
+      <row>
+       <entry><function>jsonb_uplus</function></entry>
+       <entry><literal>jsonb_uplus ( a jsonb ) -&gt; jsonb</literal></entry>
+       <entry>Implements the backtick prefix <literal>+</literal> operator.</entry>
+      </row>
+      <row>
+       <entry><function>keys</function></entry>
+       <entry><literal>keys ( map jsonb ) -&gt; jsonb</literal></entry>
+       <entry>Returns a list of the key names of a map, or of a graph element's properties.</entry>
+      </row>
+      <row>
+       <entry><function>label</function></entry>
+       <entry><simplelist type="vert" columns="1"><member><literal>label ( v vertex ) -&gt; jsonb</literal></member><member><literal>label ( e edge ) -&gt; jsonb</literal></member></simplelist></entry>
+       <entry>Returns the name of the label a graph element was created with, as a <literal>jsonb</literal> string.</entry>
+      </row>
+      <row>
+       <entry><function>labels</function></entry>
+       <entry><literal>labels ( v vertex ) -&gt; jsonb</literal></entry>
+       <entry>Returns a list holding the vertex's own label and every label it inherits from, nearest first.</entry>
+      </row>
+      <row>
+       <entry><function>last</function></entry>
+       <entry><simplelist type="vert" columns="1"><member><literal>last ( list jsonb ) -&gt; jsonb</literal></member><member><literal>last ( list anyarray ) -&gt; anyelement</literal></member></simplelist></entry>
+       <entry>Returns the final element of a list.</entry>
+      </row>
+      <row>
+       <entry><function>left</function></entry>
+       <entry><simplelist type="vert" columns="1"><member><literal>left ( string jsonb, n jsonb ) -&gt; jsonb</literal></member><member><literal>left ( string text, n integer ) -&gt; text</literal></member></simplelist></entry>
+       <entry>Returns the first <literal>n</literal> characters of a string.</entry>
+      </row>
+      <row>
+       <entry><function>length</function></entry>
+       <entry><simplelist type="vert" columns="1"><member><literal>length ( p graphpath ) -&gt; jsonb</literal></member><member><literal>length ( vs vertex[] ) -&gt; jsonb</literal></member><member><literal>length ( es edge[] ) -&gt; jsonb</literal></member><member><literal>length ( ps graphpath[] ) -&gt; jsonb</literal></member></simplelist></entry>
+       <entry>Edges in a path, or elements of an array of graph elements.</entry>
+      </row>
+      <row>
+       <entry><function>length</function></entry>
+       <entry><literal>length ( value jsonb ) -&gt; jsonb</literal></entry>
+       <entry>Characters in a string, elements in a list, or keys in a map.</entry>
+      </row>
+      <row>
+       <entry><function>ln</function></entry>
+       <entry><simplelist type="vert" columns="1"><member><literal>ln ( x double precision ) -&gt; double precision</literal></member><member><literal>ln ( x numeric ) -&gt; numeric</literal></member></simplelist></entry>
+       <entry>Natural logarithm of <literal>x</literal>. The function <literal>log</literal> resolves to in Cypher.</entry>
+      </row>
+      <row>
+       <entry><function>localdatetime</function></entry>
+       <entry><simplelist type="vert" columns="1"><member><literal>localdatetime ( ) -&gt; timestamp with time zone</literal></member><member><literal>localdatetime ( timezone "any" ) -&gt; timestamp without time zone</literal></member></simplelist></entry>
+       <entry>Returns the current transaction timestamp, or the current wall clock reading in a named zone.</entry>
+      </row>
+      <row>
+       <entry><function>log</function></entry>
+       <entry><literal>log ( x jsonb ) -&gt; jsonb</literal></entry>
+       <entry>Natural logarithm of <literal>x</literal>, not base 10, and with no base argument.</entry>
+      </row>
+      <row>
+       <entry><function>log10</function></entry>
+       <entry><simplelist type="vert" columns="1"><member><literal>log10 ( x double precision ) -&gt; double precision</literal></member><member><literal>log10 ( x numeric ) -&gt; numeric</literal></member></simplelist></entry>
+       <entry>Returns the base-10 logarithm of <literal>x</literal>.</entry>
+      </row>
+      <row>
+       <entry><function>lower</function></entry>
+       <entry><literal>lower ( string text ) -&gt; text</literal></entry>
+       <entry>Returns the string in lower case.</entry>
+      </row>
+      <row>
+       <entry><function>lTrim</function></entry>
+       <entry><literal>lTrim ( string jsonb ) -&gt; jsonb</literal></entry>
+       <entry>Removes whitespace from the start of a string.</entry>
+      </row>
+      <row>
+       <entry><function>max</function></entry>
+       <entry><simplelist type="vert" columns="1"><member><literal>max ( expression jsonb ) -&gt; jsonb</literal></member><member><literal>max ( expression numeric ) -&gt; numeric</literal></member></simplelist></entry>
+       <entry>Returns the largest value in the group.</entry>
+      </row>
+      <row>
+       <entry><function>min</function></entry>
+       <entry><simplelist type="vert" columns="1"><member><literal>min ( expression jsonb ) -&gt; jsonb</literal></member><member><literal>min ( expression numeric ) -&gt; numeric</literal></member></simplelist></entry>
+       <entry>Returns the smallest value in the group.</entry>
+      </row>
+      <row>
+       <entry><function>nodes</function></entry>
+       <entry><literal>nodes ( p graphpath ) -&gt; vertex[]</literal></entry>
+       <entry>The vertices of a path, in order.</entry>
+      </row>
+      <row>
+       <entry><function>none</function></entry>
+       <entry><literal>none ( variable IN list WHERE predicate ) -&gt; boolean</literal></entry>
+       <entry>Returns true when the predicate holds for no element of the list, the negation of <literal>any</literal>.</entry>
+      </row>
+      <row>
+       <entry><function>percentileCont</function></entry>
+       <entry><literal>percentileCont ( list jsonb, percentile numeric ) -&gt; double precision</literal></entry>
+       <entry>Percentile of a list of numbers, interpolated between neighbouring values.</entry>
+      </row>
+      <row>
+       <entry><function>percentileDisc</function></entry>
+       <entry><literal>percentileDisc ( list jsonb, percentile numeric ) -&gt; double precision</literal></entry>
+       <entry>Percentile of a list of numbers, rounded down to a value in the list.</entry>
+      </row>
+      <row>
+       <entry><function>pi</function></entry>
+       <entry><literal>pi ( ) -&gt; double precision</literal></entry>
+       <entry>Returns π.</entry>
+      </row>
+      <row>
+       <entry><function>properties</function></entry>
+       <entry><simplelist type="vert" columns="1"><member><literal>properties ( v vertex ) -&gt; jsonb</literal></member><member><literal>properties ( e edge ) -&gt; jsonb</literal></member></simplelist></entry>
+       <entry>Returns a graph element's whole property bag as a map.</entry>
+      </row>
+      <row>
+       <entry><function>radians</function></entry>
+       <entry><simplelist type="vert" columns="1"><member><literal>radians ( x jsonb ) -&gt; jsonb</literal></member><member><literal>radians ( x double precision ) -&gt; double precision</literal></member></simplelist></entry>
+       <entry>Converts degrees to radians.</entry>
+      </row>
+      <row>
+       <entry><function>rand</function></entry>
+       <entry><literal>rand ( ) -&gt; jsonb</literal></entry>
+       <entry>Returns a number in the half open range 0 to 1. It is immutable, so the planner folds it to a single constant and every row of a query sees the same value. For a value that varies per row use PostgreSQL's <function>random()</function>, which is volatile and works in Cypher.</entry>
+      </row>
+      <row>
+       <entry><function>range</function></entry>
+       <entry><simplelist type="vert" columns="1"><member><literal>range ( start integer, stop integer ) -&gt; jsonb</literal></member><member><literal>range ( start integer, stop integer, step integer ) -&gt; jsonb</literal></member></simplelist></entry>
+       <entry>Returns a list of integers from <literal>start</literal> to <literal>stop</literal>, inclusive at both ends.</entry>
+      </row>
+      <row>
+       <entry><function>regather_graphmeta</function></entry>
+       <entry><literal>regather_graphmeta ( ) -&gt; boolean</literal></entry>
+       <entry>Empties <literal>ag_graphmeta</literal> and rebuilds it by scanning every edge label in the current graph.</entry>
+      </row>
+      <row>
+       <entry><function>relationships</function></entry>
+       <entry><literal>relationships ( p graphpath ) -&gt; edge[]</literal></entry>
+       <entry>Returns the edges of a path, in order.</entry>
+      </row>
+      <row>
+       <entry><function>replace</function></entry>
+       <entry><literal>replace ( string jsonb, old jsonb, new jsonb ) -&gt; jsonb</literal></entry>
+       <entry>Replaces every occurrence of one substring with another.</entry>
+      </row>
+      <row>
+       <entry><function>reverse</function></entry>
+       <entry><simplelist type="vert" columns="1"><member><literal>reverse ( string text ) -&gt; text</literal></member><member><literal>reverse ( list jsonb ) -&gt; jsonb</literal></member><member><literal>reverse ( list anyarray ) -&gt; anyarray</literal></member></simplelist></entry>
+       <entry>Reverses a list, or a string given as a literal or cast to <literal>text</literal>.</entry>
+      </row>
+      <row>
+       <entry><function>right</function></entry>
+       <entry><simplelist type="vert" columns="1"><member><literal>right ( string jsonb, n jsonb ) -&gt; jsonb</literal></member><member><literal>right ( string text, n integer ) -&gt; text</literal></member></simplelist></entry>
+       <entry>Returns the last <literal>n</literal> characters of a string.</entry>
+      </row>
+      <row>
+       <entry><function>round</function></entry>
+       <entry><simplelist type="vert" columns="1"><member><literal>round ( x jsonb ) -&gt; jsonb</literal></member><member><literal>round ( x numeric [, scale integer ] ) -&gt; numeric</literal></member></simplelist></entry>
+       <entry>Rounds <literal>x</literal> to the nearest integer, halves away from zero.</entry>
+      </row>
+      <row>
+       <entry><function>rTrim</function></entry>
+       <entry><literal>rTrim ( string jsonb ) -&gt; jsonb</literal></entry>
+       <entry>Removes whitespace from the end of a string.</entry>
+      </row>
+      <row>
+       <entry><function>shortestpath</function></entry>
+       <entry><literal>shortestpath ( pattern ) -&gt; graphpath</literal></entry>
+       <entry>Finds one shortest path between two vertices, by number of edges.</entry>
+      </row>
+      <row>
+       <entry><function>sign</function></entry>
+       <entry><simplelist type="vert" columns="1"><member><literal>sign ( x jsonb ) -&gt; jsonb</literal></member><member><literal>sign ( x numeric ) -&gt; numeric</literal></member></simplelist></entry>
+       <entry>Returns −1, 0 or 1 according to the sign of <literal>x</literal>.</entry>
+      </row>
+      <row>
+       <entry><function>sin</function></entry>
+       <entry><literal>sin ( x double precision ) -&gt; double precision</literal></entry>
+       <entry>Returns the sine of an angle given in radians.</entry>
+      </row>
+      <row>
+       <entry><function>sind</function></entry>
+       <entry><literal>sind ( x double precision ) -&gt; double precision</literal></entry>
+       <entry>Returns the sine of an angle given in degrees.</entry>
+      </row>
+      <row>
+       <entry><function>single</function></entry>
+       <entry><literal>single ( variable IN list WHERE predicate ) -&gt; boolean</literal></entry>
+       <entry>Returns true when the predicate holds for exactly one element of the list.</entry>
+      </row>
+      <row>
+       <entry><function>size</function></entry>
+       <entry><simplelist type="vert" columns="1"><member><literal>size ( value ) -&gt; jsonb</literal></member><member><literal>size ( pattern ) -&gt; bigint</literal></member></simplelist></entry>
+       <entry>The length of a value, or the number of times a pattern matches.</entry>
+      </row>
+      <row>
+       <entry><function>split</function></entry>
+       <entry><literal>split ( string text, delimiter text ) -&gt; anyarray</literal></entry>
+       <entry>Cuts a string into a list at every occurrence of a delimiter.</entry>
+      </row>
+      <row>
+       <entry><function>sqrt</function></entry>
+       <entry><simplelist type="vert" columns="1"><member><literal>sqrt ( x jsonb ) -&gt; jsonb</literal></member><member><literal>sqrt ( x numeric ) -&gt; numeric</literal></member></simplelist></entry>
+       <entry>Returns the square root of <literal>x</literal>.</entry>
+      </row>
+      <row>
+       <entry><function>start_id</function></entry>
+       <entry><literal>start_id ( e edge ) -&gt; graphid</literal></entry>
+       <entry>Returns the <literal>graphid</literal> of the vertex an edge leaves, without reading that vertex.</entry>
+      </row>
+      <row>
+       <entry><function>start_vertex</function></entry>
+       <entry><literal>start_vertex ( e edge ) -&gt; vertex</literal></entry>
+       <entry>Returns the vertex an edge leaves.</entry>
+      </row>
+      <row>
+       <entry><function>startNode</function></entry>
+       <entry><literal>startNode ( e edge ) -&gt; vertex</literal></entry>
+       <entry>Returns the vertex an edge leaves.</entry>
+      </row>
+      <row>
+       <entry><function>stdev</function></entry>
+       <entry><literal>stdev ( expression numeric ) -&gt; numeric</literal></entry>
+       <entry>Sample standard deviation of the values in the group.</entry>
+      </row>
+      <row>
+       <entry><function>stdevp</function></entry>
+       <entry><literal>stdevp ( expression numeric ) -&gt; numeric</literal></entry>
+       <entry>Population standard deviation of the values in the group.</entry>
+      </row>
+      <row>
+       <entry><function>str_size</function></entry>
+       <entry><literal>str_size ( string text ) -&gt; integer</literal></entry>
+       <entry>Returns the number of characters in a string, as an <literal>integer</literal>.</entry>
+      </row>
+      <row>
+       <entry><function>string_contains</function></entry>
+       <entry><literal>string_contains ( a jsonb, b jsonb ) -&gt; boolean</literal></entry>
+       <entry>Implements <literal>CONTAINS</literal>. True when the right string occurs anywhere in the left.</entry>
+      </row>
+      <row>
+       <entry><function>string_ends_with</function></entry>
+       <entry><literal>string_ends_with ( a jsonb, b jsonb ) -&gt; boolean</literal></entry>
+       <entry>Implements <literal>ENDS WITH</literal>. True when the left string ends with the right.</entry>
+      </row>
+      <row>
+       <entry><function>string_regex</function></entry>
+       <entry><literal>string_regex ( a jsonb, b jsonb ) -&gt; boolean</literal></entry>
+       <entry>Implements <literal>=~</literal>. True when the left string matches the right as a regular expression.</entry>
+      </row>
+      <row>
+       <entry><function>string_starts_with</function></entry>
+       <entry><literal>string_starts_with ( a jsonb, b jsonb ) -&gt; boolean</literal></entry>
+       <entry>Implements <literal>STARTS WITH</literal>. True when the left string begins with the right.</entry>
+      </row>
+      <row>
+       <entry><function>substring</function></entry>
+       <entry><simplelist type="vert" columns="1"><member><literal>substring ( string jsonb, start jsonb ) -&gt; jsonb</literal></member><member><literal>substring ( string jsonb, start jsonb, count jsonb ) -&gt; jsonb</literal></member></simplelist></entry>
+       <entry>Returns part of a string, starting at <literal>start</literal> and running to the end or for <literal>count</literal> characters.</entry>
+      </row>
+      <row>
+       <entry><function>sum</function></entry>
+       <entry><literal>sum ( expression numeric ) -&gt; numeric</literal></entry>
+       <entry>Returns the total of the non null values in the group.</entry>
+      </row>
+      <row>
+       <entry><function>tail</function></entry>
+       <entry><simplelist type="vert" columns="1"><member><literal>tail ( list jsonb ) -&gt; jsonb</literal></member><member><literal>tail ( list anyarray ) -&gt; anyarray</literal></member></simplelist></entry>
+       <entry>Returns every element of a list except the first.</entry>
+      </row>
+      <row>
+       <entry><function>tan</function></entry>
+       <entry><simplelist type="vert" columns="1"><member><literal>tan ( x jsonb ) -&gt; jsonb</literal></member><member><literal>tan ( x double precision ) -&gt; double precision</literal></member></simplelist></entry>
+       <entry>Returns the tangent of an angle given in radians.</entry>
+      </row>
+      <row>
+       <entry><function>tand</function></entry>
+       <entry><literal>tand ( x double precision ) -&gt; double precision</literal></entry>
+       <entry>Returns the tangent of an angle given in degrees.</entry>
+      </row>
+      <row>
+       <entry><function>to_jsonb</function></entry>
+       <entry><literal>to_jsonb ( value anyelement ) -&gt; jsonb</literal></entry>
+       <entry>Converts any SQL value to <literal>jsonb</literal>, a composite becoming an object.</entry>
+      </row>
+      <row>
+       <entry><function>toBoolean</function></entry>
+       <entry><simplelist type="vert" columns="1"><member><literal>toBoolean ( value text ) -&gt; boolean</literal></member><member><literal>toBoolean ( value "any" ) -&gt; boolean</literal></member></simplelist></entry>
+       <entry>Returns the boolean a value names, or null when it names none.</entry>
+      </row>
+      <row>
+       <entry><function>toBooleanOrNull</function></entry>
+       <entry><simplelist type="vert" columns="1"><member><literal>toBooleanOrNull ( value text ) -&gt; boolean</literal></member><member><literal>toBooleanOrNull ( value "any" ) -&gt; boolean</literal></member></simplelist></entry>
+       <entry>Returns the boolean a value names, or null.</entry>
+      </row>
+      <row>
+       <entry><function>toFloat</function></entry>
+       <entry><literal>toFloat ( value "any" ) -&gt; double precision</literal></entry>
+       <entry>Returns the floating point number a value names, or null. New in 2.18.</entry>
+      </row>
+      <row>
+       <entry><function>toFloatList</function></entry>
+       <entry><simplelist type="vert" columns="1"><member><literal>toFloatList ( list jsonb ) -&gt; jsonb</literal></member><member><literal>toFloatList ( list anyarray ) -&gt; double precision[]</literal></member></simplelist></entry>
+       <entry>Converts every element of a list to a floating point number.</entry>
+      </row>
+      <row>
+       <entry><function>toInteger</function></entry>
+       <entry><literal>toInteger ( value "any" ) -&gt; bigint</literal></entry>
+       <entry>Returns the integer a value names, or null. New in 2.18.</entry>
+      </row>
+      <row>
+       <entry><function>toIntegerList</function></entry>
+       <entry><simplelist type="vert" columns="1"><member><literal>toIntegerList ( list jsonb ) -&gt; jsonb</literal></member><member><literal>toIntegerList ( list anyarray ) -&gt; bigint[]</literal></member></simplelist></entry>
+       <entry>Converts every element of a list to an integer.</entry>
+      </row>
+      <row>
+       <entry><function>toLower</function></entry>
+       <entry><literal>toLower ( string jsonb ) -&gt; jsonb</literal></entry>
+       <entry>Returns the string in lower case.</entry>
+      </row>
+      <row>
+       <entry><function>toString</function></entry>
+       <entry><literal>toString ( value jsonb ) -&gt; jsonb</literal></entry>
+       <entry>Returns the string form of a value.</entry>
+      </row>
+      <row>
+       <entry><function>toStringList</function></entry>
+       <entry><simplelist type="vert" columns="1"><member><literal>toStringList ( list jsonb ) -&gt; jsonb</literal></member><member><literal>toStringList ( list anyarray ) -&gt; text[]</literal></member></simplelist></entry>
+       <entry>Converts every element of a list to a string.</entry>
+      </row>
+      <row>
+       <entry><function>toStringOrNull</function></entry>
+       <entry><literal>toStringOrNull ( value "any" ) -&gt; text</literal></entry>
+       <entry>Returns the string form of a value, or null when the value has no string form.</entry>
+      </row>
+      <row>
+       <entry><function>toUpper</function></entry>
+       <entry><literal>toUpper ( string jsonb ) -&gt; jsonb</literal></entry>
+       <entry>Returns the string in upper case.</entry>
+      </row>
+      <row>
+       <entry><function>trim</function></entry>
+       <entry><literal>trim ( string jsonb ) -&gt; jsonb</literal></entry>
+       <entry>Removes whitespace from both ends of a string.</entry>
+      </row>
+      <row>
+       <entry><function>type</function></entry>
+       <entry><literal>type ( e edge ) -&gt; jsonb</literal></entry>
+       <entry>Returns the name of an edge's label, as a <literal>jsonb</literal> string, the same value as <literal>label(e)</literal>, under the name Cypher uses for relationship types.</entry>
+      </row>
+      <row>
+       <entry><function>unnest</function></entry>
+       <entry><literal>unnest ( from_json jsonb ) -&gt; setof jsonb</literal></entry>
+       <entry>Expands a list into one row per element. New in 2.18.</entry>
+      </row>
+      <row>
+       <entry><function>upper</function></entry>
+       <entry><literal>upper ( string text ) -&gt; text</literal></entry>
+       <entry>Returns the string in upper case.</entry>
+      </row>
+      <row>
+       <entry><function>vertex_to_jsonb</function></entry>
+       <entry><literal>vertex_to_jsonb ( v vertex ) -&gt; jsonb</literal></entry>
+       <entry>Returns a vertex's property bag.</entry>
+      </row>
+      <row>
+       <entry><function>vertices</function></entry>
+       <entry><literal>vertices ( p graphpath ) -&gt; vertex[]</literal></entry>
+       <entry>Returns the vertices of a path, in order.</entry>
+      </row>
+    </tbody>
+   </tgroup>
+  </table>
+ </sect1>
+
+ <sect1 id="agensgraph-upgrading">
+  <title>Upgrading from 2.17</title>
+
+  <indexterm zone="agensgraph-upgrading">
+   <primary>upgrading</primary>
+   <secondary>AgensGraph 2.18</secondary>
+  </indexterm>
+
+  <para>
+   AgensGraph 2.18 is built on PostgreSQL 18, so moving to it is a major version upgrade. The
+   data directory format changed and a 2.17 data directory cannot be started by 2.18 binaries.
+   Use <xref linkend="pgupgrade"/> or a dump and reload, exactly as for any PostgreSQL major
+   version. What follows is only the part that is specific to AgensGraph.
+  </para>
+
+  <sect2 id="agensgraph-upgrading-breaking">
+   <title>Changes That Break Working Queries</title>
+
+   <para>
+    Each item below turns 2.17 code into an error or a different answer. None of them is caught
+    by the upgrade tooling, so check an application against this list before upgrading.
+   </para>
+
+   <itemizedlist>
+    <listitem>
+     <para>
+      <emphasis>New reserved words.</emphasis> Six words became reserved:
+      <literal>insert</literal>, <literal>finish</literal>, <literal>let</literal>,
+      <literal>xor</literal>, <literal>current_graph</literal> and
+      <literal>current_property_graph</literal>. Which positions break is not uniform, so
+      check a name against <xref linkend="agensgraph-upgrading-reserved-table"/>.
+      <command>CREATE VLABEL</command> and <command>CREATE ELABEL</command> refuse all six
+      unquoted. Rename, or quote with double quotes. A backtick is not a quoting character.
+     </para>
+    </listitem>
+    <listitem>
+     <para>
+      <emphasis>A condition takes only a boolean.</emphasis> <literal>WHERE n.count</literal>
+      and <literal>FILTER n.name</literal> used to select on a value that was not zero and not
+      empty. They now raise a cast error. Compare explicitly, or add
+      <literal>::boolean</literal>.
+     </para>
+    </listitem>
+    <listitem>
+     <para>
+      <emphasis>A collected element is a value, not a picture.</emphasis>
+      <function>collect()</function> over a vertex, an edge or a path returns a native array.
+      Client code that parsed the old <type>jsonb</type> form has to change. Code that reads
+      properties off the collected elements starts working.
+     </para>
+    </listitem>
+    <listitem>
+     <para>
+      <emphasis><function>min()</function> and <function>max()</function> over a vertex or an
+      edge</emphasis> are now ambiguous and raise an error. Write
+      <literal>min(v::jsonb)</literal> or <literal>min(id(v))</literal>.
+     </para>
+    </listitem>
+    <listitem>
+     <para>
+      <emphasis>Changed return types.</emphasis> <function>range()</function> returns a
+      <type>jsonb</type> array. <function>toStringList</function>,
+      <function>toIntegerList</function> and <function>toFloatList</function> return typed
+      arrays. The earlier versions gave wrong answers without saying so.
+     </para>
+    </listitem>
+    <listitem>
+     <para>
+      <emphasis>The <literal>WHERE</literal> of a <command>WITH</command> moved.</emphasis> It is
+      now written before <command>ORDER BY</command>, <command>SKIP</command> and
+      <command>LIMIT</command>, and it applies before them. The 2.17 spelling, with
+      <literal>WHERE</literal> last, no longer parses. Rewrite
+      <literal>WITH m ORDER BY x LIMIT n WHERE cond</literal> as
+      <literal>WITH m WHERE cond ORDER BY x LIMIT n</literal>. The result set changes as well as
+      the spelling, because the filter now runs before the paging.
+     </para>
+    </listitem>
+    <listitem>
+     <para>
+      <emphasis>Row level security is enforced on graph writes.</emphasis> Re-test every policy
+      on a label. Writes that used to slip past an <literal>INSERT</literal> policy, a
+      <literal>USING</literal> clause, or an inherited label policy are now refused.
+     </para>
+    </listitem>
+    <listitem>
+     <para>
+      <emphasis>A <command>WITH</command> may not carry one name twice.</emphasis>
+      <literal>WITH a AS t, b AS t</literal> was accepted and is now refused with
+      <literal>WITH passes on "t" more than once</literal>. <command>RETURN</command> still
+      allows it.
+     </para>
+    </listitem>
+    <listitem>
+     <para>
+      <emphasis>A write clause runs to completion.</emphasis> A <command>LIMIT</command> after a
+      write no longer cuts the number of rows the write processes.
+     </para>
+    </listitem>
+    <listitem>
+     <para>
+      <emphasis>Label structure is protected.</emphasis> <command>ALTER TABLE</command> against
+      a label is refused for anything structural. Use the label DDL, or set
+      <xref linkend="guc-enable-graph-ddl"/>.
+     </para>
+    </listitem>
+    <listitem>
+     <para>
+      <emphasis><literal>call</literal> before a parenthesis or a brace.</emphasis> The lexer now
+      reads <literal>call</literal> followed by <literal>(</literal> or <literal>{</literal> as
+      the start of a <command>CALL</command> clause. A function named <literal>call</literal> is
+      then unreachable <emphasis>from SQL as well as from Cypher</emphasis>, and even
+      <command>CREATE FUNCTION call(...)</command> is a syntax error. An unlabelled node pattern
+      <literal>(call { ... })</literal> fails too. Double quote the name in every position:
+      <literal>"call"(21)</literal> works from SQL and from Cypher, and
+      <literal>("call" { ... })</literal> works as a pattern.
+      <literal>MATCH (call:movie)</literal> is unaffected, because a label follows the name.
+     </para>
+    </listitem>
+    <listitem>
+     <para>
+      <emphasis><command>EXPLAIN</command> text changed</emphasis> for
+      <function>count()</function> over an element, for property reads, and for variable length
+      traversal nodes, which now name the edge label. Plan baselines need refreshing.
+     </para>
+    </listitem>
+   </itemizedlist>
+
+   <table id="agensgraph-upgrading-reserved-table">
+    <title>Where Each Newly Reserved Word Is Refused</title>
+    <tgroup cols="6">
+     <thead>
+      <row>
+       <entry>Word</entry>
+       <entry>Label in a pattern</entry>
+       <entry><command>CREATE VLABEL</command></entry>
+       <entry>Variable</entry>
+       <entry><literal>AS</literal> alias</entry>
+       <entry>Sorting by that alias</entry>
+      </row>
+     </thead>
+     <tbody>
+      <row>
+       <entry><literal>insert</literal></entry>
+       <entry>works</entry>
+       <entry>fails</entry>
+       <entry>works</entry>
+       <entry>works</entry>
+       <entry>works</entry>
+      </row>
+      <row>
+       <entry><literal>finish</literal></entry>
+       <entry>works</entry>
+       <entry>fails</entry>
+       <entry>fails</entry>
+       <entry>works</entry>
+       <entry>fails</entry>
+      </row>
+      <row>
+       <entry><literal>let</literal></entry>
+       <entry>fails</entry>
+       <entry>fails</entry>
+       <entry>fails</entry>
+       <entry>works</entry>
+       <entry>fails</entry>
+      </row>
+      <row>
+       <entry><literal>xor</literal></entry>
+       <entry>fails</entry>
+       <entry>fails</entry>
+       <entry>fails</entry>
+       <entry>works</entry>
+       <entry>fails</entry>
+      </row>
+      <row>
+       <entry><literal>current_graph</literal></entry>
+       <entry>fails</entry>
+       <entry>fails</entry>
+       <entry>fails</entry>
+       <entry>works</entry>
+       <entry>works</entry>
+      </row>
+      <row>
+       <entry><literal>current_property_graph</literal></entry>
+       <entry>fails</entry>
+       <entry>fails</entry>
+       <entry>fails</entry>
+       <entry>works</entry>
+       <entry>works</entry>
+      </row>
+     </tbody>
+    </tgroup>
+   </table>
+
+   <para>
+    Two more differences are worth knowing, although neither can break 2.17 code because
+    neither construct parsed on 2.17. A graph element may now be tested for membership of a
+    list, and the test compares identity, so two vertices with equal properties are not equal.
+    And a property that has been promoted to a typed column reads back in that column's type
+    rather than as <type>jsonb</type>, which a driver expecting JSON for every Cypher column
+    will notice as soon as the feature is adopted.
+   </para>
+  </sect2>
+
+  <sect2 id="agensgraph-upgrading-checksums">
+   <title>Data Checksums</title>
+
+   <para>
+    PostgreSQL 18 turns data page checksums on by default and PostgreSQL 17 had them off, so
+    the new cluster has to be initialized to match the old one or
+    <application>pg_upgrade</application> stops with <literal>old cluster does not use data
+    checksums but the new one does</literal>. Read the old cluster's setting first:
+   </para>
+
+<programlisting>
+pg_controldata -D <replaceable>olddatadir</replaceable> | grep checksum
+</programlisting>
+
+   <para>
+    If it reports <literal>Data page checksum version: 0</literal>, pass
+    <option>--no-data-checksums</option> to <application>initdb</application> for the new
+    cluster. If it reports <literal>1</literal>, leave the option off. Turning checksums on is a
+    separate operation, done afterwards with <xref linkend="app-pgchecksums"/>.
+   </para>
+  </sect2>
+
+  <sect2 id="agensgraph-upgrading-after">
+   <title>After the Upgrade</title>
+
+   <para>
+    Three tasks are specific to AgensGraph and none of them is optional.
+   </para>
+
+   <para>
+    <emphasis>Rebuild statistics.</emphasis> <application>pg_upgrade</application> does not
+    carry optimizer statistics across, so plans stay poor until they are rebuilt with
+    <xref linkend="app-vacuumdb"/> and <option>--analyze-in-stages</option>.
+   </para>
+
+   <para>
+    <emphasis>Re-gather graph metadata.</emphasis> <structname>ag_graphmeta</structname> drives
+    the planner's scan pruning. A binary upgrade leaves it empty and marks the graph invalid, so
+    pruning stays off until it is rebuilt, once for each graph:
+   </para>
+
+<programlisting>
+SET graph_path = <replaceable>graph</replaceable>;
+SELECT regather_graphmeta();
+
+SELECT graphname, graphmeta_valid FROM pg_catalog.ag_graph;
+</programlisting>
+
+   <para>
+    <emphasis>Re-tune edge label statistics.</emphasis> 2.18 lowered the statistics target on a
+    new edge label's <structfield>start</structfield> and <structfield>end</structfield> columns
+    from 10000 to 1000. A label created on 2.17 keeps the old value and pays a large planning
+    cost on every edge join. For each edge label:
+   </para>
+
+<programlisting>
+ALTER TABLE <replaceable>graph</replaceable>.<replaceable>elabel</replaceable> ALTER COLUMN start SET STATISTICS 1000;
+ALTER TABLE <replaceable>graph</replaceable>.<replaceable>elabel</replaceable> ALTER COLUMN "end"  SET STATISTICS 1000;
+ANALYZE <replaceable>graph</replaceable>.<replaceable>elabel</replaceable>;
+</programlisting>
+  </sect2>
+ </sect1>
+
+ <sect1 id="agensgraph-gql-conformance">
+  <title>GQL Conformance</title>
+
+  <indexterm zone="agensgraph-gql-conformance">
+   <primary>GQL</primary>
+   <secondary>conformance</secondary>
+  </indexterm>
+
+  <para>
+   AgensGraph implements part of the ISO GQL standard, ISO/IEC 39075:2024. The tables below say
+   which subclauses are covered, which are not, and where AgensGraph goes beyond the standard.
+   The subclause numbers are the standard's own. Support is stated as
+   <literal>Yes</literal> when the whole subclause is implemented and
+   <literal>Partial</literal> when part of it is, with the gap named in the comment.
+  </para>
+
+  <sect2 id="agensgraph-gql-supported-features-sect">
+   <title>Supported Subclauses</title>
+  <para>
+   These subclauses are wholly or partly implemented. A <literal>Partial</literal> comment names what is missing, so that a reader porting standard GQL knows what to look for.
+  </para>
+   <table id="agensgraph-gql-supported-features">
+    <title>Supported Subclauses</title>
+    <tgroup cols="4">
+     <thead>
+      <row>
+       <entry>Subclause</entry>
+       <entry>Name</entry>
+       <entry>Support</entry>
+       <entry>Comment</entry>
+      </row>
+     </thead>
+     <tbody>
+      <row>
+       <entry>8.1 to 8.4</entry>
+       <entry><literal>&lt;start transaction command></literal>, <literal>&lt;transaction characteristics></literal>, <literal>&lt;rollback command></literal>, <literal>&lt;commit command></literal></entry>
+       <entry>Yes</entry>
+       <entry>PostgreSQL's own transaction statements answer these. <literal>START TRANSACTION READ ONLY</literal>, <literal>COMMIT</literal> and <literal>ROLLBACK</literal> all work.</entry>
+      </row>
+      <row>
+       <entry>9.2</entry>
+       <entry><literal>&lt;procedure body></literal></entry>
+       <entry>Partial</entry>
+       <entry><literal>NEXT</literal> chains one statement onto the result of the previous one. <literal>NEXT</literal> cannot carry a <literal>YIELD</literal> clause, and the binding variable definition block that 9.2 also allows does not exist, see 10.1 to 10.3 below.</entry>
+      </row>
+      <row>
+       <entry>11.1</entry>
+       <entry><literal>&lt;graph expression></literal></entry>
+       <entry>Partial</entry>
+       <entry><literal>CURRENT_GRAPH</literal> and <literal>CURRENT_PROPERTY_GRAPH</literal> are accepted, in Cypher and in SQL. They are bare keywords: <literal>current_graph()</literal> is a syntax error. No other form of graph expression exists.</entry>
+      </row>
+      <row>
+       <entry>12.4</entry>
+       <entry><literal>&lt;create graph statement></literal></entry>
+       <entry>Partial</entry>
+       <entry><literal>CREATE GRAPH name</literal> and <literal>CREATE GRAPH IF NOT EXISTS name</literal> work. The graph type the standard requires after the name (<literal>ANY</literal>, <literal>LIKE</literal>, or a graph type reference) is not accepted, nor is <literal>OR REPLACE</literal>, <literal>PROPERTY GRAPH</literal> or <literal>AS COPY OF</literal>.</entry>
+      </row>
+      <row>
+       <entry>12.5</entry>
+       <entry><literal>&lt;drop graph statement></literal></entry>
+       <entry>Partial</entry>
+       <entry><literal>DROP GRAPH name</literal> and <literal>DROP GRAPH IF EXISTS name</literal> work, plus a non standard <literal>CASCADE</literal>, which is needed because a new graph already contains <literal>ag_vertex</literal> and <literal>ag_edge</literal>. <literal>DROP PROPERTY GRAPH</literal> is a syntax error.</entry>
+      </row>
+      <row>
+       <entry>13.1</entry>
+       <entry><literal>&lt;linear data-modifying statement></literal></entry>
+       <entry>Yes</entry>
+       <entry>A statement composes read clauses and write clauses in one pipeline, and a write clause's changes are visible to a read clause after it.</entry>
+      </row>
+      <row>
+       <entry>13.2</entry>
+       <entry><literal>&lt;insert statement></literal></entry>
+       <entry>Yes</entry>
+       <entry><literal>INSERT</literal> takes the same pattern as Cypher <literal>CREATE</literal> and is a synonym for it.</entry>
+      </row>
+      <row>
+       <entry>13.3</entry>
+       <entry><literal>&lt;set statement></literal></entry>
+       <entry>Partial</entry>
+       <entry>Property assignment works, including the non standard <literal>+=</literal> merge form. The label set assignment the subclause also defines does not exist: a vertex has exactly one label.</entry>
+      </row>
+      <row>
+       <entry>13.4</entry>
+       <entry><literal>&lt;remove statement></literal></entry>
+       <entry>Partial</entry>
+       <entry><literal>REMOVE n.prop</literal> removes a property. <literal>REMOVE n:Label</literal> does not exist, for the same reason.</entry>
+      </row>
+      <row>
+       <entry>13.5</entry>
+       <entry><literal>&lt;delete statement></literal></entry>
+       <entry>Yes</entry>
+       <entry><literal>DELETE</literal> and <literal>DETACH DELETE</literal>. Deleting a vertex that still has edges is refused unless <literal>DETACH</literal> is given.</entry>
+      </row>
+      <row>
+       <entry>14.2</entry>
+       <entry><literal>&lt;composite query expression></literal></entry>
+       <entry>Partial</entry>
+       <entry><literal>UNION</literal>, <literal>UNION ALL</literal>, <literal>EXCEPT</literal> and <literal>INTERSECT</literal> compose two query statements. <literal>OTHERWISE</literal> is a syntax error.</entry>
+      </row>
+      <row>
+       <entry>14.3</entry>
+       <entry><literal>&lt;linear query statement></literal> and <literal>&lt;simple query statement></literal></entry>
+       <entry>Yes</entry>
+       <entry>A query is a sequence of the primitive query statements below, ending in a primitive result statement.</entry>
+      </row>
+      <row>
+       <entry>14.4</entry>
+       <entry><literal>&lt;match statement></literal></entry>
+       <entry>Partial</entry>
+       <entry><literal>MATCH</literal> and <literal>OPTIONAL MATCH</literal> work. The braced form, <literal>OPTIONAL { MATCH … MATCH … }</literal>, is a syntax error.</entry>
+      </row>
+      <row>
+       <entry>14.5</entry>
+       <entry><literal>&lt;call query statement></literal></entry>
+       <entry>Partial</entry>
+       <entry>Both call forms work. See 15.2 and 15.3 for what each one requires.</entry>
+      </row>
+      <row>
+       <entry>14.6</entry>
+       <entry><literal>&lt;filter statement></literal></entry>
+       <entry>Yes</entry>
+       <entry>Both <literal>FILTER expr</literal> and <literal>FILTER WHERE expr</literal>.</entry>
+      </row>
+      <row>
+       <entry>14.7</entry>
+       <entry><literal>&lt;let statement></literal></entry>
+       <entry>Yes</entry>
+       <entry>Additive, row wise, and able to lead a query. An aggregate in a <literal>LET</literal> expression is refused.</entry>
+      </row>
+      <row>
+       <entry>14.8</entry>
+       <entry><literal>&lt;for statement></literal></entry>
+       <entry>Partial</entry>
+       <entry>Iterating a list works, with <literal>WITH OFFSET AS name</literal> giving a 0-based index. <literal>WITH ORDINALITY</literal> is a syntax error, and <literal>FOR</literal> cannot iterate a binding table.</entry>
+      </row>
+      <row>
+       <entry>14.9</entry>
+       <entry><literal>&lt;order by and page statement></literal></entry>
+       <entry>Yes</entry>
+       <entry><literal>ORDER BY</literal>, <literal>SKIP</literal>, <literal>OFFSET</literal> and <literal>LIMIT</literal> are statements in their own right and can sit anywhere in a pipeline. Like the standard, AgensGraph does not let one *end* a query, 14.3 requires a primitive result statement last, so a query ending in <literal>ORDER BY</literal> raises <literal>ERROR: Cypher query must end with RETURN, FINISH or update clause</literal>.</entry>
+      </row>
+      <row>
+       <entry>14.10</entry>
+       <entry><literal>&lt;primitive result statement></literal></entry>
+       <entry>Yes</entry>
+       <entry><literal>RETURN</literal>, <literal>RETURN … ORDER BY …</literal>, and <literal>FINISH</literal>.</entry>
+      </row>
+      <row>
+       <entry>14.11</entry>
+       <entry><literal>&lt;return statement></literal></entry>
+       <entry>Partial</entry>
+       <entry><literal>RETURN</literal>, <literal>RETURN DISTINCT</literal>, <literal>RETURN ALL</literal>, <literal>RETURN *</literal> and explicit aliases. <literal>RETURN NO BINDINGS</literal> is a syntax error. Grouping is implicit, see 16.15.</entry>
+      </row>
+      <row>
+       <entry>15.1</entry>
+       <entry><literal>&lt;call procedure statement></literal> and <literal>&lt;procedure call></literal></entry>
+       <entry>Yes</entry>
+       <entry><literal>CALL</literal> and <literal>OPTIONAL CALL</literal>, over either call form.</entry>
+      </row>
+      <row>
+       <entry>15.2</entry>
+       <entry><literal>&lt;inline procedure call></literal></entry>
+       <entry>Partial</entry>
+       <entry><literal>CALL (v) { … }</literal>, <literal>CALL () { … }</literal>, <literal>CALL (*) { … }</literal> and <literal>CALL { WITH v … }</literal> all import correctly. A bare <literal>CALL { … }</literal> deviates: Syntax Rule 3 says an absent variable scope clause is rewritten to one naming *every* field of the incoming working record, so under the standard it imports everything, as <literal>CALL (*) { … }</literal> does. AgensGraph imports nothing instead, and raises no error, so the query answers a different question than it appears to, always write an import list. Write clauses in the subquery body are refused, and <literal>IN TRANSACTIONS</literal> does not exist.</entry>
+      </row>
+      <row>
+       <entry>15.3</entry>
+       <entry><literal>&lt;named procedure call></literal></entry>
+       <entry>Partial</entry>
+       <entry><literal>CALL routine(args) YIELD item [AS alias]</literal> and <literal>YIELD *</literal> work, correlated when an argument references a variable already in scope. <literal>YIELD</literal> is mandatory, where the subclause makes it optional, and the clause can neither lead nor end a query. The name resolves to a PostgreSQL function, not to a procedure of the catalog 17.5 describes: a stock server registers no procedures, and calling one raises <literal>&lt;name>() is a procedure</literal>.</entry>
+      </row>
+      <row>
+       <entry>16.3</entry>
+       <entry><literal>&lt;graph pattern binding table></literal></entry>
+       <entry>Partial</entry>
+       <entry>A graph pattern produces a binding table. The pattern <literal>YIELD</literal> clause the subclause also allows is a syntax error.</entry>
+      </row>
+      <row>
+       <entry>16.4</entry>
+       <entry><literal>&lt;graph pattern></literal></entry>
+       <entry>Partial</entry>
+       <entry>Comma-separated path patterns work. The match modes (<literal>DIFFERENT EDGES</literal>, <literal>REPEATABLE ELEMENTS</literal>) and the <literal>KEEP</literal> clause are syntax errors.</entry>
+      </row>
+      <row>
+       <entry>16.5</entry>
+       <entry><literal>&lt;insert graph pattern></literal></entry>
+       <entry>Yes</entry>
+       <entry>The pattern after <literal>INSERT</literal> or <literal>CREATE</literal> may create vertices, edges, or edges between vertices already bound.</entry>
+      </row>
+      <row>
+       <entry>16.7</entry>
+       <entry><literal>&lt;path pattern expression></literal></entry>
+       <entry>Partial</entry>
+       <entry>Concatenation works. Path multiset alternation and path pattern union, two path patterns separated by <literal>\|</literal>, are syntax errors.</entry>
+      </row>
+      <row>
+       <entry>16.8</entry>
+       <entry><literal>&lt;label expression></literal></entry>
+       <entry>Partial</entry>
+       <entry>A single label name only. Disjunction (<literal>:a\|b</literal>), conjunction (<literal>:a&amp;b</literal>), negation (<literal>:!a</literal>) and the wildcard (<literal>:%</literal>) are all syntax errors. Test a label with the <literal>label()</literal> function in <literal>WHERE</literal> instead.</entry>
+      </row>
+      <row>
+       <entry>16.9</entry>
+       <entry><literal>&lt;path variable reference></literal></entry>
+       <entry>Yes</entry>
+       <entry><literal>MATCH p = (…)</literal> binds the whole path, and <literal>nodes()</literal>, <literal>relationships()</literal> and <literal>length()</literal> read it.</entry>
+      </row>
+      <row>
+       <entry>16.10</entry>
+       <entry><literal>&lt;element variable reference></literal></entry>
+       <entry>Yes</entry>
+       <entry>A pattern variable is in scope for every clause after it.</entry>
+      </row>
+      <row>
+       <entry>16.11</entry>
+       <entry><literal>&lt;graph pattern quantifier></literal></entry>
+       <entry>Partial</entry>
+       <entry>The edge quantifier <literal>-[r*1..3]-></literal> walks a variable number of hops. The standard's quantifier on a parenthesized path pattern, <literal>(…)->{1,3}</literal>, is a syntax error, and so is <literal>+</literal> in place of <literal>*</literal>.</entry>
+      </row>
+      <row>
+       <entry>16.13</entry>
+       <entry><literal>&lt;where clause></literal></entry>
+       <entry>Partial</entry>
+       <entry><literal>WHERE</literal> after a <literal>MATCH</literal>, and inside <literal>FILTER</literal>, <literal>WITH</literal> and a list comprehension. <literal>WHERE</literal> inside a node pattern is a syntax error. A search condition must be a boolean; a property read is not coerced.</entry>
+      </row>
+      <row>
+       <entry>16.16</entry>
+       <entry><literal>&lt;order by clause></literal></entry>
+       <entry>Yes</entry>
+       <entry>Multiple sort keys, <literal>ASC</literal>/<literal>DESC</literal>, <literal>NULLS FIRST</literal>/<literal>NULLS LAST</literal>, expressions as sort keys, and a <literal>RETURN</literal> alias as a sort key.</entry>
+      </row>
+      <row>
+       <entry>16.17</entry>
+       <entry><literal>&lt;sort specification list></literal></entry>
+       <entry>Yes</entry>
+       <entry>As 16.16. An integer sort key is a constant, not an output column number, see Cypher compatibility.</entry>
+      </row>
+      <row>
+       <entry>16.18</entry>
+       <entry><literal>&lt;limit clause></literal></entry>
+       <entry>Yes</entry>
+       <entry><literal>LIMIT</literal>, including an expression as the count.</entry>
+      </row>
+      <row>
+       <entry>16.19</entry>
+       <entry><literal>&lt;offset clause></literal></entry>
+       <entry>Yes</entry>
+       <entry>Both spellings the subclause defines, <literal>OFFSET</literal> and <literal>SKIP</literal>.</entry>
+      </row>
+      <row>
+       <entry>19.1</entry>
+       <entry><literal>&lt;search condition></literal></entry>
+       <entry>Yes</entry>
+       <entry>A condition takes a boolean and nothing else, which is what the subclause requires.</entry>
+      </row>
+      <row>
+       <entry>19.2</entry>
+       <entry><literal>&lt;predicate></literal></entry>
+       <entry>Partial</entry>
+       <entry>The four predicates below. The nine others 19.6 to 19.13 defines are not supported.</entry>
+      </row>
+      <row>
+       <entry>19.3</entry>
+       <entry><literal>&lt;comparison predicate></literal></entry>
+       <entry>Yes</entry>
+       <entry><literal>=</literal>, <literal>&lt;></literal>, <literal>&lt;</literal>, <literal>&lt;=</literal>, <literal>></literal>, <literal>>=</literal>, over scalars, graph elements and lists.</entry>
+      </row>
+      <row>
+       <entry>19.4</entry>
+       <entry><literal>&lt;exists predicate></literal></entry>
+       <entry>Partial</entry>
+       <entry>Four of the five forms the subclause defines: <literal>EXISTS { pattern }</literal> (with an optional <literal>WHERE</literal>), <literal>EXISTS ( pattern )</literal> (without one, a <literal>WHERE</literal> inside the parentheses is a syntax error), <literal>EXISTS { MATCH … }</literal>, and <literal>EXISTS { &lt;read statement> }</literal>. <literal>EXISTS ( MATCH … )</literal> is a syntax error, and a match statement block of more than one <literal>MATCH</literal> needs a <literal>RETURN</literal> to parse, so Feature GQ22 is not met.</entry>
+      </row>
+      <row>
+       <entry>19.5</entry>
+       <entry><literal>&lt;null predicate></literal></entry>
+       <entry>Yes</entry>
+       <entry><literal>IS NULL</literal> and <literal>IS NOT NULL</literal>.</entry>
+      </row>
+      <row>
+       <entry>20.1</entry>
+       <entry><literal>&lt;value expression></literal></entry>
+       <entry>Yes</entry>
+       <entry>Operators, function calls, <literal>CASE</literal>, subquery expressions and constructors compose freely.</entry>
+      </row>
+      <row>
+       <entry>20.2</entry>
+       <entry><literal>&lt;value expression primary></literal></entry>
+       <entry>Yes</entry>
+       <entry>Literals, variables, property references, parenthesized expressions.</entry>
+      </row>
+      <row>
+       <entry>20.3</entry>
+       <entry><literal>&lt;value specification></literal></entry>
+       <entry>Partial</entry>
+       <entry><literal>SESSION_USER</literal> and <literal>CURRENT_USER</literal>. A parameter is a PostgreSQL parameter, <literal>$1</literal>, supplied by the driver rather than by a GQL general parameter declaration.</entry>
+      </row>
+      <row>
+       <entry>20.6</entry>
+       <entry><literal>&lt;value query expression></literal></entry>
+       <entry>Yes</entry>
+       <entry><literal>VALUE { … }</literal>, which is all this subclause defines: the body's single value, in its own type, and null when the body is empty. Syntax Rule 10 requires the body to carry <literal>LIMIT 1</literal> or an aggregate; AgensGraph accepts any body and raises <literal>more than one row returned by a subquery used as an expression</literal> at run time instead. <literal>EXISTS { }</literal> is 19.4; <literal>COUNT { }</literal>, <literal>COLLECT { }</literal>, <literal>ARRAY { }</literal> and <literal>x IN { }</literal> are extensions, see below.</entry>
+      </row>
+      <row>
+       <entry>20.7</entry>
+       <entry><literal>&lt;case expression></literal></entry>
+       <entry>Yes</entry>
+       <entry>Both the searched and the simple form, plus <literal>NULLIF</literal> and <literal>COALESCE</literal>.</entry>
+      </row>
+      <row>
+       <entry>20.8</entry>
+       <entry><literal>&lt;cast specification></literal></entry>
+       <entry>Partial</entry>
+       <entry>The <literal>::</literal> operator casts, and it accepts a keyword type name (<literal>::int</literal>, <literal>::numeric</literal>, <literal>::interval</literal>). <literal>CAST(x AS t)</literal> is a syntax error in Cypher; it works in SQL.</entry>
+      </row>
+      <row>
+       <entry>20.9</entry>
+       <entry><literal>&lt;aggregate function></literal></entry>
+       <entry>Partial</entry>
+       <entry><literal>COUNT(*)</literal>, and the general set functions <literal>AVG</literal>, <literal>COUNT</literal>, <literal>MAX</literal>, <literal>MIN</literal>, <literal>SUM</literal>, <literal>STDDEV_SAMP</literal> and <literal>STDDEV_POP</literal>, each accepting <literal>DISTINCT</literal> or <literal>ALL</literal>. <literal>MIN</literal> and <literal>MAX</literal> over a vertex or edge are ambiguous and must be given a cast or an identity. <literal>COLLECT_LIST</literal> is spelled <literal>collect</literal>. The binary set functions <literal>PERCENTILE_CONT</literal> and <literal>PERCENTILE_DISC</literal> are unreachable from Cypher: both need <literal>WITHIN GROUP</literal>, which is a syntax error there.</entry>
+      </row>
+      <row>
+       <entry>20.11</entry>
+       <entry><literal>&lt;property reference></literal></entry>
+       <entry>Yes</entry>
+       <entry><literal>n.prop</literal>, nested as <literal>n.a.b</literal>, and subscripted as <literal>n.list[0]</literal>.</entry>
+      </row>
+      <row>
+       <entry>20.12</entry>
+       <entry><literal>&lt;binding variable reference></literal></entry>
+       <entry>Yes</entry>
+       <entry>Names bound by a pattern, <literal>WITH</literal>, <literal>LET</literal>, <literal>FOR</literal> or <literal>YIELD</literal>.</entry>
+      </row>
+      <row>
+       <entry>20.13</entry>
+       <entry><literal>&lt;path value expression></literal></entry>
+       <entry>Partial</entry>
+       <entry>A path bound by <literal>MATCH p = (…)</literal> is a first class value of type <literal>graphpath</literal>.</entry>
+      </row>
+      <row>
+       <entry>20.15</entry>
+       <entry><literal>&lt;list value expression></literal></entry>
+       <entry>Partial</entry>
+       <entry><literal>[a, b, c]</literal>, subscripting, <literal>IN</literal>, and list comprehensions. <literal>LIST[…]</literal> is a syntax error.</entry>
+      </row>
+      <row>
+       <entry>20.17</entry>
+       <entry><literal>&lt;list value constructor></literal></entry>
+       <entry>Partial</entry>
+       <entry>As 20.15.</entry>
+      </row>
+      <row>
+       <entry>20.18</entry>
+       <entry><literal>&lt;record constructor></literal></entry>
+       <entry>Partial</entry>
+       <entry><literal>{a: 1, b: 2}</literal> builds a map, and <literal>.a</literal> reads a field back. The <literal>RECORD { … }</literal> spelling is a syntax error.</entry>
+      </row>
+      <row>
+       <entry>20.19</entry>
+       <entry><literal>&lt;field></literal></entry>
+       <entry>Yes</entry>
+       <entry>Field access on a map, <literal>({a: 1}).a</literal>.</entry>
+      </row>
+      <row>
+       <entry>20.20</entry>
+       <entry><literal>&lt;boolean value expression></literal></entry>
+       <entry>Yes</entry>
+       <entry><literal>AND</literal>, <literal>OR</literal>, <literal>NOT</literal>, <literal>XOR</literal>, and <literal>IS [NOT] UNKNOWN</literal>.</entry>
+      </row>
+      <row>
+       <entry>20.21</entry>
+       <entry><literal>&lt;numeric value expression></literal></entry>
+       <entry>Yes</entry>
+       <entry><literal>+</literal>, <literal>-</literal>, <literal>*</literal>, <literal>/</literal>, <literal>%</literal>, <literal>^</literal>.</entry>
+      </row>
+      <row>
+       <entry>20.22</entry>
+       <entry><literal>&lt;numeric value function></literal></entry>
+       <entry>Yes</entry>
+       <entry><literal>abs</literal>, <literal>ceil</literal>, <literal>floor</literal>, <literal>round</literal>, <literal>sign</literal>, <literal>sqrt</literal>, <literal>exp</literal>, <literal>ln</literal>, <literal>log</literal>, <literal>log10</literal>, <literal>power</literal>, <literal>mod</literal>, <literal>pi</literal>, the trigonometric functions, <literal>degrees</literal>, <literal>radians</literal>, <literal>char_length</literal>, <literal>octet_length</literal> and <literal>rand</literal>.</entry>
+      </row>
+      <row>
+       <entry>20.23</entry>
+       <entry><literal>&lt;string value expression></literal></entry>
+       <entry>Yes</entry>
+       <entry>Concatenation with <literal>\|\|</literal>, and with <literal>+</literal>.</entry>
+      </row>
+      <row>
+       <entry>20.24</entry>
+       <entry><literal>&lt;character string function></literal></entry>
+       <entry>Partial</entry>
+       <entry><literal>upper</literal>, <literal>lower</literal>, <literal>btrim</literal>, <literal>ltrim</literal>, <literal>rtrim</literal>, <literal>trim</literal>, <literal>substring(s, from, count)</literal>, <literal>left</literal>, <literal>right</literal>, <literal>replace</literal>, <literal>reverse</literal>, <literal>split</literal>. <literal>NORMALIZE</literal> and the <literal>SUBSTRING(s FROM a FOR b)</literal> spelling are syntax errors in Cypher.</entry>
+      </row>
+      <row>
+       <entry>20.26</entry>
+       <entry><literal>&lt;datetime value expression></literal></entry>
+       <entry>Partial</entry>
+       <entry>Date and timestamp arithmetic through PostgreSQL's types.</entry>
+      </row>
+      <row>
+       <entry>20.27</entry>
+       <entry><literal>&lt;datetime value function></literal></entry>
+       <entry>Partial</entry>
+       <entry><literal>CURRENT_DATE</literal>, <literal>CURRENT_TIME</literal>, <literal>CURRENT_TIMESTAMP</literal>, <literal>LOCALTIME</literal>, <literal>LOCALTIMESTAMP</literal>. The underscored spellings the standard uses, such as <literal>LOCAL_TIME</literal>, are not recognized.</entry>
+      </row>
+      <row>
+       <entry>21.1</entry>
+       <entry>Names and variables</entry>
+       <entry>Partial</entry>
+       <entry>An unquoted identifier folds to lower case; a double quoted identifier keeps its case. The standard's backtick delimited identifier is a syntax error.</entry>
+      </row>
+      <row>
+       <entry>21.2</entry>
+       <entry><literal>&lt;literal></literal></entry>
+       <entry>Partial</entry>
+       <entry>Integers including hexadecimal, octal, binary and underscore separated forms; floats; strings; <literal>true</literal>, <literal>false</literal> and <literal>null</literal>; lists; maps. The typed literals, <literal>DATE '…'</literal>, <literal>DURATION '…'</literal>, byte strings, are syntax errors, as is <literal>UNKNOWN</literal> used as a value.</entry>
+      </row>
+      <row>
+       <entry>21.3</entry>
+       <entry><literal>&lt;token></literal>, <literal>&lt;separator></literal>, and <literal>&lt;identifier></literal></entry>
+       <entry>Partial</entry>
+       <entry><literal>--</literal> and <literal>/* */</literal> delimit comments, as the standard requires. This makes the openCypher anonymous arrows <literal>--></literal> and <literal>--</literal> unusable, see Cypher compatibility.</entry>
+      </row>
+     </tbody>
+    </tgroup>
+   </table>
+  </sect2>
+
+  <sect2 id="agensgraph-gql-features-not-supported-sect">
+   <title>Subclauses Not Supported</title>
+  <para>
+   None of the syntax these subclauses define is accepted. The comment gives the AgensGraph route to the same result where there is one.
+  </para>
+   <table id="agensgraph-gql-features-not-supported">
+    <title>Subclauses Not Supported</title>
+    <tgroup cols="4">
+     <thead>
+      <row>
+       <entry>Subclause</entry>
+       <entry>Name</entry>
+       <entry>Support</entry>
+       <entry>Comment</entry>
+      </row>
+     </thead>
+     <tbody>
+      <row>
+       <entry>7.1</entry>
+       <entry><literal>&lt;session set command></literal></entry>
+       <entry>No</entry>
+       <entry><literal>SESSION SET</literal> is a syntax error. Set the working graph with <literal>SET graph_path = name</literal>, which is a PostgreSQL setting and follows PostgreSQL's session and transaction scoping.</entry>
+      </row>
+      <row>
+       <entry>7.2</entry>
+       <entry><literal>&lt;session reset command></literal></entry>
+       <entry>No</entry>
+       <entry>Use <literal>RESET graph_path</literal> or <literal>RESET ALL</literal>.</entry>
+      </row>
+      <row>
+       <entry>7.3</entry>
+       <entry><literal>&lt;session close command></literal></entry>
+       <entry>No</entry>
+       <entry>Close the connection.</entry>
+      </row>
+      <row>
+       <entry>7.4</entry>
+       <entry><literal>&lt;session parameter specification></literal></entry>
+       <entry>No</entry>
+       <entry>None.</entry>
+      </row>
+      <row>
+       <entry>10.1</entry>
+       <entry><literal>&lt;graph variable definition></literal></entry>
+       <entry>No</entry>
+       <entry>None. A query addresses one graph, named by <literal>graph_path</literal>.</entry>
+      </row>
+      <row>
+       <entry>10.2</entry>
+       <entry><literal>&lt;binding table variable definition></literal></entry>
+       <entry>No</entry>
+       <entry>A <literal>WITH</literal> or <literal>LET</literal> binding, or a SQL common table expression around the Cypher, carries an intermediate result forward.</entry>
+      </row>
+      <row>
+       <entry>10.3</entry>
+       <entry><literal>&lt;value variable definition></literal></entry>
+       <entry>No</entry>
+       <entry>Use <literal>LET</literal>, which is 14.7 and is supported.</entry>
+      </row>
+      <row>
+       <entry>11.2</entry>
+       <entry><literal>&lt;binding table expression></literal></entry>
+       <entry>No</entry>
+       <entry>None.</entry>
+      </row>
+      <row>
+       <entry>11.3</entry>
+       <entry><literal>&lt;object expression primary></literal></entry>
+       <entry>No</entry>
+       <entry>None.</entry>
+      </row>
+      <row>
+       <entry>12.1</entry>
+       <entry><literal>&lt;linear catalog-modifying statement></literal></entry>
+       <entry>No</entry>
+       <entry>Catalog changes are PostgreSQL DDL statements and are not composable into a query pipeline.</entry>
+      </row>
+      <row>
+       <entry>12.2</entry>
+       <entry><literal>&lt;create schema statement></literal></entry>
+       <entry>No</entry>
+       <entry>A graph *is* a schema; <literal>CREATE GRAPH</literal> creates it. SQL <literal>CREATE SCHEMA</literal> also exists but does not make a graph.</entry>
+      </row>
+      <row>
+       <entry>12.3</entry>
+       <entry><literal>&lt;drop schema statement></literal></entry>
+       <entry>No</entry>
+       <entry><literal>DROP GRAPH</literal>.</entry>
+      </row>
+      <row>
+       <entry>12.6</entry>
+       <entry><literal>&lt;create graph type statement></literal></entry>
+       <entry>No</entry>
+       <entry>None. A label is untyped, except for a property promoted to a column, which acquires that column's type. See <literal>CREATE VLABEL</literal>.</entry>
+      </row>
+      <row>
+       <entry>12.7</entry>
+       <entry><literal>&lt;drop graph type statement></literal></entry>
+       <entry>No</entry>
+       <entry>None.</entry>
+      </row>
+      <row>
+       <entry>12.8</entry>
+       <entry><literal>&lt;call catalog-modifying procedure statement></literal></entry>
+       <entry>No</entry>
+       <entry>None.</entry>
+      </row>
+      <row>
+       <entry>13.6</entry>
+       <entry><literal>&lt;call data-modifying procedure statement></literal></entry>
+       <entry>No</entry>
+       <entry>A write clause inside a <literal>CALL</literal> body is refused.</entry>
+      </row>
+      <row>
+       <entry>14.1</entry>
+       <entry><literal>&lt;composite query statement></literal></entry>
+       <entry>No</entry>
+       <entry>The optional <literal>USE</literal> prefix a composite query statement carries has no counterpart; the composite query expression itself, 14.2, is supported.</entry>
+      </row>
+      <row>
+       <entry>14.12</entry>
+       <entry><literal>&lt;select statement></literal></entry>
+       <entry>No</entry>
+       <entry><literal>SELECT … FROM MATCH (…)</literal> is a syntax error. SQL <literal>SELECT</literal> over a Cypher subquery does the same job: see SQL and Cypher.</entry>
+      </row>
+      <row>
+       <entry>16.1</entry>
+       <entry><literal>&lt;at schema clause></literal></entry>
+       <entry>No</entry>
+       <entry>A statement runs in the database it is connected to.</entry>
+      </row>
+      <row>
+       <entry>16.2</entry>
+       <entry><literal>&lt;use graph clause></literal></entry>
+       <entry>No</entry>
+       <entry><literal>SET graph_path = name</literal>.</entry>
+      </row>
+      <row>
+       <entry>16.6</entry>
+       <entry><literal>&lt;path pattern prefix></literal></entry>
+       <entry>No</entry>
+       <entry>Neither the path modes (<literal>WALK</literal>, <literal>TRAIL</literal>, <literal>SIMPLE</literal>, <literal>ACYCLIC</literal>) nor the path search prefixes (<literal>ALL</literal>, <literal>ANY</literal>, <literal>ANY SHORTEST</literal>, <literal>ALL SHORTEST</literal>, <literal>SHORTEST k</literal>, <literal>SHORTEST k GROUPS</literal>) parse. <literal>shortestpath()</literal>, <literal>allshortestpaths()</literal> and <literal>dijkstra()</literal> cover shortest path search.</entry>
+      </row>
+      <row>
+       <entry>16.12</entry>
+       <entry><literal>&lt;simplified path pattern expression></literal></entry>
+       <entry>No</entry>
+       <entry>The <literal>-/ … /-></literal> form is a syntax error.</entry>
+      </row>
+      <row>
+       <entry>16.15</entry>
+       <entry><literal>&lt;group by clause></literal></entry>
+       <entry>No</entry>
+       <entry>An explicit <literal>GROUP BY</literal> is a syntax error in Cypher. Grouping is implicit: the non aggregated items of a <literal>RETURN</literal> or <literal>WITH</literal> are the grouping keys. SQL <literal>GROUP BY</literal> is available in SQL.</entry>
+      </row>
+      <row>
+       <entry>17.1 to 17.8</entry>
+       <entry><literal>&lt;schema reference></literal> and the other object references</entry>
+       <entry>No</entry>
+       <entry>An object is named by a PostgreSQL schema qualified name. The standard's directory paths, <literal>/dir/schema/graph</literal>, do not parse.</entry>
+      </row>
+      <row>
+       <entry>18.1 to 18.10</entry>
+       <entry><literal>&lt;nested graph type specification></literal> and the other type elements</entry>
+       <entry>No</entry>
+       <entry>None.</entry>
+      </row>
+      <row>
+       <entry>19.6</entry>
+       <entry><literal>&lt;value type predicate></literal></entry>
+       <entry>No</entry>
+       <entry><literal>IS TYPED</literal> and <literal>IS ::</literal> are syntax errors. Cast and compare, or use <literal>pg_typeof</literal>.</entry>
+      </row>
+      <row>
+       <entry>19.7</entry>
+       <entry><literal>&lt;normalized predicate></literal></entry>
+       <entry>No</entry>
+       <entry>None.</entry>
+      </row>
+      <row>
+       <entry>19.8</entry>
+       <entry><literal>&lt;directed predicate></literal></entry>
+       <entry>No</entry>
+       <entry>Every edge is directed.</entry>
+      </row>
+      <row>
+       <entry>19.9</entry>
+       <entry><literal>&lt;labeled predicate></literal></entry>
+       <entry>No</entry>
+       <entry><literal>IS LABELED</literal> is a syntax error, and so is <literal>n:Label</literal> in an expression. Write <literal>label(n) = 'person'</literal>.</entry>
+      </row>
+      <row>
+       <entry>19.10</entry>
+       <entry><literal>&lt;source/destination predicate></literal></entry>
+       <entry>No</entry>
+       <entry><literal>IS SOURCE OF</literal> and <literal>IS DESTINATION OF</literal> are syntax errors. Compare identities: <literal>id(a) = id(startNode(r))</literal>.</entry>
+      </row>
+      <row>
+       <entry>19.11</entry>
+       <entry><literal>&lt;all_different predicate></literal></entry>
+       <entry>No</entry>
+       <entry>Compare identities pairwise.</entry>
+      </row>
+      <row>
+       <entry>19.12</entry>
+       <entry><literal>&lt;same predicate></literal></entry>
+       <entry>No</entry>
+       <entry><literal>id(a) = id(b)</literal>.</entry>
+      </row>
+      <row>
+       <entry>19.13</entry>
+       <entry><literal>&lt;property_exists predicate></literal></entry>
+       <entry>No</entry>
+       <entry><literal>PROPERTY_EXISTS(n, key)</literal> is a syntax error. Write <literal>exists(n.key)</literal>.</entry>
+      </row>
+      <row>
+       <entry>20.4</entry>
+       <entry><literal>&lt;dynamic parameter specification></literal></entry>
+       <entry>No</entry>
+       <entry>The driver's parameter placeholder, <literal>$1</literal>, takes its place.</entry>
+      </row>
+      <row>
+       <entry>20.5</entry>
+       <entry><literal>&lt;let value expression></literal></entry>
+       <entry>No</entry>
+       <entry><literal>LET … IN</literal> inside an expression is a syntax error. The <literal>LET</literal> statement, 14.7, is supported.</entry>
+      </row>
+      <row>
+       <entry>20.10</entry>
+       <entry><literal>&lt;element_id function></literal></entry>
+       <entry>No</entry>
+       <entry><literal>element_id()</literal> does not exist. <literal>id()</literal> returns the identity, as a <literal>graphid</literal>.</entry>
+      </row>
+      <row>
+       <entry>20.14</entry>
+       <entry><literal>&lt;path value constructor></literal></entry>
+       <entry>No</entry>
+       <entry>A path comes from a pattern, not from a constructor.</entry>
+      </row>
+      <row>
+       <entry>20.16</entry>
+       <entry><literal>&lt;list value function></literal></entry>
+       <entry>No</entry>
+       <entry><literal>trim(list, n)</literal> and <literal>elements()</literal> do not exist. <literal>head</literal>, <literal>last</literal>, <literal>tail</literal>, <literal>size</literal> and <literal>cardinality</literal> do.</entry>
+      </row>
+      <row>
+       <entry>20.25</entry>
+       <entry><literal>&lt;byte string function></literal></entry>
+       <entry>No</entry>
+       <entry>PostgreSQL's <literal>bytea</literal> functions are reachable from SQL.</entry>
+      </row>
+      <row>
+       <entry>20.28</entry>
+       <entry><literal>&lt;duration value expression></literal></entry>
+       <entry>No</entry>
+       <entry>PostgreSQL's <literal>interval</literal> type covers durations, but only from SQL: <literal>INTERVAL '1 day'</literal> is a syntax error in Cypher.</entry>
+      </row>
+      <row>
+       <entry>20.29</entry>
+       <entry><literal>&lt;duration value function></literal></entry>
+       <entry>No</entry>
+       <entry><literal>duration()</literal> does not exist.</entry>
+      </row>
+      <row>
+       <entry>21.4</entry>
+       <entry><literal>&lt;GQL terminal character></literal></entry>
+       <entry>No</entry>
+       <entry>The lexer is PostgreSQL's, extended for Cypher; it does not implement the standard's character set rules.</entry>
+      </row>
+      <row>
+       <entry>22.1 to 22.20</entry>
+       <entry>Additional common rules</entry>
+       <entry>No</entry>
+       <entry>These subclauses define the standard's evaluation machinery rather than syntax. AgensGraph evaluates a query through the PostgreSQL planner and executor, so they are not implemented as written.</entry>
+      </row>
+      <row>
+       <entry>23.1</entry>
+       <entry>GQLSTATUS</entry>
+       <entry>No</entry>
+       <entry>An error carries a SQLSTATE. See Error codes.</entry>
+      </row>
+      <row>
+       <entry>23.2</entry>
+       <entry>Diagnostic records</entry>
+       <entry>No</entry>
+       <entry>Diagnostics come from PostgreSQL's error report fields.</entry>
+      </row>
+     </tbody>
+    </tgroup>
+   </table>
+  </sect2>
+
+  <sect2 id="agensgraph-gql-extensions-beyond-the-standard-sect">
+   <title>Extensions Beyond the Standard</title>
+  <para>
+   AgensGraph accepts a good deal that ISO/IEC 39075 does not define. Some of it is openCypher, which the product supported first. Some of it exists because a graph here is stored in PostgreSQL and both halves are addressable.
+  </para>
+   <table id="agensgraph-gql-extensions-beyond-the-standard">
+    <title>Extensions Beyond the Standard</title>
+    <tgroup cols="2">
+     <thead>
+      <row>
+       <entry>Extension</entry>
+       <entry>What it adds</entry>
+      </row>
+     </thead>
+     <tbody>
+      <row>
+       <entry>A SQL statement over a Cypher subquery, and Cypher over a label table</entry>
+       <entry>A Cypher query is a table expression and a label is a table, so one statement can join graph and relational data. See SQL and Cypher.</entry>
+      </row>
+      <row>
+       <entry><literal>LOAD FROM table AS r CREATE (…)</literal></entry>
+       <entry>Creates graph elements from the rows of a relation, including a foreign table. See Loading data.</entry>
+      </row>
+      <row>
+       <entry>Label inheritance</entry>
+       <entry><literal>CREATE VLABEL child INHERITS (parent)</literal> makes a hierarchy of labels, and a match on the parent also returns the children. <literal>MATCH (n:parent ONLY)</literal> restricts the match to the parent. See Label inheritance.</entry>
+      </row>
+      <row>
+       <entry><literal>SET n += map</literal></entry>
+       <entry>Merges a map into the properties instead of replacing them.</entry>
+      </row>
+      <row>
+       <entry><literal>dijkstra()</literal>, <literal>shortestpath()</literal>, <literal>allshortestpaths()</literal></entry>
+       <entry>Weighted and unweighted shortest path search, in place of the standard's path search prefixes.</entry>
+      </row>
+      <row>
+       <entry>Promoted properties</entry>
+       <entry><literal>ALTER VLABEL movie ADD COLUMN year int GENERATED</literal> gives a property a typed, indexable column, and a property read resolves to it. See <literal>ALTER VLABEL</literal>.</entry>
+      </row>
+      <row>
+       <entry>Graph DDL</entry>
+       <entry><literal>CREATE VLABEL</literal>, <literal>CREATE ELABEL</literal>, <literal>CREATE PROPERTY INDEX</literal>, <literal>CREATE CONSTRAINT</literal>, <literal>REINDEX VLABEL</literal> and <literal>ALTER VLABEL</literal>. See Data definition.</entry>
+      </row>
+      <row>
+       <entry>openCypher clauses</entry>
+       <entry><literal>UNWIND</literal>, <literal>MERGE</literal> with <literal>ON CREATE</literal> and <literal>ON MATCH</literal>, and <literal>WITH</literal>.</entry>
+      </row>
+      <row>
+       <entry><literal>COUNT { }</literal>, <literal>COLLECT { }</literal>, <literal>ARRAY { }</literal>, <literal>x IN { }</literal></entry>
+       <entry>Four subquery value expressions the standard has no form for, 20.9 defines only <literal>COUNT(*)</literal>, <literal>COUNT(expr)</literal> and the <literal>COLLECT_LIST</literal> aggregate over rows. <literal>COUNT { }</literal> and <literal>COLLECT { }</literal> come from openCypher, <literal>ARRAY { }</literal> from SQL's <literal>ARRAY(subquery)</literal>, and <literal>x IN { }</literal> from SQL's <literal>IN (subquery)</literal>. See Subquery value expressions.</entry>
+      </row>
+      <row>
+       <entry>openCypher operators and functions</entry>
+       <entry><literal>STARTS WITH</literal>, <literal>ENDS WITH</literal>, <literal>CONTAINS</literal>, <literal>=~</literal>, list comprehensions, <literal>all</literal>/<literal>any</literal>/<literal>none</literal>/<literal>single</literal>, <literal>keys</literal>, <literal>properties</literal>, <literal>id</literal>, <literal>label</literal>, <literal>labels</literal>, <literal>type</literal>, <literal>startNode</literal>, <literal>endNode</literal>, <literal>nodes</literal>, <literal>relationships</literal>, <literal>length</literal>, <literal>range</literal>, <literal>head</literal>, <literal>last</literal>, <literal>tail</literal>, <literal>toString</literal>, <literal>toInteger</literal>, <literal>toFloat</literal>.</entry>
+      </row>
+      <row>
+       <entry>PostgreSQL's whole surface</entry>
+       <entry>Every SQL type, function, index method, extension and setting is available to a graph query, which is how vector and full text search work. See vector search.</entry>
+      </row>
+     </tbody>
+    </tgroup>
+   </table>
+  </sect2>
+ </sect1>
+
+</appendix>

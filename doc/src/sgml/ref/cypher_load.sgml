@@ -5,77 +5,266 @@ PostgreSQL documentation
 
 <refentry id="cypher-load">
  <indexterm zone="cypher-load">
-  <primary>CYPHER LOAD</primary>
+  <primary>LOAD FROM</primary>
  </indexterm>
 
  <refmeta>
-  <refentrytitle>LOAD</refentrytitle>
+  <refentrytitle>LOAD FROM</refentrytitle>
   <manvolnum>7</manvolnum>
-  <refmiscinfo>SQL - Language Statements</refmiscinfo>
+  <refmiscinfo>Cypher - Language Statements</refmiscinfo>
  </refmeta>
 
  <refnamediv>
-  <refname>LOAD</refname>
-  <refpurpose>load data from table</refpurpose>
+  <refname>LOAD FROM</refname>
+  <refpurpose>read a table into a Cypher query</refpurpose>
  </refnamediv>
 
  <refsynopsisdiv>
 <synopsis>
-
-LOAD FROM <replaceable class="parameter">table_name</replaceable> AS <replaceable class="parameter">alias_name</replaceable>
-
+LOAD FROM <replaceable class="parameter">table_name</replaceable> AS <replaceable class="parameter">alias</replaceable>
 </synopsis>
  </refsynopsisdiv>
 
- <refsect1>
+ <refsect1 id="cypher-load-description">
   <title>Description</title>
+
   <para>
-    load the table data into cypher query context using LOAD clause.
+   <command>LOAD FROM</command> is the relational source clause. It scans a table and binds
+   each row to <replaceable class="parameter">alias</replaceable>, whose columns are then
+   readable as <literal>alias.column</literal> anywhere later in the query. A graph and a
+   table live in the same database, so this needs no import step and no foreign data wrapper.
+  </para>
+
+  <para>
+   The columns of the alias keep their SQL types. On a
+   <type>numeric(3,1)</type> column, <literal>r.score</literal> is a numeric, so
+   <literal>r.score &gt; 8.5</literal> is a numeric comparison rather than a jsonb one.
+  </para>
+
+  <para>
+   The alias itself is a row value. Projecting it gives the row as a jsonb object, so
+   <literal>CREATE (:label = to_jsonb(alias))</literal> loads a whole row as the property map
+   of a vertex.
+  </para>
+
+  <para>
+   <command>LOAD FROM</command> may open a query or follow another clause, and several may
+   appear in one query. It never ends one.
+  </para>
+
+  <para>
+   The clause has no <literal>WHERE</literal> of its own. Filter with the
+   <literal>WHERE</literal> of a following <xref linkend="cypher-match"/>, the
+   <literal>WHERE</literal> of a <xref linkend="cypher-with"/>, or a
+   <xref linkend="cypher-filter"/>.
+  </para>
+
+  <para>
+   Anything a <command>SELECT</command> can read works: a table, a view, a name qualified by
+   its schema.
   </para>
  </refsect1>
 
- <refsect1>
+ <refsect1 id="cypher-load-parameters">
   <title>Parameters</title>
+
   <variablelist>
    <varlistentry>
     <term><replaceable class="parameter">table_name</replaceable></term>
     <listitem>
      <para>
-      The name of the table that to be loaded.
+      The name of the table or view to read, optionally qualified by its schema. It has to
+      exist and be readable. An unknown name raises
+      <literal>relation "..." does not exist</literal>.
      </para>
     </listitem>
    </varlistentry>
 
    <varlistentry>
-    <term><replaceable class="parameter">alias_name</replaceable></term>
+    <term><replaceable class="parameter">alias</replaceable></term>
     <listitem>
      <para>
-      The alias name that will be used in the cypher cluases.
+      The name bound to each row. Read a column as <literal>alias.column</literal>, and the
+      whole row as <literal>alias</literal>.
      </para>
     </listitem>
    </varlistentry>
   </variablelist>
  </refsect1>
 
- <refsect1>
+ <refsect1 id="cypher-load-examples">
   <title>Examples</title>
+
   <para>
-   To load data from table person to the vertex label person:
+   These examples use the graph in <xref linkend="agensgraph-example-data"/>, which comes with
+   the ordinary table <literal>rating</literal>.
+  </para>
+
+  <para>
+   Read a table:
 <programlisting>
-LOAD FROM person AS v
-CREATE (:person {id: v.id, name: v.name});
+LOAD FROM rating AS r
+RETURN r.title AS title, r.source AS source, r.score AS score
+ORDER BY title, source
+LIMIT 4;
+
+        title        |  source   | score
+---------------------+-----------+-------
+ "Avatar"            | "critics" | 7.9
+ "Blade Runner"      | "critics" | 8.1
+ "Blade Runner 2049" | "critics" | 8.0
+ "Elysium"           | "critics" | 6.6
+(4 rows)
 </programlisting>
   </para>
 
   <para>
-   To load data from table friend to the edge label friend:
+   The values are quoted because a Cypher <command>RETURN</command> boxes its output columns
+   to jsonb, not because the columns are jsonb. Their SQL types are unchanged:
 <programlisting>
-LOAD FROM friend AS e
-MATCH (a:person),(b:person)
-WHERE id(a) = to_jsonb(e.start_id)
-AND id(b) = to_jsonb(e.end_id)
-CREATE (a)-[:friend {date: '2018'}]->(b);
+LOAD FROM rating AS r RETURN pg_typeof(r.score) AS t LIMIT 1;
+
+     t
+-----------
+ "numeric"
+(1 row)
 </programlisting>
   </para>
+
+  <para>
+   Join a table to the graph. Load the table, then match against it. The relational column and
+   the graph property are compared directly:
+<programlisting>
+LOAD FROM rating AS r
+MATCH (m:movie {title: r.title})
+WHERE r.source = 'critics' AND r.score &gt; 8.5
+RETURN m.title AS film, m.year AS year, r.score AS score
+ORDER BY score DESC, film;
+
+             film             | year | score
+------------------------------+------+-------
+ "Inception"                  | 2010 | 8.8
+ "Interstellar"               | 2014 | 8.7
+ "The Matrix"                 | 1999 | 8.7
+ "Terminator 2: Judgment Day" | 1991 | 8.6
+(4 rows)
+</programlisting>
+  </para>
+
+  <para>
+   Any relation a <command>SELECT</command> can read is a valid source, so a view works the
+   same way:
+<programlisting>
+CREATE VIEW critic AS SELECT title, score FROM rating WHERE source = 'critics';
+
+CREATE VIEW
+</programlisting>
+<programlisting>
+LOAD FROM critic AS c
+RETURN c.title AS film, c.score AS score
+ORDER BY score DESC, film
+LIMIT 3;
+
+      film      | score
+----------------+-------
+ "Inception"    | 8.8
+ "Interstellar" | 8.7
+ "The Matrix"   | 8.7
+(3 rows)
+</programlisting>
+  </para>
+
+  <para>
+   Build vertices from table rows, naming the properties you want. A graph write reports its
+   row count under the tag <literal>UPDATE</literal>:
+<programlisting>
+CREATE TABLE tmp_people (name text, born int);
+INSERT INTO tmp_people VALUES ('Ana Lily Amirpour', 1980), ('Rian Johnson', 1973);
+
+CREATE TABLE
+INSERT 0 2
+</programlisting>
+<programlisting>
+LOAD FROM tmp_people AS t
+CREATE (:person {name: t.name, born: t.born});
+
+UPDATE 2
+</programlisting>
+  </para>
+
+  <para>
+   Or take the whole row as the property map, writing <literal>= expression</literal> in place
+   of a map literal:
+<programlisting>
+LOAD FROM tmp_people AS t
+CREATE (:person = to_jsonb(t));
+
+UPDATE 2
+</programlisting>
+  </para>
+
+  <para>
+   Undo both loads, then drop the view and the table:
+<programlisting>
+MATCH (p:person) WHERE p.name IN ['Ana Lily Amirpour', 'Rian Johnson'] DETACH DELETE p;
+
+UPDATE 4
+</programlisting>
+<programlisting>
+DROP VIEW critic;
+DROP TABLE tmp_people;
+
+DROP VIEW
+DROP TABLE
+</programlisting>
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-load-notes">
+  <title>Notes</title>
+
+  <para>
+   <command>LOAD FROM</command> reads. It has no bulk load machinery of its own, no parallel
+   writer and no error routing. The <command>CREATE</command> that follows it inserts row by
+   row through the graph write path, so loading a large table costs what inserting each
+   vertex on its own costs.
+  </para>
+
+  <para>
+   To load in bulk without maintaining the indexes, run
+   <literal>ALTER VLABEL <replaceable class="parameter">label_name</replaceable> DISABLE
+   INDEX</literal>, then the load, then
+   <literal>REINDEX VLABEL <replaceable class="parameter">label_name</replaceable></literal>.
+   See <xref linkend="cypher-altervlabel"/> and <xref linkend="cypher-reindex"/>.
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-load-compatibility">
+  <title>Compatibility</title>
+
+  <para>
+   ISO/IEC 39075:2024 has no clause that reads a table. The standard describes a graph
+   database, and leaves the relational side to SQL. <command>LOAD FROM</command> is an
+   AgensGraph extension that exists because a graph and a table share one database and one
+   transaction here.
+  </para>
+
+  <para>
+   openCypher has no equivalent either. Its <literal>LOAD CSV</literal> reads a file rather
+   than a table and is not accepted; <literal>LOAD</literal> has to be followed by
+   <literal>FROM</literal> and a relation name. To go the other way and read a graph from SQL,
+   write the Cypher query as a subquery of a <command>SELECT</command>.
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-load-see-also">
+  <title>See Also</title>
+  <simplelist type="inline">
+   <member><xref linkend="cypher-create"/></member>
+   <member><xref linkend="cypher-match"/></member>
+   <member><xref linkend="cypher-with"/></member>
+   <member><xref linkend="cypher-merge"/></member>
+   <member><xref linkend="cypher-reindex"/></member>
+  </simplelist>
  </refsect1>
 </refentry>
