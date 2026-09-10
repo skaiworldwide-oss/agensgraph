@@ -1855,6 +1855,36 @@ DROP TABLE rating;
       traversal nodes, which now name the edge label. Plan baselines need refreshing.
      </para>
     </listitem>
+    <listitem>
+     <para>
+      <emphasis>A foreign key whose two sides are collated differently is refused</emphasis>
+      when either collation is nondeterministic, with
+      <literal>SQLSTATE 42P21</literal>. 2.17 built it. Both sides carrying the
+      <emphasis>same</emphasis> nondeterministic collation is still accepted, and so are two
+      different deterministic ones. This reaches a foreign key on a label column as well.
+      <literal>NOT VALID</literal> does not defer it.
+     </para>
+     <para>
+      A dump taken from 2.17 therefore restores without the constraint. Find the pairs before
+      upgrading, on the 2.17 cluster, in each database:
+<programlisting>
+SELECT c.conrelid::regclass AS referencing, c.conname, fa.attname AS col,
+       fc.collname AS referencing_collation, pc.collname AS referenced_collation
+  FROM pg_constraint c
+  CROSS JOIN LATERAL unnest(c.conkey, c.confkey) AS k(fkatt, pkatt)
+  JOIN pg_attribute fa ON fa.attrelid = c.conrelid AND fa.attnum = k.fkatt
+  JOIN pg_attribute pa ON pa.attrelid = c.confrelid AND pa.attnum = k.pkatt
+  JOIN pg_collation fc ON fc.oid = fa.attcollation
+  JOIN pg_collation pc ON pc.oid = pa.attcollation
+ WHERE c.contype = 'f'
+   AND fa.attcollation &lt;&gt; pa.attcollation
+   AND NOT (fc.collisdeterministic AND pc.collisdeterministic);
+</programlisting>
+      Give both sides the same collation before dumping. <xref linkend="pgupgrade"/> does not
+      report these: <option>--check</option> ends with <literal>Clusters are compatible</literal>
+      and the upgrade then fails when it rebuilds the constraint.
+     </para>
+    </listitem>
    </itemizedlist>
 
    <table id="agensgraph-upgrading-reserved-table">
