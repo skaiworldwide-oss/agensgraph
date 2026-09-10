@@ -639,45 +639,70 @@ static const ObjectPropertyType ObjectProperty[] =
 		OBJECT_USER_MAPPING,
 		false
 	},
-	/* for agensgraph */
+	/*
+	 * for agensgraph
+	 *
+	 * Written by field name, unlike the rows above: a field left out then
+	 * keeps its own zero -- InvalidAttrNumber for a column number, which every
+	 * reader tests before reading one -- instead of taking the next field's
+	 * value.
+	 *
+	 * Neither catalog has an owner or an ACL column, and neither object sits
+	 * in a schema: a graph is one, and a label is placed by its graph, whose
+	 * oid is not a namespace oid.
+	 */
 	{
-		"graph",
-		GraphRelationId,
-		GraphOidIndexId,
-		GRAPHOID,
-		GRAPHNAME,
-		Anum_ag_graph_graphname,
-		InvalidAttrNumber,
-		InvalidAttrNumber,
-		InvalidAttrNumber,
-		OBJECT_GRAPH,
-		true,
+		.class_descr = "graph",
+		.class_oid = GraphRelationId,
+		.oid_index_oid = GraphOidIndexId,
+		.oid_catcache_id = GRAPHOID,
+		.name_catcache_id = GRAPHNAME,
+		.attnum_oid = Anum_ag_graph_oid,
+		.attnum_name = Anum_ag_graph_graphname,
+		.attnum_namespace = InvalidAttrNumber,
+		.attnum_owner = InvalidAttrNumber,
+		.attnum_acl = InvalidAttrNumber,
+		.objtype = OBJECT_GRAPH,
+		/* a graph's name is a schema name, so it identifies the graph by itself */
+		.is_nsp_name_unique = true,
 	},
 	{
-		"vlabel",
-		LabelRelationId,
-		LabelOidIndexId,
-		LABELOID,
-		LABELNAMEGRAPH,
-		Anum_ag_label_labname,
-		InvalidAttrNumber,
-		InvalidAttrNumber,
-		InvalidAttrNumber,
-		OBJECT_VLABEL,
-		true,
+		.class_descr = "vlabel",
+		.class_oid = LabelRelationId,
+		.oid_index_oid = LabelOidIndexId,
+		.oid_catcache_id = LABELOID,
+		.name_catcache_id = LABELNAMEGRAPH,
+		.attnum_oid = Anum_ag_label_oid,
+		.attnum_name = Anum_ag_label_labname,
+		.attnum_namespace = InvalidAttrNumber,
+		.attnum_owner = InvalidAttrNumber,
+		.attnum_acl = InvalidAttrNumber,
+		.objtype = OBJECT_VLABEL,
+
+		/*
+		 * A label name is unique only inside its graph -- ag_label is keyed on
+		 * (labname, graphid) -- and the graph is not reported as a namespace.
+		 */
+		.is_nsp_name_unique = false,
 	},
+
+	/*
+	 * A row is found by catalog, so this one is never the row returned for
+	 * ag_label.  It records what an edge label is; the row above answers.
+	 */
 	{
-		"elabel",
-		LabelRelationId,
-		LabelOidIndexId,
-		LABELOID,
-		LABELNAMEGRAPH,
-		Anum_ag_label_labname,
-		InvalidAttrNumber,
-		InvalidAttrNumber,
-		InvalidAttrNumber,
-		OBJECT_ELABEL,
-		true,
+		.class_descr = "elabel",
+		.class_oid = LabelRelationId,
+		.oid_index_oid = LabelOidIndexId,
+		.oid_catcache_id = LABELOID,
+		.name_catcache_id = LABELNAMEGRAPH,
+		.attnum_oid = Anum_ag_label_oid,
+		.attnum_name = Anum_ag_label_labname,
+		.attnum_namespace = InvalidAttrNumber,
+		.attnum_owner = InvalidAttrNumber,
+		.attnum_acl = InvalidAttrNumber,
+		.objtype = OBJECT_ELABEL,
+		.is_nsp_name_unique = false,
 	},
 };
 
