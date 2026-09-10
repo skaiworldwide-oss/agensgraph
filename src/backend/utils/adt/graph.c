@@ -11,6 +11,7 @@
 #include "postgres.h"
 
 #include "nodes/makefuncs.h"
+#include "nodes/miscnodes.h"
 #include "nodes/nodeFuncs.h"
 #include "nodes/supportnodes.h"
 #include "optimizer/optimizer.h"
@@ -72,6 +73,8 @@ typedef struct LabelsOutData
 	Jsonb	   *labels;
 } LabelsOutData;
 
+static bool graphid_from_cstring(const char *str, Graphid *result,
+								 Node *escontext);
 static void graphid_out_si(StringInfo si, Datum graphid);
 static int	graphid_cmp(FunctionCallInfo fcinfo);
 static Jsonb *int_to_jsonb(int i);
@@ -114,39 +117,11 @@ graphid(PG_FUNCTION_ARGS)
 Datum
 graphid_in(PG_FUNCTION_ARGS)
 {
-	const char	GRAPHID_DELIM = '.';
 	char	   *str = PG_GETARG_CSTRING(0);
-	char	   *next;
-	char	   *endptr;
-	unsigned long labid_ul;
-	uint16		labid;
-	uint64		locid;
 	Graphid		id;
 
-	errno = 0;
-	labid_ul = strtoul(str, &endptr, 10);
-	if (errno != 0 || endptr == str || *endptr != GRAPHID_DELIM)
-		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
-				 errmsg("invalid input syntax for type graphid: \"%s\"", str)));
-	if (labid_ul > GRAPHID_LABID_MAX)
-		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("labid out of range")));
-	labid = (uint16) labid_ul;
-
-	next = endptr + 1;
-	locid = strtoull(next, &endptr, 10);
-	if (errno != 0 || endptr == next || *endptr != '\0')
-		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
-				 errmsg("invalid input syntax for type graphid: \"%s\"", str)));
-	if (locid > GRAPHID_LOCID_MAX)
-		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("locid out of range")));
-
-	GraphidSet(&id, labid, locid);
+	if (!graphid_from_cstring(str, &id, fcinfo->context))
+		PG_RETURN_NULL();
 
 	PG_RETURN_GRAPHID(id);
 }
@@ -253,14 +228,15 @@ graphid_ne(PG_FUNCTION_ARGS)
 }
 
 /*
- * Parse a graphid out of a (not necessarily NUL-terminated) string of the form
- * "labid.locid".  Unlike graphid_in(), a malformed string yields false rather
- * than an error, because this is used to test membership against an arbitrary
- * jsonb array whose elements need not be graphids: a non-graphid element simply
- * cannot be a member and must be skipped, not rejected.
+ * Parse a graphid out of a NUL-terminated string of the form "labid.locid".
+ *
+ * The error goes through escontext: NULL throws it, which is what reading a
+ * value of the type does, and an ErrorSaveContext takes it and leaves false to
+ * be returned -- which is what the error-tolerant paths ask for, and what
+ * asking whether some string happens to be a graphid asks for.
  */
 static bool
-graphid_from_cstring(const char *str, Graphid *result)
+graphid_from_cstring(const char *str, Graphid *result, Node *escontext)
 {
 	const char	GRAPHID_DELIM = '.';
 	char	   *endptr;
@@ -272,18 +248,26 @@ graphid_from_cstring(const char *str, Graphid *result)
 	errno = 0;
 	labid_ul = strtoul(str, &endptr, 10);
 	if (errno != 0 || endptr == str || *endptr != GRAPHID_DELIM)
-		return false;
+		ereturn(escontext, false,
+				(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
+				 errmsg("invalid input syntax for type graphid: \"%s\"", str)));
 	if (labid_ul > GRAPHID_LABID_MAX)
-		return false;
+		ereturn(escontext, false,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("labid out of range")));
 	labid = (uint16) labid_ul;
 
 	next = endptr + 1;
 	errno = 0;
 	locid = strtoull(next, &endptr, 10);
 	if (errno != 0 || endptr == next || *endptr != '\0')
-		return false;
+		ereturn(escontext, false,
+				(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
+				 errmsg("invalid input syntax for type graphid: \"%s\"", str)));
 	if (locid > GRAPHID_LOCID_MAX)
-		return false;
+		ereturn(escontext, false,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("locid out of range")));
 
 	GraphidSet(result, labid, locid);
 	return true;
@@ -309,6 +293,13 @@ graphid_in_jsonb_array(PG_FUNCTION_ARGS)
 	JsonbContainer *jc = &arr->root;
 	int			n;
 	int			i;
+
+	/*
+	 * An element that is not a graphid is not a member, so the error is wanted
+	 * only as the false it returns.  Leaving details_wanted off keeps the
+	 * parser from composing a message nothing here reads.
+	 */
+	ErrorSaveContext escontext = {T_ErrorSaveContext};
 
 	/*
 	 * A naked jsonb scalar is stored as a one-element pseudo-array flagged
@@ -353,7 +344,8 @@ graphid_in_jsonb_array(PG_FUNCTION_ARGS)
 		memcpy(buf, idval->val.string.val, idval->val.string.len);
 		buf[idval->val.string.len] = '\0';
 
-		if (graphid_from_cstring(buf, &elemid) && elemid == id)
+		if (graphid_from_cstring(buf, &elemid, (Node *) &escontext) &&
+			elemid == id)
 			PG_RETURN_BOOL(true);
 	}
 
