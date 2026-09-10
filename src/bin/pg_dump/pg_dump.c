@@ -20468,6 +20468,26 @@ dumpGraph(Archive *fout, const NamespaceInfo *graphinfo)
 }
 
 /*
+ * collatedGeneratedColumn
+ *
+ * A label's property list has no place to write a collation, so a generated
+ * column carrying one cannot be named there.  Such a column is added by ALTER
+ * TABLE instead, beside the ordinary columns, that being the one form which can
+ * say it.
+ *
+ * Three passes over the columns ask this -- the property list leaves such a
+ * column out, the ALTER TABLE takes it, and the NOT NULL pass leaves it to that
+ * ALTER -- so they cannot disagree about which column goes where.
+ */
+static bool
+collatedGeneratedColumn(const TableInfo *tblinfo, int j)
+{
+	return (tblinfo->attgenerated[j] &&
+			tblinfo->attrdefs[j] != NULL &&
+			OidIsValid(tblinfo->attcollation[j]));
+}
+
+/*
  * dumpLabelSchema ( copy of dumpTableShema )
  *	  write the declaration (not data) of one user-defined table or view
  */
@@ -20600,6 +20620,10 @@ dumpLabelSchema(Archive *fout, const TableInfo *tblinfo)
 				tblinfo->attrdefs[j] == NULL)
 				continue;
 
+			/* a collation is written by the ALTER TABLE below instead */
+			if (collatedGeneratedColumn(tblinfo, j))
+				continue;
+
 			appendPQExpBufferStr(q, firstprop ? " (" : ", ");
 			firstprop = false;
 
@@ -20607,21 +20631,6 @@ dumpLabelSchema(Archive *fout, const TableInfo *tblinfo)
 							  fmtId(tblinfo->attnames[j]),
 							  tblinfo->atttypnames[j],
 							  tblinfo->attrdefs[j]->adef_expr);
-
-			/*
-			 * A non-default collation decides how the column compares and
-			 * orders, and nothing else in this path carries it, so losing it
-			 * would silently change query results rather than fail the restore.
-			 */
-			if (OidIsValid(tblinfo->attcollation[j]))
-			{
-				CollInfo   *coll;
-
-				coll = findCollationByOid(tblinfo->attcollation[j]);
-				if (coll)
-					appendPQExpBuffer(q, " COLLATE %s",
-									  fmtQualifiedDumpable(coll));
-			}
 		}
 		if (!firstprop)
 			appendPQExpBufferChar(q, ')');
@@ -20698,8 +20707,14 @@ dumpLabelSchema(Archive *fout, const TableInfo *tblinfo)
 	for (j = 0; j < tblinfo->numatts; j++)
 	{
 		if (tblinfo->attisdropped[j] ||
-			tblinfo->attgenerated[j] ||
 			!tblinfo->attislocal[j])
+			continue;
+
+		/*
+		 * A generated column is named in the label's own DDL, unless what it
+		 * is collated as cannot be written there.
+		 */
+		if (tblinfo->attgenerated[j] && !collatedGeneratedColumn(tblinfo, j))
 			continue;
 
 		/* the columns every graph element has come with the label itself */
@@ -20708,14 +20723,14 @@ dumpLabelSchema(Archive *fout, const TableInfo *tblinfo)
 
 		/*
 		 * A binary upgrade points the restored label at the original heap
-		 * files, so its columns must keep their exact physical layout -- and an
-		 * ordinary column cannot be placed at its original attnum, because
-		 * label DDL will not name it in the CREATE.  Adding it here would put
-		 * it after the promoted columns instead, mis-aligning every row.  Stop
-		 * rather than write a dump that restores into a corrupt heap.
+		 * files, so its columns must keep their exact physical layout -- and a
+		 * column label DDL will not name in the CREATE cannot be placed at its
+		 * original attnum.  Adding it here would put it after the promoted
+		 * columns instead, mis-aligning every row.  Stop rather than write a
+		 * dump that restores into a corrupt heap.
 		 */
 		if (dopt->binary_upgrade)
-			pg_fatal("label \"%s\" has ordinary column \"%s\", which cannot be dumped for a binary upgrade",
+			pg_fatal("label \"%s\" has column \"%s\", which label DDL cannot name and so cannot be dumped for a binary upgrade",
 					 tblinfo->dobj.name, tblinfo->attnames[j]);
 
 		if (!askedforddl)
@@ -20737,6 +20752,11 @@ dumpLabelSchema(Archive *fout, const TableInfo *tblinfo)
 			if (coll)
 				appendPQExpBuffer(q, " COLLATE %s", fmtQualifiedDumpable(coll));
 		}
+
+		/* and what derives it, for a column that came here carrying one */
+		if (tblinfo->attgenerated[j] == ATTRIBUTE_GENERATED_STORED)
+			appendPQExpBuffer(q, " GENERATED ALWAYS AS (%s) STORED",
+							  tblinfo->attrdefs[j]->adef_expr);
 
 		if (tblinfo->notnull_constrs[j] != NULL && tblinfo->notnull_islocal[j])
 		{
@@ -20766,6 +20786,10 @@ dumpLabelSchema(Archive *fout, const TableInfo *tblinfo)
 			!tblinfo->attgenerated[j] ||
 			tblinfo->notnull_constrs[j] == NULL ||
 			!tblinfo->notnull_islocal[j])
+			continue;
+
+		/* one added by ALTER TABLE carried its NOT NULL with it */
+		if (collatedGeneratedColumn(tblinfo, j))
 			continue;
 
 		if (tblinfo->notnull_constrs[j][0] == '\0')

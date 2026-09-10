@@ -317,6 +317,15 @@ $node->safe_psql(
 	ALTER TABLE gg.dropord ADD COLUMN gone text;
 	ALTER TABLE gg.dropord DROP COLUMN gone;
 	CREATE (:dropord {age:3});
+	-- a GENERATED column with a collation of its own.  A label's property list
+	-- has nowhere to write a collation, so this one is added back by ALTER
+	-- TABLE beside the ordinary columns.  It answers for no property -- upper()
+	-- over the bag is not a bare property read -- which is what leaves a
+	-- collation on it allowed at all.
+	CREATE VLABEL collgen (nm text GENERATED);
+	ALTER TABLE gg.collgen ADD COLUMN d text COLLATE "C"
+	  GENERATED ALWAYS AS (upper(properties ->> 'nm')) STORED;
+	CREATE (:collgen {nm:'a'}), (:collgen {nm:'b'});
 	-- nothing unusual, created last so that it is also emitted last.  The symptom
 	-- of a label's ordinary column going missing is the COPY for it failing and
 	-- the rest of the dump's payload being read as SQL, which loses the data of
@@ -386,6 +395,18 @@ like($plaindump, qr/ALTER TABLE gg\.defv ALTER COLUMN d2 SET DEFAULT 'dd'::text;
 unlike($plaindump, qr/ALTER TABLE gg\.dropord ADD COLUMN/,
 	'a dropped ordinary column is not added back');
 
+# A label's property list cannot say what a column is collated as, so a
+# generated column carrying a collation is added by ALTER TABLE instead --
+# where it can be said -- and the property list names only its sibling.
+unlike($plaindump, qr/STORED COLLATE/,
+	'a collation is never written into a label property list');
+like(
+	$plaindump,
+	qr/ALTER TABLE gg\.collgen ADD COLUMN d text COLLATE pg_catalog\."C" GENERATED ALWAYS AS \(upper\(.*\)\) STORED;/,
+	'a generated column with a collation is added back with both');
+like($plaindump, qr/\QCREATE VLABEL ONLY collgen(\E\d+\Q) (nm text GENERATED\E/,
+	'and the label still declares the promoted column that has none');
+
 # Restoring has to be able to reshape a label, which is otherwise refused, so the
 # dump asks for it -- the ADD COLUMNs above are exactly what needs it.
 like($plaindump, qr/^SET enable_graph_ddl = on;$/m,
@@ -447,6 +468,21 @@ is( $node->safe_psql(
 		q{SELECT pcol || ' ' || kcol FROM gg.ckid}),
 	'ck-inherited ck-own',
 	"the data of a child label's inherited and own ordinary columns round-trips");
+
+# The collation is on the restored column, not merely written in the dump, and
+# the column still derives its value.
+is( $node->safe_psql(
+		'agplaindst',
+		q{SELECT c.collname FROM pg_attribute a
+		    JOIN pg_collation c ON c.oid = a.attcollation
+		   WHERE a.attrelid = 'gg.collgen'::regclass AND a.attname = 'd'}),
+	'C',
+	"a generated column's collation round-trips");
+is( $node->safe_psql(
+		'agplaindst',
+		q{SELECT string_agg(d, ' ' ORDER BY d) FROM gg.collgen}),
+	'A B',
+	'and it still derives its value after the restore');
 
 # A dropped ordinary column stays dropped, and the promoted column that came
 # after it still resolves.
@@ -514,8 +550,8 @@ $node->command_fails_like(
 		"${PostgreSQL::Test::Utils::tmp_check}/plain_cols_bu.sql",
 		'-d', $node->connstr('agplain')
 	],
-	qr/ordinary column .* cannot be dumped for a binary upgrade/,
-	'--binary-upgrade refuses a label with an ordinary column instead of corrupting it');
+	qr/which label DDL cannot name and so cannot be dumped for a binary upgrade/,
+	'--binary-upgrade refuses a label with such a column instead of corrupting it');
 
 # The same graph through the custom archive format and pg_restore, which writes
 # its own preamble: the ADD COLUMNs a label's ordinary columns need are refused
