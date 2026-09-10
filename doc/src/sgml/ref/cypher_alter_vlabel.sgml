@@ -1,5 +1,5 @@
 <!--
-doc/src/sgml/ref/alter_vlabel.sgml
+doc/src/sgml/ref/cypher_alter_vlabel.sgml
 PostgreSQL documentation
 -->
 
@@ -11,49 +11,90 @@ PostgreSQL documentation
  <refmeta>
   <refentrytitle>ALTER VLABEL</refentrytitle>
   <manvolnum>7</manvolnum>
-  <refmiscinfo>SQL - Language Statements</refmiscinfo>
+  <refmiscinfo>Cypher - Language Statements</refmiscinfo>
  </refmeta>
 
  <refnamediv>
   <refname>ALTER VLABEL</refname>
-  <refpurpose>alter the vertex label</refpurpose>
+  <refpurpose>change a vertex label</refpurpose>
  </refnamediv>
 
  <refsynopsisdiv>
 <synopsis>
-ALTER VLABEL [ IF EXISTS ] <replaceable class="parameter">label_name</replaceable> [ option [ , ... ] ]
+ALTER VLABEL [ IF EXISTS ] <replaceable class="parameter">label_name</replaceable> <replaceable class="parameter">action</replaceable> [, ...]
 ALTER VLABEL [ IF EXISTS ] <replaceable class="parameter">label_name</replaceable> RENAME TO <replaceable class="parameter">new_label_name</replaceable>
 
-where option is one of:
-    SET STORAGE { PLAIN | EXTERNAL | EXTENDED | MAIN | DEFAULT } 
-    OWNER TO <replaceable class="parameter">role_name</replaceable>
+<phrase>where <replaceable class="parameter">action</replaceable> is one of:</phrase>
+
+    ADD [ COLUMN ] <replaceable class="parameter">label_prop</replaceable>
+    DROP [ COLUMN ] <replaceable class="parameter">column_name</replaceable> [ RESTRICT | CASCADE ]
+    DISABLE INDEX
+    SET STORAGE { PLAIN | EXTERNAL | EXTENDED | MAIN }
     SET TABLESPACE <replaceable class="parameter">tablespace_name</replaceable>
+    SET { LOGGED | UNLOGGED }
     CLUSTER ON <replaceable class="parameter">index_name</replaceable>
     SET WITHOUT CLUSTER
-    SET { LOGGED | UNLOGGED }
-    INHERIT <replaceable class="parameter">qualified_name</replaceable>
-    NO INHERIT <replaceable class="parameter">qualified_name</replaceable>
-    REPLICA IDENTITY { DEFAULT | USING INDEX index_name | FULL | NOTHING }
-    DISABLE INDEX
+    INHERIT <replaceable class="parameter">parent_label</replaceable>
+    NO INHERIT <replaceable class="parameter">parent_label</replaceable>
+    REPLICA IDENTITY { DEFAULT | USING INDEX <replaceable class="parameter">index_name</replaceable> | FULL | NOTHING }
+    OWNER TO <replaceable class="parameter">role_specification</replaceable>
 
+<phrase>and <replaceable class="parameter">label_prop</replaceable> is one of:</phrase>
+
+    <replaceable class="parameter">column_name</replaceable> <replaceable class="parameter">data_type</replaceable> GENERATED
+    <replaceable class="parameter">column_name</replaceable> <replaceable class="parameter">data_type</replaceable> GENERATED ( <replaceable class="parameter">property_key</replaceable> )
+    <replaceable class="parameter">column_name</replaceable> <replaceable class="parameter">data_type</replaceable> GENERATED ALWAYS AS ( <replaceable class="parameter">expression</replaceable> ) [ STORED ]
 </synopsis>
  </refsynopsisdiv>
 
- <refsect1>
+ <refsect1 id="cypher-altervlabel-description">
   <title>Description</title>
+
   <para>
-   <command>ALTER VLABEL</command> statement alters the option of vertex label.
+   <command>ALTER VLABEL</command> renames a vertex label, changes its storage, attaches or
+   detaches a parent, turns its indexes off, or adds and removes promoted typed columns. The
+   label is looked up in the graph named by <varname>graph_path</varname>, and the name cannot
+   carry the graph. An edge label is refused; the statement for one is
+   <xref linkend="cypher-alterelabel"/>, which accepts every action listed here.
+  </para>
+
+  <para>
+   <literal>RENAME TO</literal> is its own form. It cannot be combined with any other action,
+   and a list of several actions cannot contain it. Several actions in one statement are
+   separated by commas and applied in order. The base label <literal>ag_vertex</literal> cannot
+   be altered at all, and cannot be attached or detached as a parent.
+  </para>
+
+  <para>
+   <literal>ADD COLUMN</literal> promotes a property to a real typed column beside the property
+   map and backfills it from the rows already there, so the column is complete the moment the
+   statement returns, and the statement fails on the first existing value that does not fit.
+   The three forms and their restrictions are the ones <xref linkend="cypher-createvlabel"/>
+   sets out. The property key comes from the generation expression rather than from the column
+   name, and is recorded in <structname>ag_label_property</structname>, so a query keeps naming
+   the property and the column name never appears in Cypher.
+  </para>
+
+  <para>
+   Reshaping the label's table with <command>ALTER TABLE</command> instead is refused unless
+   <varname>enable_graph_ddl</varname> is on, and so are renaming one of its columns, moving it
+   to another schema, and a SQL <command>MERGE</command> that writes it. Changing the type of
+   <structfield>id</structfield>, <structfield>properties</structfield>,
+   <structfield>start</structfield> or <structfield>end</structfield> stays refused even with
+   the setting on. See <xref linkend="agensgraph-config"/>. The actions on this page never need
+   it, because they update the graph catalog themselves.
   </para>
  </refsect1>
 
- <refsect1>
+ <refsect1 id="cypher-altervlabel-parameters">
   <title>Parameters</title>
+
   <variablelist>
    <varlistentry>
     <term><literal>IF EXISTS</literal></term>
     <listitem>
      <para>
-      Do not throw an error if the vertex label does not exist.
+      Issue a notice instead of an error when the label does not exist.
      </para>
     </listitem>
    </varlistentry>
@@ -62,7 +103,7 @@ where option is one of:
     <term><replaceable class="parameter">label_name</replaceable></term>
     <listitem>
      <para>
-      The target vertex label name that to be altered. 
+      Label to alter, in the graph named by <varname>graph_path</varname>.
      </para>
     </listitem>
    </varlistentry>
@@ -71,171 +112,30 @@ where option is one of:
     <term><literal>RENAME TO</literal> <replaceable class="parameter">new_label_name</replaceable></term>
     <listitem>
      <para>
-      The vertex label name that to be renamed.
+      Give the label a new name. Vertices keep their ids, so <function>label()</function> reports
+      the new name for rows created before the rename. The sequence and indexes keep theirs.
      </para>
     </listitem>
    </varlistentry>
 
    <varlistentry>
-    <term><literal>SET STORAGE { PLAIN | EXTERNAL | EXTENDED | MAIN | DEFAULT }</literal></term>
+    <term><literal>ADD [ COLUMN ]</literal> <replaceable class="parameter">label_prop</replaceable></term>
     <listitem>
      <para>
-      This form sets the storage mode for a label and controls whether the
-      property information is held inline or in a secondary <acronym>TOAST</acronym> table,
-      and whether the data
-      should be compressed or not. <literal>PLAIN</literal> must be used
-      for fixed-length values such as <type>integer</type> and is
-      inline, uncompressed. <literal>MAIN</literal> is for inline,
-      compressible data. <literal>EXTERNAL</literal> is for external,
-      uncompressed data, and <literal>EXTENDED</literal> is for external,
-      compressed data.
-      Writing <literal>DEFAULT</literal> sets the storage mode to the default
-      mode for the label's property data.  <literal>EXTENDED</literal> is the
-      default for most data types that support non-<literal>PLAIN</literal>
-      storage.
-      Use of <literal>EXTERNAL</literal> will make substring operations on
-      very large <type>text</type> and <type>bytea</type> values run faster,
-      at the penalty of increased storage space.
-      Note that this command doesn't itself
-      change anything in the table; it just sets the strategy to be pursued
-      during future label updates.
-      See <xref linkend="storage-toast"/> for more information.
+      Add a promoted typed column and backfill it. A property already promoted on the label is
+      refused, as is promoting the same key twice in one statement.
      </para>
     </listitem>
    </varlistentry>
 
    <varlistentry>
-    <term><literal>OWNER TO </literal><replaceable class="parameter">role_name</replaceable></term>
+    <term><literal>DROP [ COLUMN ]</literal> <replaceable class="parameter">column_name</replaceable> <literal>[ RESTRICT | CASCADE ]</literal></term>
     <listitem>
      <para>
-      This form changes the owner of the label to the specified user.
-     </para>
-    </listitem>
-   </varlistentry>
-
-   <varlistentry>
-    <term><literal>SET TABLESPACE</literal></term>
-    <listitem>
-     <para>
-      This form changes the label's tablespace to the specified tablespace and
-      moves the data file(s) associated with the label to the new tablespace.
-      Indexes on the table, if any, are not moved; but they can be moved
-      separately with additional <literal>SET TABLESPACE</literal> commands.
-     </para>
-    </listitem>
-   </varlistentry>
-
-   <varlistentry>
-    <term><literal>CLUSTER ON</literal></term>
-    <listitem>
-     <para>
-      This form selects the default index for future operations.  It does not actually re-cluster the label.
-     </para>
-    </listitem>
-   </varlistentry>
-
-   <varlistentry>
-    <term><literal>SET WITHOUT CLUSTER</literal></term>
-    <listitem>
-     <para>
-      This form removes the most recently used
-      <command>CLUSTER</command>
-      index specification from the label.  This affects
-      future cluster operations that don't specify an index.
-     </para>
-     <para>
-      Changing cluster options acquires a <literal>SHARE UPDATE EXCLUSIVE</literal> lock.
-     </para>
-    </listitem>
-   </varlistentry>
-
-   <varlistentry>
-    <term><literal>SET { LOGGED | UNLOGGED }</literal></term>
-    <listitem>
-     <para>
-      This form changes the table from unlogged to logged or vice-versa.
-      This also changes the persistence of any sequences linked to the label.
-      That means the sequence used for numbering label IDs will also change.
-      However, it is also possible to change the persistence of such sequences separately.
-     </para>
-    </listitem>
-   </varlistentry>
-
-   <varlistentry>
-    <term><literal>INHERIT </literal><replaceable class="parameter">qualified_name</replaceable></term>
-    <listitem>
-     <para>
-      This form adds the target label as a new child of the specified parent
-      label. Subsequently, queries against the parent will include elements
-      of the target child label.
-     </para>
-    </listitem>
-   </varlistentry>
-
-   <varlistentry>
-    <term><literal>NO INHERIT </literal><replaceable class="parameter">qualified_name</replaceable></term>
-    <listitem>
-     <para>
-      This form removes the target label from the list of children of the
-      specified parent label.
-      Queries against the parent label will no longer include elements drawn
-      from the target label.
-     </para>
-    </listitem>
-   </varlistentry>
-
-   <varlistentry>
-    <term><literal>REPLICA IDENTITY</literal></term>
-    <listitem>
-     <para>
-      This form changes the information which is written to the write-ahead log
-      to identify rows which are updated or deleted.
-      In most cases, the old value of each column is only logged if it differs
-      from the new value; however, if the old value is stored externally, it is
-      always logged regardless of whether it changed.
-      This option has no effect except when logical replication is in use.
-     <variablelist>
-      <varlistentry>
-       <term><literal>DEFAULT</literal></term>
-       <listitem>
-        <para>
-         Records the old values of the columns of the primary key, if any.
-         This is the default for non-system tables.
-        </para>
-       </listitem>
-      </varlistentry>
-
-      <varlistentry>
-       <term><literal>USING INDEX <replaceable class="parameter">index_name</replaceable></literal></term>
-       <listitem>
-        <para>
-         Records the old values of the columns covered by the named index,
-         that must be unique, not partial, not deferrable, and include only
-         columns marked <literal>NOT NULL</literal>. If this index is
-         dropped, the behavior is the same as <literal>NOTHING</literal>.
-        </para>
-       </listitem>
-      </varlistentry>
-
-      <varlistentry>
-       <term><literal>FULL</literal></term>
-       <listitem>
-        <para>
-         Records the old values of all columns in the label element.
-        </para>
-       </listitem>
-      </varlistentry>
-
-      <varlistentry>
-       <term><literal>NOTHING</literal></term>
-       <listitem>
-        <para>
-         Records no information about the old label element. This is the default for
-         system tables.
-        </para>
-       </listitem>
-      </varlistentry>
-     </variablelist>
+      Drop a column and, for a promoted property, forget its mapping, so reads of that key go
+      back to the property map, which still holds the value. Indexes on the column go with it,
+      and a structural column of the label is refused. <literal>RESTRICT</literal>, the default,
+      refuses while another object depends on the column; <literal>CASCADE</literal> drops those.
      </para>
     </listitem>
    </varlistentry>
@@ -244,81 +144,197 @@ where option is one of:
     <term><literal>DISABLE INDEX</literal></term>
     <listitem>
      <para>
-      This commmand will disable all indexes of the given graph label
+      Mark every index on the label invalid, so that a bulk load does not maintain them. Reads
+      and writes keep working and the planner ignores an invalid index. There is no
+      <literal>ENABLE INDEX</literal>; the way back is <xref linkend="cypher-reindex"/>.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><literal>SET STORAGE { PLAIN | EXTERNAL | EXTENDED | MAIN }</literal></term>
+    <listitem>
+     <para>
+      Set the storage mode of the label's <structfield>properties</structfield> column, which
+      decides whether a large property map is held inline or in the table's TOAST relation, and
+      whether it is compressed. A label starts with <literal>EXTENDED</literal>, out of line and
+      compressed. The mode applies to future writes and rewrites nothing already stored.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><literal>SET TABLESPACE</literal> <replaceable class="parameter">tablespace_name</replaceable></term>
+    <listitem>
+     <para>
+      Move the label's table to another tablespace. Its indexes stay where they are.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><literal>SET { LOGGED | UNLOGGED }</literal></term>
+    <listitem>
+     <para>
+      Turn write ahead logging for the label's table on or off. Its id sequence follows.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><literal>CLUSTER ON</literal> <replaceable class="parameter">index_name</replaceable></term>
+    <listitem>
+     <para>
+      Record an index for a later <command>CLUSTER</command> to use; it reorders nothing now.
+      <literal>SET WITHOUT CLUSTER</literal> forgets that record.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><literal>INHERIT</literal> <replaceable class="parameter">parent_label</replaceable></term>
+    <listitem>
+     <para>
+      Add the label as a child of another vertex label in the same graph, so a pattern on the
+      parent starts matching this label's rows. <literal>NO INHERIT</literal> removes it again.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><literal>REPLICA IDENTITY { DEFAULT | USING INDEX <replaceable class="parameter">index_name</replaceable> | FULL | NOTHING }</literal></term>
+    <listitem>
+     <para>
+      Choose which old values a write logs to identify a row, for logical replication.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><literal>OWNER TO</literal> <replaceable class="parameter">role_specification</replaceable></term>
+    <listitem>
+     <para>
+      Give the label to another role: a role name, <literal>CURRENT_ROLE</literal>,
+      <literal>CURRENT_USER</literal> or <literal>SESSION_USER</literal>.
      </para>
     </listitem>
    </varlistentry>
   </variablelist>
  </refsect1>
 
- <refsect1>
+ <refsect1 id="cypher-altervlabel-examples">
   <title>Examples</title>
 
   <para>
-   To create edge label:
+   These examples do not use the graph in <xref linkend="agensgraph-example-data"/>, but build a
+   graph of their own and drop it at the end. A rename takes the label's rows with it:
 <programlisting>
-CREATE VLABEL vlabelName;
-</programlisting>
-  </para>
+CREATE GRAPH altervdemo;
+SET graph_path = altervdemo;
+CREATE VLABEL film;
+CREATE (:film {title: 'Arrival', year: 2016}), (:film {title: 'Dune', year: 2021});
+ALTER VLABEL film RENAME TO movie;
+MATCH (m:movie) RETURN count(m) AS movies;
 
-  <para>
-   To rename edge label only if exists in the graph:
-<programlisting>
-ALTER VLABEL if exists elab1 RENAME TO vlabel1;
+ movies
+--------
+ 2
+(1 row)
 </programlisting>
-  </para>
+   Promote a property on a label that already holds rows. The existing rows are backfilled, so
+   the column is complete when the statement returns:
+<programlisting>
+ALTER VLABEL movie ADD COLUMN year int GENERATED;
+SELECT year FROM altervdemo.movie ORDER BY year;
 
-  <para>
-   To set edge label tablespace:
-<programlisting>
-ALTER VLABEL vlable1 SET TABLESPACE pg_default;
+ year
+------
+ 2016
+ 2021
+(2 rows)
 </programlisting>
-  </para>
+   <structname>ag_label_property</structname> maps a property key to the column that answers for
+   it. The two names differ whenever the explicit key form was used, and Cypher reads the key:
+<programlisting>
+ALTER VLABEL movie ADD COLUMN released text GENERATED (releaseDate);
+SELECT p.propname, a.attname FROM pg_catalog.ag_label_property p
+  JOIN pg_catalog.ag_label l ON l.oid = p.laboid
+  JOIN pg_attribute a ON a.attrelid = l.relid AND a.attnum = p.attnum
+ WHERE l.relid = 'altervdemo.movie'::regclass ORDER BY p.attnum;
 
-  <para>
-   This form sets the storage mode for a edge label.
-<programlisting>
-ALTER VLABEL vlabel1 SET STORAGE PLAIN;
+  propname   | attname
+-------------+----------
+ year        | year
+ releasedate | released
+(2 rows)
 </programlisting>
-  </para>
+   <literal>ALTER VLABEL movie DROP COLUMN released</literal> takes the mapping with the column,
+   and reads of <literal>releasedate</literal> go back to the property map, which still holds
+   the value. A structural column cannot be dropped at all, and the table cannot be reshaped
+   with SQL while <varname>enable_graph_ddl</varname> is off:
+<programlisting>
+ALTER VLABEL movie DROP COLUMN properties;
 
-  <para>
-   This form changes the edge label from unlogged to logged.
-<programlisting>
-ALTER VLABEL vlabel1 SET LOGGED;
+ERROR:  cannot drop column "properties" of graph label "movie"
+HINT:  It is a structural column of the graph label.
 </programlisting>
-  </para>
+<programlisting>
+ALTER TABLE altervdemo.movie ADD COLUMN rank int;
 
-  <para>
-   This form adds the target edge label as a new child of the specified parent edge label.
-<programlisting>
-ALTER VLABEL child_vlabel INHERIT parent_vlabel;
+ERROR:  cannot add a column to graph label "movie" with ALTER TABLE
+HINT:  Use ALTER VLABEL or ALTER ELABEL instead, which keeps the graph catalog in step.
 </programlisting>
-  </para>
-
-  <para>
-   To disabling index of edge label:
-<programlisting>
-ALTER VLABEL child_vlabel DISABLE INDEX;
-</programlisting>
-  </para>
-
-  <para>
-   To set owner to edge label:
-<programlisting>
-ALTER VLABEL child_vlabel OWNER TO parents;
-</programlisting>
+   <literal>DROP GRAPH altervdemo CASCADE</literal> drops the graph the examples built.
   </para>
  </refsect1>
 
- <refsect1>
-  <title>See Also</title>
+ <refsect1 id="cypher-altervlabel-notes">
+  <title>Notes</title>
 
+  <para>
+   A rename does not rename the label's sequence or its indexes. After
+   <literal>ALTER VLABEL film RENAME TO movie</literal> the primary key is still
+   <literal>film_pkey</literal>, so <literal>ALTER VLABEL movie CLUSTER ON movie_pkey</literal>
+   fails with <literal>index "movie_pkey" for table "movie" does not exist</literal>.
+  </para>
+
+  <para>
+   <literal>SET STORAGE</literal> takes four keywords, not five. <literal>DEFAULT</literal> is
+   reserved and is a syntax error here; write <literal>SET STORAGE extended</literal> to go back
+   to the mode a label starts with. The <literal>IF EXISTS</literal> notice differs between the
+   two forms: <literal>label "nosuch" does not exist, skipping</literal> from
+   <literal>RENAME TO</literal>, and <literal>graph label "nosuch" does not exist,
+   skipping</literal> from an action list.
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-altervlabel-compatibility">
+  <title>Compatibility</title>
+
+  <para>
+   ISO/IEC 39075:2024 has no statement that alters a label, because it has no labels. An element
+   type belongs to a graph type, created and dropped whole in clause 12.6, and nothing there
+   corresponds to renaming a label, promoting a property, or turning an index off.
+  </para>
+
+  <para>
+   Every action here is an <command>ALTER TABLE</command> action and means what it means there,
+   with three differences. <literal>SET STORAGE</literal> names no column and applies the mode
+   to <structfield>properties</structfield>. <literal>DISABLE INDEX</literal> has no counterpart
+   at all: it marks the label's indexes invalid, which SQL can otherwise only do by interrupting
+   <command>CREATE INDEX CONCURRENTLY</command>. And <literal>ADD COLUMN</literal> takes only the
+   promoted forms, where <command>ALTER TABLE</command> takes any column definition.
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-altervlabel-see-also">
+  <title>See Also</title>
   <simplelist type="inline">
+   <member><xref linkend="cypher-alterelabel"/></member>
    <member><xref linkend="cypher-createvlabel"/></member>
    <member><xref linkend="cypher-dropvlabel"/></member>
-   <member><xref linkend="cypher-alterelabel"/></member>
+   <member><xref linkend="cypher-reindex"/></member>
+   <member><xref linkend="agensgraph-config"/></member>
   </simplelist>
  </refsect1>
-
 </refentry>

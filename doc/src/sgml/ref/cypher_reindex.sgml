@@ -1,0 +1,281 @@
+<!--
+doc/src/sgml/ref/cypher_reindex.sgml
+PostgreSQL documentation
+-->
+
+<refentry id="cypher-reindex">
+ <indexterm zone="cypher-reindex">
+  <primary>REINDEX VLABEL</primary>
+ </indexterm>
+ <indexterm zone="cypher-reindex">
+  <primary>REINDEX ELABEL</primary>
+ </indexterm>
+
+ <refmeta>
+  <refentrytitle>REINDEX VLABEL</refentrytitle>
+  <manvolnum>7</manvolnum>
+  <refmiscinfo>Cypher - Language Statements</refmiscinfo>
+ </refmeta>
+
+ <refnamediv>
+  <refname>REINDEX VLABEL</refname>
+  <refpurpose>rebuild every index on a label</refpurpose>
+ </refnamediv>
+
+ <refsynopsisdiv>
+<synopsis>
+REINDEX [ ( <replaceable class="parameter">option</replaceable> [, ...] ) ] { VLABEL | ELABEL } <replaceable class="parameter">label_name</replaceable>
+
+<phrase>where <replaceable class="parameter">option</replaceable> can be one of:</phrase>
+
+    CONCURRENTLY [ <replaceable class="parameter">boolean</replaceable> ]
+    TABLESPACE <replaceable class="parameter">new_tablespace</replaceable>
+    VERBOSE [ <replaceable class="parameter">boolean</replaceable> ]
+</synopsis>
+ </refsynopsisdiv>
+
+ <refsect1 id="cypher-reindex-description">
+  <title>Description</title>
+
+  <para>
+   <command>REINDEX VLABEL</command> rebuilds every index on a vertex label and
+   <command>REINDEX ELABEL</command> every index on an edge label. That covers the
+   label's own indexes, every property index on it, and the index on its TOAST relation.
+  </para>
+
+  <para>
+   Rebuilding marks an invalid index valid again, which makes this statement the
+   counterpart to <literal>DISABLE INDEX</literal>. There is no
+   <literal>ENABLE INDEX</literal>. To load in bulk without maintaining the indexes, run
+   <literal>ALTER VLABEL <replaceable class="parameter">label_name</replaceable> DISABLE
+   INDEX</literal>, then the load, then
+   <literal>REINDEX VLABEL <replaceable class="parameter">label_name</replaceable></literal>.
+  </para>
+
+  <para>
+   The label is looked up in the graph named by <varname>graph_path</varname>. The name
+   cannot carry the graph: <literal>REINDEX VLABEL rebuildme.movie</literal> is a syntax
+   error. A label that is not there is reported by its qualified name, such as
+   <literal>relation "rebuildme.nosuch" does not exist</literal>, because
+   <varname>graph_path</varname> has already been applied to it.
+  </para>
+
+  <para>
+   Each statement takes one kind of label. <command>REINDEX VLABEL</command> on an edge
+   label fails with <literal>REINDEX VLABEL cannot REINDEX edge label</literal>, and
+   <command>REINDEX ELABEL</command> on a vertex label with the matching message.
+  </para>
+
+  <para>
+   Options go in parentheses before the label keyword.
+   <literal>REINDEX VLABEL CONCURRENTLY movie</literal> is a syntax error here, though
+   <command>REINDEX TABLE</command> accepts that bare keyword spelling. The older
+   spelling <literal>REINDEX LABEL</literal> does not exist and is a syntax error at
+   <literal>LABEL</literal>.
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-reindex-parameters">
+  <title>Parameters</title>
+
+  <variablelist>
+   <varlistentry>
+    <term><literal>CONCURRENTLY</literal></term>
+    <listitem>
+     <para>
+      Rebuild the indexes without locking out writes to the label, as
+      <command>REINDEX</command> does for a table.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><literal>TABLESPACE</literal> <replaceable class="parameter">new_tablespace</replaceable></term>
+    <listitem>
+     <para>
+      Write the rebuilt indexes to the named tablespace instead of the one they are in
+      now.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><literal>VERBOSE</literal></term>
+    <listitem>
+     <para>
+      Report each index as it is finished.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><replaceable class="parameter">boolean</replaceable></term>
+    <listitem>
+     <para>
+      <literal>CONCURRENTLY</literal> and <literal>VERBOSE</literal> each accept an
+      explicit boolean, so <literal>(VERBOSE false)</literal> is the same as leaving
+      <literal>VERBOSE</literal> out.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><replaceable class="parameter">label_name</replaceable></term>
+    <listitem>
+     <para>
+      Label whose indexes are rebuilt, in the graph named by
+      <varname>graph_path</varname>. It cannot be qualified with a graph name.
+     </para>
+    </listitem>
+   </varlistentry>
+  </variablelist>
+ </refsect1>
+
+ <refsect1 id="cypher-reindex-examples">
+  <title>Examples</title>
+
+  <para>
+   These examples do not use the graph in <xref linkend="agensgraph-example-data"/>. They
+   build a graph of their own and drop it at the end:
+<programlisting>
+CREATE GRAPH rebuildme;
+SET graph_path = rebuildme;
+CREATE VLABEL movie;
+CREATE ELABEL directed;
+CREATE PROPERTY INDEX movie_title_idx ON movie (title);
+CREATE (:movie {title: 'Arrival'});
+</programlisting>
+  </para>
+
+  <para>
+   Turning the indexes off leaves them in place but invalid, so a load does not maintain
+   them. After <literal>ALTER VLABEL movie DISABLE INDEX</literal>,
+   <literal>\d rebuildme.movie</literal> marks both the label's primary key
+   <literal>movie_pkey</literal> and the property index
+   <literal>movie_title_idx</literal> as <literal>INVALID</literal>. One statement builds
+   them, and the same <literal>\d</literal> then shows neither marked:
+<programlisting>
+REINDEX VLABEL movie;
+
+REINDEX
+</programlisting>
+  </para>
+
+  <para>
+   <literal>VERBOSE</literal> reports each index as it is finished. An edge label's three
+   indexes are all rebuilt, and so is the index on the TOAST relation that holds
+   oversized property maps. The TOAST index name carries the table's OID, so it differs
+   from run to run:
+<programlisting>
+ALTER ELABEL directed DISABLE INDEX;
+REINDEX (VERBOSE) ELABEL directed;
+
+ALTER ELABEL
+INFO:  index "pg_toast_NNNNN_index" was reindexed
+DETAIL:  CPU: user: 0.00 s, system: 0.00 s, elapsed: 0.00 s
+INFO:  index "directed_id_idx" was reindexed
+DETAIL:  CPU: user: 0.00 s, system: 0.00 s, elapsed: 0.00 s
+INFO:  index "directed_start_idx" was reindexed
+DETAIL:  CPU: user: 0.00 s, system: 0.00 s, elapsed: 0.00 s
+INFO:  index "directed_end_idx" was reindexed
+DETAIL:  CPU: user: 0.00 s, system: 0.00 s, elapsed: 0.00 s
+REINDEX
+</programlisting>
+  </para>
+
+  <para>
+   Rebuild without locking writes out. <literal>(TABLESPACE pg_default)</literal> in the
+   same position rebuilds into that tablespace:
+<programlisting>
+REINDEX (CONCURRENTLY) VLABEL movie;
+
+REINDEX
+</programlisting>
+  </para>
+
+  <para>
+   Each statement takes one kind of label:
+<programlisting>
+REINDEX VLABEL directed;
+
+ERROR:  REINDEX VLABEL cannot REINDEX edge label
+</programlisting>
+<programlisting>
+REINDEX ELABEL movie;
+
+ERROR:  REINDEX ELABEL cannot REINDEX vertex label
+</programlisting>
+  </para>
+
+  <para>
+   The name cannot carry the graph, and <literal>CONCURRENTLY</literal> belongs inside
+   the parentheses:
+<programlisting>
+REINDEX VLABEL rebuildme.movie;
+
+ERROR:  syntax error at or near "."
+LINE 1: REINDEX VLABEL rebuildme.movie;
+                                ^
+</programlisting>
+<programlisting>
+REINDEX VLABEL CONCURRENTLY movie;
+
+ERROR:  syntax error at or near "CONCURRENTLY"
+LINE 1: REINDEX VLABEL CONCURRENTLY movie;
+                       ^
+</programlisting>
+  </para>
+
+  <para>
+   <literal>DROP GRAPH rebuildme CASCADE</literal> drops the graph the examples built.
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-reindex-notes">
+  <title>Notes</title>
+
+  <para>
+   <command>REINDEX TABLE</command> on a label's table does the same job and needs no
+   setting to do it, so <literal>REINDEX TABLE rebuildme.movie</literal> also brings a
+   disabled label's indexes back. Prefer the label spellings anyway. They check that the
+   label is of the kind that was named, and they take a name resolved in
+   <varname>graph_path</varname> rather than one qualified with a schema.
+  </para>
+
+  <para>
+   <command>REINDEX SCHEMA</command> on a graph's schema rebuilds every index in the
+   graph, and <command>REINDEX INDEX</command> rebuilds one index by name. Both are the
+   ordinary SQL statements, with no form that knows about labels.
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-reindex-compatibility">
+  <title>Compatibility</title>
+
+  <para>
+   ISO/IEC 39075:2024 has no index DDL and nothing that rebuilds an index. Its catalog
+   modifying statements reach only schemas, graphs and graph types, in clause 12, so
+   these two spellings are an AgensGraph extension.
+  </para>
+
+  <para>
+   <command>REINDEX VLABEL</command> and <command>REINDEX ELABEL</command> are
+   <command>REINDEX TABLE</command> with a target that knows about labels. The options
+   are <command>REINDEX</command>'s own options and mean the same things. Two spelling
+   differences matter. The target name is resolved in <varname>graph_path</varname> and
+   cannot be qualified with a schema. And <literal>CONCURRENTLY</literal> is accepted
+   only as an option in parentheses, never as a bare keyword after the label keyword.
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-reindex-see-also">
+  <title>See Also</title>
+  <simplelist type="inline">
+   <member><xref linkend="cypher-altervlabel"/></member>
+   <member><xref linkend="cypher-alterelabel"/></member>
+   <member><xref linkend="cypher-createpropertyindex"/></member>
+   <member><xref linkend="cypher-droppropertyindex"/></member>
+   <member><xref linkend="cypher-createvlabel"/></member>
+  </simplelist>
+ </refsect1>
+</refentry>

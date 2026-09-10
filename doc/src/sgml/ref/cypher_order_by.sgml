@@ -1,0 +1,277 @@
+<!--
+doc/src/sgml/ref/cypher_order_by.sgml
+PostgreSQL documentation
+-->
+
+<refentry id="cypher-orderby">
+ <indexterm zone="cypher-orderby">
+  <primary>ORDER BY</primary>
+ </indexterm>
+
+ <refmeta>
+  <refentrytitle>ORDER BY</refentrytitle>
+  <manvolnum>7</manvolnum>
+  <refmiscinfo>Cypher - Language Statements</refmiscinfo>
+ </refmeta>
+
+ <refnamediv>
+  <refname>ORDER BY</refname>
+  <refpurpose>sort the working rows</refpurpose>
+ </refnamediv>
+
+ <refsynopsisdiv>
+<synopsis>
+ORDER BY <replaceable class="parameter">sort_key</replaceable> [ ASC | DESC ] [ NULLS { FIRST | LAST } ] [, ...]
+</synopsis>
+ </refsynopsisdiv>
+
+ <refsect1 id="cypher-orderby-description">
+  <title>Description</title>
+
+  <para>
+   <command>ORDER BY</command> sorts the rows currently in the pipeline. It is a clause
+   of its own, not only a trailing modifier of a projection, so it sorts anywhere in a
+   query and not only at the end. It is written after the clause whose rows it sorts, and
+   it applies to that clause's output. That clause is a <xref linkend="cypher-return"/>,
+   a <xref linkend="cypher-with"/> or a <xref linkend="cypher-match"/>.
+  </para>
+
+  <para>
+   Rows are compared by the first sort key. Ties go to the next key, and so on. Each key
+   sorts ascending unless <literal>DESC</literal> is written, and
+   <literal>ASC</literal> is the explicit default. Null values sort last under
+   <literal>ASC</literal> and first under <literal>DESC</literal>, unless
+   <literal>NULLS FIRST</literal> or <literal>NULLS LAST</literal> says otherwise.
+  </para>
+
+  <para>
+   A sort key is an expression, not a column number. <literal>ORDER BY 2</literal> sorts
+   by the constant 2, which orders nothing. Always name the key.
+  </para>
+
+  <para>
+   A sort key may name an item of the projection it follows, either as the whole key or
+   inside a larger expression, so <literal>RETURN m.title AS title ORDER BY
+   toUpper(title)</literal> resolves. It may equally read a variable the projection does
+   not output, such as <literal>ORDER BY m.year</literal> under a
+   <command>RETURN</command> of the title alone. Variables in scope are looked up first,
+   so a name that means something to the pattern keeps that meaning.
+  </para>
+
+  <para>
+   A key that computes with a volatile item is refused with
+   <literal>ORDER BY cannot compute with</literal>, naming the item. The key is a second
+   occurrence of that item's expression, so a volatile item would be evaluated once for
+   the value returned and once for the key, and the rows would be ordered by values other
+   than the ones they show. Naming such an item as the whole key is still allowed,
+   because that sorts on the item itself, evaluated once.
+  </para>
+
+  <para>
+   After <literal>RETURN DISTINCT</literal>, every sort key has to appear in the
+   projection.
+  </para>
+
+  <para>
+   <command>ORDER BY</command> cannot open a query and cannot end one. A sort produces no
+   result on its own, so the query still has to finish with <command>RETURN</command>,
+   <command>FINISH</command> or a write clause.
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-orderby-parameters">
+  <title>Parameters</title>
+
+  <variablelist>
+   <varlistentry>
+    <term><replaceable class="parameter">sort_key</replaceable></term>
+    <listitem>
+     <para>
+      An expression over the bindings in scope. After a <command>RETURN</command> or a
+      <command>WITH</command> this includes that clause's own item names. It may also be
+      an expression that was not projected at all.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><literal>ASC</literal></term>
+    <term><literal>DESC</literal></term>
+    <listitem>
+     <para>
+      Sort the key ascending or descending. <literal>ASC</literal> is the default.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><literal>NULLS FIRST</literal></term>
+    <term><literal>NULLS LAST</literal></term>
+    <listitem>
+     <para>
+      Where null values go. The default is <literal>NULLS LAST</literal> for an ascending
+      key and <literal>NULLS FIRST</literal> for a descending one.
+     </para>
+    </listitem>
+   </varlistentry>
+  </variablelist>
+ </refsect1>
+
+ <refsect1 id="cypher-orderby-examples">
+  <title>Examples</title>
+
+  <para>
+   These examples use the graph in <xref linkend="agensgraph-example-data"/>.
+  </para>
+
+  <para>
+   Sort by a projected column:
+<programlisting>
+MATCH (m:movie) WHERE m.year &gt; 2015
+RETURN m.title AS film, m.year AS year
+ORDER BY year;
+
+            film            | year
+----------------------------+------
+ "Blade Runner 2049"        | 2017
+ "The Matrix Resurrections" | 2021
+(2 rows)
+</programlisting>
+  </para>
+
+  <para>
+   Several keys sort in the order they are written, each in its own direction. Here
+   <literal>genre</literal> is ascending and <literal>year</literal> descending within
+   each genre:
+<programlisting>
+MATCH (m:movie)
+RETURN m.genre AS genre, m.year AS year, m.title AS film
+ORDER BY genre, year DESC, film
+LIMIT 5;
+
+  genre   | year |            film
+----------+------+----------------------------
+ "Action" | 2021 | "The Matrix Resurrections"
+ "Action" | 2012 | "The Avengers"
+ "Action" | 2003 | "The Matrix Reloaded"
+ "Action" | 2003 | "The Matrix Revolutions"
+ "Action" | 1999 | "The Matrix"
+(5 rows)
+</programlisting>
+  </para>
+
+  <para>
+   An <literal>OPTIONAL MATCH</literal> leaves nulls behind. The same query without
+   <literal>NULLS FIRST</literal> puts them last, because the key is ascending;
+   <literal>NULLS FIRST</literal> asks for the other placement without reversing the
+   sort:
+<programlisting>
+MATCH (p:person) WHERE p.born &gt; 1974
+OPTIONAL MATCH (p)-[:directed]-&gt;(m:movie)
+RETURN p.name AS person, m.title AS directed
+ORDER BY directed NULLS FIRST;
+
+      person       | directed
+-------------------+-----------
+ "Ryan Gosling"    |
+ "Sam Worthington" |
+ "Neill Blomkamp"  | "Elysium"
+(3 rows)
+</programlisting>
+  </para>
+
+  <para>
+   Sorting in the middle of a query, with a <xref linkend="cypher-limit"/>, narrows what
+   the rest of the query sees. The second <command>MATCH</command> runs against two rows,
+   not eighteen:
+<programlisting>
+MATCH (m:movie)
+ORDER BY m.year DESC LIMIT 2
+MATCH (p:person)-[:directed]-&gt;(m)
+RETURN m.title AS film, p.name AS director
+ORDER BY film;
+
+            film            |      director
+----------------------------+--------------------
+ "Blade Runner 2049"        | "Denis Villeneuve"
+ "The Matrix Resurrections" | "Lana Wachowski"
+(2 rows)
+</programlisting>
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-orderby-notes">
+  <title>Notes</title>
+
+  <para>
+   <command>ORDER BY</command> cannot open a query, so a statement that starts with it is
+   a syntax error:
+<programlisting>
+ORDER BY 1;
+
+ERROR:  syntax error at or near "ORDER"
+LINE 1: ORDER BY 1;
+        ^
+</programlisting>
+  </para>
+
+  <para>
+   Ending a query on it raises
+   <literal>Cypher query must end with RETURN, FINISH or update clause</literal>.
+  </para>
+
+  <para>
+   Sorting a property sorts a jsonb value, and jsonb orders by type before value: a
+   number sorts above every string, and both above null. A key whose stored values have
+   mixed types therefore groups by type first. Cast the key when the types are mixed and
+   one ordering across them is wanted.
+  </para>
+
+  <para>
+   A returned value sorts by the value itself rather than by the jsonb form the
+   projection hands back, whenever the value has a type with its own ordering. Rows and
+   ordering are the same either way for every ordered type except a float that is not
+   finite, which used to sort among strings. The gain is that an index on the value can
+   serve the ordering, so a sort key that repeats an indexed expression reads the index
+   instead of sorting every row.
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-orderby-compatibility">
+  <title>Compatibility</title>
+
+  <para>
+   <command>ORDER BY</command> implements the sort specification list of ISO/IEC
+   39075:2024, clause 16.17, as a clause of the order by and page statement of clause
+   14.9. Complex expressions in sort keys (feature GQ14), sort keys naming a variable the
+   projection did not output (features GQ16 and GA07) and aggregates in sort keys
+   (feature GF20) are all supported. The standard leaves the default null ordering to the
+   implementation; AgensGraph uses last for an ascending key and first for a descending
+   one. Two deviations remain. The standard accepts <literal>ASCENDING</literal> and
+   <literal>DESCENDING</literal> alongside the short spellings, and AgensGraph accepts
+   only <literal>ASC</literal> and <literal>DESC</literal>. And the standard's sort key is
+   a value expression with no ordinal form, so <literal>ORDER BY 2</literal> is the
+   constant 2 and reorders nothing rather than naming the second column as SQL would.
+  </para>
+
+  <para>
+   openCypher writes <command>ORDER BY</command> only as a trailing modifier of
+   <command>RETURN</command> or <command>WITH</command>. Both of those forms are accepted
+   here unchanged. The standalone clause, which sorts after a
+   <command>MATCH</command> or anywhere else in a query, and the explicit
+   <literal>NULLS FIRST</literal> and <literal>NULLS LAST</literal> placements are
+   additions.
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-orderby-see-also">
+  <title>See Also</title>
+  <simplelist type="inline">
+   <member><xref linkend="cypher-limit"/></member>
+   <member><xref linkend="cypher-skip"/></member>
+   <member><xref linkend="cypher-return"/></member>
+   <member><xref linkend="cypher-with"/></member>
+   <member><xref linkend="cypher-match"/></member>
+  </simplelist>
+ </refsect1>
+</refentry>

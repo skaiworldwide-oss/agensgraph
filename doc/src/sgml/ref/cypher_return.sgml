@@ -11,43 +11,84 @@ PostgreSQL documentation
  <refmeta>
   <refentrytitle>RETURN</refentrytitle>
   <manvolnum>7</manvolnum>
-  <refmiscinfo>SQL - Language Statements</refmiscinfo>
+  <refmiscinfo>Cypher - Language Statements</refmiscinfo>
  </refmeta>
 
  <refnamediv>
   <refname>RETURN</refname>
-  <refpurpose>project the graph element</refpurpose>
+  <refpurpose>end a query and name the columns of its result</refpurpose>
  </refnamediv>
 
  <refsynopsisdiv>
 <synopsis>
-
-RETURN [ DISTINCT ] { * | <replaceable class="parameter">expression</replaceable> [ AS <replaceable class="parameter">alias</replaceable> ] } [ , ... ]
-  [ ORDER BY <replaceable class="parameter">expression</replaceable> [ ASC | DESC ] [ NULLS { FIRST | LAST } ] [ , ... ] ]
-  [ SKIP <replaceable class="parameter">expression</replaceable> ] 
-  [ LIMIT <replaceable class="parameter">expression</replaceable> ]
-
+RETURN [ DISTINCT | ALL ] { * | <replaceable class="parameter">expression</replaceable> [ AS <replaceable class="parameter">alias</replaceable> ] } [, ...]
 </synopsis>
  </refsynopsisdiv>
 
- <refsect1>
+ <refsect1 id="cypher-return-description">
   <title>Description</title>
+
   <para>
-    The RETURN clause is a clause that specifies the result of a cypher query. It returns data
-    that matches the graph pattern you are looking for, and can return vertices, edges,
-    properties, and so on.
+   <command>RETURN</command> is the terminal projection. It evaluates its expressions once
+   per row and emits them as the result columns of the query. A read query has to end with
+   <command>RETURN</command> or <xref linkend="cypher-finish"/>; a write query may end with
+   either of those or with the write clause itself.
   </para>
+
+  <para>
+   A column taken from a property comes back as <type>jsonb</type>.
+   <literal>RETURN m.title</literal> prints <literal>"The Matrix"</literal>, with the quotes,
+   and so does <literal>RETURN m.title::text</literal>. To get a plain scalar, wrap the query
+   in SQL. See <xref linkend="cypher-return-notes"/>.
+  </para>
+
+  <para>
+   <literal>*</literal> projects every named binding in scope. A pattern element left unnamed
+   is not projected. An aggregate in the list groups the rows implicitly: every other
+   expression in the list becomes the grouping key, as it would in SQL under a
+   <literal>GROUP BY</literal>. <literal>DISTINCT</literal> removes duplicate result rows, and
+   <literal>ALL</literal> is the explicit spelling of the default.
+  </para>
+
+  <para>
+   <command>ORDER BY</command>, <command>SKIP</command>, <literal>OFFSET</literal> and
+   <command>LIMIT</command> are clauses in their own right that follow a
+   <command>RETURN</command>. They are not part of the projection. See
+   <xref linkend="cypher-orderby"/>, <xref linkend="cypher-skip"/> and
+   <xref linkend="cypher-limit"/>. Unlike <xref linkend="cypher-with"/>,
+   <command>RETURN</command> allows the same output name twice, because no later clause has to
+   resolve it.
+  </para>
+
  </refsect1>
 
- <refsect1>
+ <refsect1 id="cypher-return-parameters">
   <title>Parameters</title>
+
   <variablelist>
    <varlistentry>
     <term><literal>DISTINCT</literal></term>
     <listitem>
      <para>
-      If <literal>DISTINCT</literal> is specified, all duplicate rows are
-      removed from the result set.
+      Removes duplicate rows from the result.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><literal>ALL</literal></term>
+    <listitem>
+     <para>
+      Keeps duplicate rows. This is the default.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><literal>*</literal></term>
+    <listitem>
+     <para>
+      Projects every named binding currently in scope.
      </para>
     </listitem>
    </varlistentry>
@@ -56,212 +97,206 @@ RETURN [ DISTINCT ] { * | <replaceable class="parameter">expression</replaceable
     <term><replaceable class="parameter">expression</replaceable></term>
     <listitem>
      <para>
-      The cypher expression that you want to project.
-      See <xref linkend="cypher-expr"/> for more details.
+      Any Cypher expression over the bindings in scope. That includes a vertex or an edge
+      variable, a property reference, a path variable, a function call, an aggregate, an
+      arithmetic or <literal>CASE</literal> expression, a list or map constructor, and a
+      constant. See <xref linkend="cypher-expr"/>.
      </para>
     </listitem>
    </varlistentry>
 
    <varlistentry>
-      <term><replaceable class="parameter">alias</replaceable></term>
-      <listitem>
-       <para>
-        A substitute name for the result column item.
-       </para>
-    </listitem>
-   </varlistentry>
-
-   <varlistentry>
-    <term><literal>ORDER BY</literal></term>
+    <term><replaceable class="parameter">alias</replaceable></term>
     <listitem>
      <para>
-      If the <literal>ORDER BY</literal> clause is specified, the
-      returned rows are sorted in the specified order.  If
-      <literal>ORDER BY</literal> is not given, the rows are returned
-      in whatever order the system finds fastest to produce.  (See
-      <xref linkend="sql-orderby"/> below.)
-     </para>
-    </listitem>
-   </varlistentry>
-
-   <varlistentry>
-    <term><literal>ASC | DESC</literal></term>
-    <listitem>
-     <para>
-      Optionally one can add the key word <literal>ASC</literal> (ascending) or
-      <literal>DESC</literal> (descending) after any expression in the
-      <literal>ORDER BY</literal> clause.  If not specified, <literal>ASC</literal> is
-      assumed by default.  Alternatively, a specific ordering operator
-      name can be specified in the <literal>USING</literal> clause.
-      An ordering operator must be a less-than or greater-than
-      member of some B-tree operator family.
-      <literal>ASC</literal> is usually equivalent to <literal>USING &lt;</literal> and
-      <literal>DESC</literal> is usually equivalent to <literal>USING &gt;</literal>.
-      (But the creator of a user-defined data type can define exactly what the
-      default sort ordering is, and it might correspond to operators with other
-      names.)
-     </para>
-    </listitem>
-   </varlistentry>
-
-   <varlistentry>
-    <term><literal>NULLS { LAST | FIRST }</literal></term>
-    <listitem>
-     <para>
-      If <literal>NULLS LAST</literal> is specified, null values sort after all
-      non-null values; if <literal>NULLS FIRST</literal> is specified, null values
-      sort before all non-null values.  If neither is specified, the default
-      behavior is <literal>NULLS LAST</literal> when <literal>ASC</literal> is specified
-      or implied, and <literal>NULLS FIRST</literal> when <literal>DESC</literal> is specified
-      (thus, the default is to act as though nulls are larger than non-nulls).
-      When <literal>USING</literal> is specified, the default nulls ordering depends
-      on whether the operator is a less-than or greater-than operator.
-     </para>
-    </listitem>
-   </varlistentry>
-
-   <varlistentry>
-    <term><literal>SKIP</literal></term>
-    <listitem>
-     <para>
-      <command>SKIP</command> clause will changes the search start location.
-      The number of patterns specified in the SKIP clause will be skipped in the result.
-     </para>
-    </listitem>
-   </varlistentry>
-
-   <varlistentry>
-    <term><literal>LIMIT</literal></term>
-    <listitem>
-     <para>
-      The parameter <replaceable class="parameter">count</replaceable> specifies the
-      maximum number of rows to return.
+      The name of the result column. Without double quotes it folds to lower case. Quote it to
+      keep the case you wrote. With no alias, a property reference takes the name of the
+      property and anything else becomes <literal>?column?</literal>.
      </para>
     </listitem>
    </varlistentry>
   </variablelist>
  </refsect1>
 
- <refsect1>
+ <refsect1 id="cypher-return-examples">
   <title>Examples</title>
 
   <para>
-   Vertex Return:
-<programlisting>
-MATCH (j {name: 'Jack'})
-RETURN j;
-</programlisting>
-If you want to return a vertex, specify the vertex you want to find in the MATCH clause
-and assign a variable to it. You can then return a vertex by specifying the
-corresponding variable in the RETURN clause.
+   These examples use the graph in <xref linkend="agensgraph-example-data"/>.
   </para>
 
   <para>
-   Edge Return:
+   Return a whole vertex. A vertex prints as <literal>label[id]{properties}</literal>:
 <programlisting>
-MATCH (j {name: 'Jack'})-[k:knows]->(e)
-RETURN k;
-</programlisting>
-If you want to return an edge, specify the edge you want to find in the MATCH clause
-and assign a variable to it. You can then return an edge by specifying the
-corresponding variable in the RETURN clause.
-  </para>
-
-  <para>
-   Property Return:
-<programlisting>
-MATCH (j {name: 'Jack'})
-RETURN j.age;
-</programlisting>
-If you want to return a property of a vertex or edge, specify the vertex or edge you
-want to find in the MATCH clause and assign a variable to it. In the RETURN clause,
-you can return the property by specifying dot(.) with the variable and property.
-  </para>
-
-  <para>
-   All Return:
-<programlisting>
-MATCH (j {name: 'Jack'})-[k:knows]->(e)
-RETURN *;
-</programlisting>
-If you want to return all the elements in the MATCH clause, specify asterisk(*) in the RETURN
-clause. The elements returned are the elements to which variables are assigned.
-Elements with no variable assigned will not be returned.
-  </para>
-
-  <para>
-   Path Return:
-<programlisting>
-MATCH p=(j {name: 'Jack'})-[k:knows]->(e)
+MATCH (p:person {name: 'Keanu Reeves'})
 RETURN p;
+
+                         p
+---------------------------------------------------
+ person[4.1]{"born": 1964, "name": "Keanu Reeves"}
+(1 row)
 </programlisting>
-If you want to return a path that matches the pattern shown in the MATCH clause, you
-should apply a variable to the entire pattern. If the pattern is preceded by a variable
-and =, the variable can be applied to the entire pattern. You can then return the path
-by specifying the variable in the RETURN clause.
   </para>
 
   <para>
-   Alias Return:
+   An edge prints the same way with its two endpoints added:
 <programlisting>
--- without double quotation with alias name
-MATCH (j {name: 'Jack'})
-RETURN j.age AS HisAge;
+MATCH (:person {name: 'Keanu Reeves'})-[r:acted_in]-&gt;(:movie {title: 'The Matrix'})
+RETURN r;
 
--- double quotation with alias name
-MATCH (j {name: 'Jack'})
-RETURN j.age AS "HisAge";
+                   r
+---------------------------------------
+ acted_in[5.1][4.1,3.1]{"role": "Neo"}
+(1 row)
 </programlisting>
-You can output an alias to the column of the returned result. The returned element is
-followed by an alias with the AS keyword. If you list the alias without double quotation
-marks, the output will be in lower case; with double quotation marks, the output will
-be printed as it is.
   </para>
 
   <para>
-   Function Return:
+   An unaliased property reference takes the name of the property, so
+   <literal>RETURN p.born</literal> heads its column <literal>born</literal>. An alias renames
+   it, folding to lower case unless it is quoted:
 <programlisting>
-MATCH (j {name: 'Jack'})-[k:knows]->(e)
-RETURN id(k), properties(k);
+MATCH (p:person {name: 'Keanu Reeves'})
+RETURN p.born AS "BornIn";
 
-MATCH p=(j {name: 'Jack'})-[k:knows]->(e)
-RETURN length(p), nodes(p), edges(p);
-
-MATCH (a)
-RETURN count(a);
+ BornIn
+--------
+ 1964
+(1 row)
 </programlisting>
-It provides a function to obtain only id and properties for vertices and edges, and a
-function to get length and each element separately of the path. You may also use the
-aggregation function supported by PostgreSQL.
   </para>
 
   <para>
-   Constant Return:
+   <literal>*</literal> returns one column per named element of the pattern. Written
+   <literal>-[:acted_in]-&gt;</literal>, without a variable, the edge would not appear:
 <programlisting>
-RETURN 3 + 4, 'Hello ' + 'AgensGraph';
-RETURN 3 + 4 AS lucky, 'Hello ' + 'AgensGraph' AS greeting
+MATCH (p:person {name: 'Ryan Gosling'})-[r:acted_in]-&gt;(m:movie)
+RETURN *;
+
+                         p                          |                   r                   |                                                                                                                                     m
+----------------------------------------------------+---------------------------------------+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ person[4.10]{"born": 1980, "name": "Ryan Gosling"} | acted_in[5.13][4.10,3.9]{"role": "K"} | movie[3.9]{"plot": "A new blade runner unearths a long-buried secret that has the potential to plunge what's left of society into chaos.", "year": 2017, "genre": "Sci-Fi", "title": "Blade Runner 2049", "embedding": [0.21560573, -0.07505179, -0.01331814, 0.13403069]}
+(1 row)
 </programlisting>
-Constant values and their operators can be expressed. All of the expressions useable in
-the SQL SELECT statement can be used with the RETURN clause, except for table and
-column expressions. For more information, see PostgreSQL Expression.
   </para>
 
   <para>
-   Unique Return:
+   Twenty five <literal>acted_in</literal> edges point at films of three genres, so
+   <literal>DISTINCT</literal> cuts the result to three rows:
 <programlisting>
-MATCH (j { name: 'Jack' })-[k:knows]->(e)
-RETURN DISTINCT e;
+MATCH (p:person)-[:acted_in]-&gt;(m:movie)
+RETURN DISTINCT m.genre AS genre
+ORDER BY genre;
+
+    genre
+-------------
+ "Action"
+ "Adventure"
+ "Sci-Fi"
+(3 rows)
 </programlisting>
-Removes the duplicate records of the returned result and outputs only the unique
-result. You can add DISTINCT before the returned element.
+  </para>
+
+  <para>
+   An aggregate with no other expression beside it collapses the whole input to one row.
+   List any other expression alongside it and that expression becomes the grouping key:
+<programlisting>
+MATCH (p:person)-[:acted_in]-&gt;(m:movie)
+RETURN m.genre AS genre, count(*) AS roles
+ORDER BY genre;
+
+    genre    | roles
+-------------+-------
+ "Action"    | 13
+ "Adventure" | 1
+ "Sci-Fi"    | 11
+(3 rows)
+</programlisting>
+  </para>
+
+  <para>
+   <literal>collect()</literal> gathers a group into one list:
+<programlisting>
+MATCH (p:person)-[:acted_in]-&gt;(m:movie {title: 'The Matrix'})
+RETURN collect(p.name) AS cast;
+
+                            cast
+------------------------------------------------------------
+ ["Keanu Reeves", "Laurence Fishburne", "Carrie-Anne Moss"]
+(1 row)
+</programlisting>
   </para>
  </refsect1>
 
-  <refsect1>
+ <refsect1 id="cypher-return-notes">
+  <title>Notes</title>
+
+  <para>
+   Because a column taken from a property comes back as <type>jsonb</type>,
+   <command>RETURN</command> is a poor interface for an application that wants native types.
+   Put the Cypher in a <command>SELECT</command> subquery and unbox it there with the jsonb
+   operators: <literal>-&gt;&gt;</literal> reads a key as text, and
+   <literal>#&gt;&gt; '{}'</literal> extracts a jsonb scalar column as text:
+<programlisting>
+SELECT d.props -&gt;&gt; 'title' AS film, r.score
+FROM (MATCH (p:person)-[:directed]-&gt;(m:movie)
+      WHERE p.name = 'Christopher Nolan'
+      RETURN properties(m) AS props) d
+JOIN rating r ON r.title = d.props -&gt;&gt; 'title'
+WHERE r.source = 'critics'
+ORDER BY r.score DESC;
+
+     film     | score
+--------------+-------
+ Inception    |   8.8
+ Interstellar |   8.7
+(2 rows)
+</programlisting>
+  </para>
+
+  <para>
+   An <command>ORDER BY</command> after <literal>RETURN DISTINCT</literal> may sort only by
+   expressions that appear in the projection, which is the SQL rule for
+   <literal>SELECT DISTINCT</literal>. Project the sort key, or drop
+   <literal>DISTINCT</literal> and deduplicate with a grouping aggregate instead:
+<programlisting>
+MATCH (m:movie) RETURN DISTINCT m.genre AS genre ORDER BY m.year;
+
+ERROR:  for SELECT DISTINCT, ORDER BY expressions must appear in select list
+LINE 1: ... (m:movie) RETURN DISTINCT m.genre AS genre ORDER BY m.year;
+                                                                ^
+</programlisting>
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-return-compatibility">
+  <title>Compatibility</title>
+
+  <para>
+   <command>RETURN</command> implements the GQL return statement of ISO/IEC 39075:2024,
+   section 14.11. The standard gives a result column the declared type of its expression.
+   AgensGraph returns every Cypher result column as <type>jsonb</type> whatever the type of
+   the expression is, including after an explicit cast. Unbox in SQL, as above.
+  </para>
+
+  <para>
+   openCypher writes <command>ORDER BY</command>, <command>SKIP</command> and
+   <command>LIMIT</command> as trailing modifiers of <command>RETURN</command>. AgensGraph
+   accepts that spelling unchanged and also accepts each of the three as a clause of its own
+   anywhere in a query. <literal>ALL</literal> after <command>RETURN</command> is the
+   standard spelling of the default and is not part of openCypher.
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-return-see-also">
   <title>See Also</title>
   <simplelist type="inline">
-   <member><xref linkend="cypher-match"/></member>
+   <member><xref linkend="cypher-with"/></member>
+   <member><xref linkend="cypher-finish"/></member>
+   <member><xref linkend="cypher-orderby"/></member>
+   <member><xref linkend="cypher-skip"/></member>
+   <member><xref linkend="cypher-limit"/></member>
+   <member><xref linkend="cypher-union"/></member>
   </simplelist>
  </refsect1>
 </refentry>
-

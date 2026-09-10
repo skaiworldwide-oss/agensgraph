@@ -5,140 +5,296 @@ PostgreSQL documentation
 
 <refentry id="cypher-merge">
  <indexterm zone="cypher-merge">
-  <primary>CYPHER MERGE</primary>
+  <primary>MERGE</primary>
  </indexterm>
 
  <refmeta>
   <refentrytitle>MERGE</refentrytitle>
   <manvolnum>7</manvolnum>
-  <refmiscinfo>SQL - Language Statements</refmiscinfo>
+  <refmiscinfo>Cypher - Language Statements</refmiscinfo>
  </refmeta>
 
  <refnamediv>
   <refname>MERGE</refname>
-  <refpurpose>merge the cypher elements to target</refpurpose>
+  <refpurpose>match a pattern if it exists, create it if it does not</refpurpose>
  </refnamediv>
 
  <refsynopsisdiv>
 <synopsis>
-MERGE <replaceable class="parameter">path_pattern</replaceable> 
-    [ ON { CREATE | MATCH } SET <replaceable class="parameter">set_expression</replaceable> [ , ... ] ] [ ... ]
+MERGE <replaceable class="parameter">pattern</replaceable>
+    [ ON { CREATE | MATCH } SET <replaceable class="parameter">set_item</replaceable> [, <replaceable class="parameter">set_item</replaceable> ] ... ] ...
 </synopsis>
  </refsynopsisdiv>
 
- <refsect1>
+ <refsect1 id="cypher-merge-description">
   <title>Description</title>
+
   <para>
-   The <command>MERGE</command> clause is a clause that 
-     <orderedlist>
-       <listitem><para>If the specified pattern does not exist in the graph, adds a corresponding pattern (like the CREATE clause)</para></listitem>
-       <listitem><para>If it already exists in the graph, verifies existence of the pattern (like the Match clause).</para></listitem>
-     </orderedlist>
-   The MERGE clause recognizes the entire pattern specified in the clause.
+   <command>MERGE</command> is one clause doing the work of a <xref linkend="cypher-match"/>
+   and a <xref linkend="cypher-create"/>. It looks for its pattern. If the pattern is there it
+   behaves like a <command>MATCH</command>, and if it is not it behaves like a
+   <command>CREATE</command>. Either way the pattern's variables end up bound, so the rest of
+   the query need not know which happened.
+  </para>
+
+  <para>
+   One rule decides everything else. The clause considers the pattern as a whole. If the entire
+   pattern matches, nothing is written. If any part of it is missing, the entire pattern is
+   created, including the parts that already exist elsewhere in the graph. Merging
+   <literal>(a)-[:e]-&gt;(b)</literal> when both vertices exist but the edge does not creates a
+   second <literal>a</literal> and a second <literal>b</literal> as well as the edge.
+  </para>
+
+  <para>
+   So merge one element at a time when you are not sure what is already there. Use a
+   <command>MERGE</command> per vertex, then a <command>MERGE</command> for the edge between
+   the variables they bound. Written that way, <command>MERGE</command> is idempotent. One
+   clause takes one pattern, so several patterns need several clauses.
+  </para>
+
+  <para>
+   <command>MERGE</command> runs once per incoming row. It may lead a query, follow another
+   clause, and end one.
   </para>
  </refsect1>
 
- <refsect1>
+ <refsect1 id="cypher-merge-parameters">
   <title>Parameters</title>
-   <variablelist>
-    <varlistentry>
-     <term><replaceable class="parameter">path_pattern</replaceable> </term>
-     <listitem>
-      <para>
-       The graph pattern to be searched is described in the clause.
-       See both below example section and <xref linkend="cypher-path"/> for more details.
-      </para>
-     </listitem>
-    </varlistentry>
 
-    <varlistentry>
-     <term><literal>ON CREATE SET</literal></term>
-     <listitem>
-      <para>
-       If the MERGE clause behaves like a <literal>CREATE</literal> clause, the <literal>ON CREATE SET</literal> clause will be performed.
-      </para>
-     </listitem>
-    </varlistentry>
+  <variablelist>
+   <varlistentry>
+    <term><replaceable class="parameter">pattern</replaceable></term>
+    <listitem>
+     <para>
+      One path pattern in <xref linkend="cypher-match"/> syntax, described in
+      <xref linkend="cypher-path"/>. Every property in it is both a match condition and, on
+      create, a property to set.
+     </para>
+    </listitem>
+   </varlistentry>
 
-    <varlistentry>
-     <term><literal>ON MATCH SET</literal></term>
-     <listitem>
-      <para>
-       If the MERGE clause behaves like a <literal>MATCH</literal> clause, the <literal>ON MATCH SET</literal> clause will be performed.
-      </para>
-     </listitem>
-    </varlistentry>
+   <varlistentry>
+    <term><literal>ON CREATE SET</literal></term>
+    <term><literal>ON MATCH SET</literal></term>
+    <listitem>
+     <para>
+      <literal>ON CREATE SET</literal> applies its assignments only when the pattern was
+      created, <literal>ON MATCH SET</literal> only when it was found. Both may be given, in
+      either order.
+     </para>
+    </listitem>
+   </varlistentry>
 
-    <varlistentry>
-     <term><replaceable class="parameter">set_expression</replaceable></term>
-     <listitem>
-      <para>
-       The set expression for SET operation. It's a subset clause of MERGE statement.
-       See both below example section and <xref linkend="cypher-set"/> for more details.
-      </para>
-     </listitem>
-    </varlistentry>
-   </variablelist>
+   <varlistentry>
+    <term><replaceable class="parameter">set_item</replaceable></term>
+    <listitem>
+     <para>
+      One assignment in <xref linkend="cypher-set"/> syntax:
+      <literal>variable.key = expression</literal>, <literal>variable = map</literal> or
+      <literal>variable += map</literal>.
+     </para>
+    </listitem>
+   </varlistentry>
+  </variablelist>
  </refsect1>
 
- <refsect1>
+ <refsect1 id="cypher-merge-examples">
   <title>Examples</title>
+
   <para>
-   To merge a vertex:
-<programlisting>
-MERGE (:person {name: 'Edward'});
-</programlisting>
+   These examples use the graph in <xref linkend="agensgraph-example-data"/>.
   </para>
 
   <para>
-   To merge a path:
+   The first run creates:
 <programlisting>
-MERGE (E:person {name: 'Edward'})-[L:likes]->(A:person {name: 'Alice'})
-RETURN E, L, A;
-</programlisting>
-  </para>
+MERGE (m:movie {title: 'Tenet'}) RETURN m.title AS film, m.year AS year;
 
-  <para>
-   To merge a path but step by step merge:
-<programlisting>
-MERGE (E:person {name: 'Edward'})
-MERGE (A:person {name: 'Alice'})
-MERGE (E)-[L:likes]->(A)
-RETURN E, L, A;
-</programlisting>
-  </para>
-
-  <para>
-   To merge a vertex with <literal>ON CREATE SET</literal> and <literal>ON MATCH SET</literal>:
-<programlisting>
--- Vertex will be newly merged:
-MERGE (E:person {name: 'Edward'})
-ON CREATE SET E.lastop = 'CREATE'
-ON MATCH SET E.lastop = 'MATCH'
-RETURN E.lastop;
-  lastop  
-----------
- "CREATE"
+  film   | year
+---------+------
+ "Tenet" |
 (1 row)
+</programlisting>
+   Only <literal>title</literal> was in the pattern, so <literal>year</literal> is unset. A
+   property in the pattern is part of what is matched, so this clause matches only a
+   <literal>movie</literal> whose <literal>title</literal> is exactly
+   <literal>Tenet</literal>. The second run finds the same vertex and writes nothing:
+<programlisting>
+MERGE (m:movie {title: 'Tenet'}) RETURN m.title AS film, m.year AS year;
 
--- Do the same query again:
-MERGE (E:person {name: 'Edward'})
-ON CREATE SET E.lastop = 'CREATE'
-ON MATCH SET E.lastop = 'MATCH'
-RETURN E.lastop;
-  lastop  
-----------
- "MATCH"
+  film   | year
+---------+------
+ "Tenet" |
 (1 row)
+</programlisting>
+  </para>
+
+  <para>
+   The two branches can set different properties. Start from nothing:
+<programlisting>
+MATCH (m:movie {title: 'Tenet'}) DETACH DELETE m;
+
+UPDATE 1
+</programlisting>
+<programlisting>
+MERGE (m:movie {title: 'Tenet'})
+ON CREATE SET m.year = 2020, m.source = 'created'
+ON MATCH SET m.source = 'matched'
+RETURN m.title AS film, m.year AS year, m.source AS source;
+
+  film   | year |  source
+---------+------+-----------
+ "Tenet" | 2020 | "created"
+(1 row)
+</programlisting>
+   The identical statement run a second time takes the other branch:
+<programlisting>
+MERGE (m:movie {title: 'Tenet'})
+ON CREATE SET m.year = 2020, m.source = 'created'
+ON MATCH SET m.source = 'matched'
+RETURN m.title AS film, m.year AS year, m.source AS source;
+
+  film   | year |  source
+---------+------+-----------
+ "Tenet" | 2020 | "matched"
+(1 row)
+</programlisting>
+   <literal>year</literal> keeps the value the create branch gave it, because
+   <literal>ON MATCH SET</literal> did not touch it.
+  </para>
+
+  <para>
+   There is one Christopher Nolan, and he has not directed <literal>Tenet</literal>:
+<programlisting>
+MATCH (m:movie {title: 'Tenet'}) DETACH DELETE m;
+MATCH (p:person {name: 'Christopher Nolan'}) RETURN count(*) AS nolans;
+
+UPDATE 1
+ nolans
+--------
+ 1
+(1 row)
+</programlisting>
+   Merging the whole path finds no match, because the edge is missing, so it creates the whole
+   path:
+<programlisting>
+MERGE (d:person {name: 'Christopher Nolan'})-[:directed]-&gt;(m:movie {title: 'Tenet'})
+RETURN d.name AS director, m.title AS film;
+
+      director       |  film
+---------------------+---------
+ "Christopher Nolan" | "Tenet"
+(1 row)
+</programlisting>
+<programlisting>
+MATCH (p:person {name: 'Christopher Nolan'}) RETURN count(*) AS nolans;
+
+ nolans
+--------
+ 2
+(1 row)
+</programlisting>
+   The second Christopher Nolan has no <literal>born</literal> property and none of the
+   original's edges. This is the mistake <command>MERGE</command> invites.
+  </para>
+
+  <para>
+   Undo that, then merge each element separately:
+<programlisting>
+MATCH (p:person {name: 'Christopher Nolan'})
+WHERE NOT EXISTS { MATCH (p)-[:directed]-&gt;(:movie {title: 'Inception'}) }
+DETACH DELETE p;
+MATCH (m:movie {title: 'Tenet'}) DETACH DELETE m;
+
+UPDATE 2
+UPDATE 1
+</programlisting>
+<programlisting>
+MERGE (d:person {name: 'Christopher Nolan'})
+MERGE (m:movie {title: 'Tenet'})
+MERGE (d)-[:directed]-&gt;(m)
+RETURN d.name AS director, m.title AS film;
+
+      director       |  film
+---------------------+---------
+ "Christopher Nolan" | "Tenet"
+(1 row)
+</programlisting>
+<programlisting>
+MATCH (p:person {name: 'Christopher Nolan'}) RETURN count(*) AS nolans;
+
+ nolans
+--------
+ 1
+(1 row)
+</programlisting>
+   The first <command>MERGE</command> matched the existing person, the second created the film,
+   the third created just the edge. Running the same three clauses again changes nothing.
+  </para>
+
+  <para>
+   More than one pattern is refused by the grammar:
+<programlisting>
+MERGE (a:movie {title: 'A'}), (b:movie {title: 'B'});
+
+ERROR:  syntax error at or near ","
+LINE 1: MERGE (a:movie {title: 'A'}), (b:movie {title: 'B'});
+                                    ^
 </programlisting>
   </para>
  </refsect1>
 
-  <refsect1>
+ <refsect1 id="cypher-merge-notes">
+  <title>Notes</title>
+
+  <para>
+   A unique constraint turns the duplication risk into a clean failure rather than silent data
+   corruption. Remove the merged film first:
+<programlisting>
+MATCH (m:movie {title: 'Tenet'}) DETACH DELETE m;
+
+UPDATE 2
+</programlisting>
+   With <literal>name</literal> unique on <literal>person</literal>, the merge of the whole
+   path cannot create its second Nolan:
+<programlisting>
+CREATE CONSTRAINT unique_person_name ON person ASSERT name IS UNIQUE;
+MERGE (d:person {name: 'Christopher Nolan'})-[:directed]-&gt;(m:movie {title: 'Tenet'})
+RETURN d.name AS director, m.title AS film;
+
+CREATE CONSTRAINT
+ERROR:  conflicting key value violates exclusion constraint "unique_person_name"
+DETAIL:  Key ((properties.'name'))=("Christopher Nolan") conflicts with existing key ((properties.'name'))=("Christopher Nolan").
+</programlisting>
+   Nothing is created, and the transaction reports the reason.
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-merge-compatibility">
+  <title>Compatibility</title>
+
+  <para>
+   ISO/IEC 39075:2024 has no <command>MERGE</command>. Its data changing statements are the
+   insert statement of section 13.2, the set statement of 13.3, the remove statement of 13.4
+   and the delete statement of 13.5. The standard way to write it is an <literal>EXISTS</literal>
+   test, or a <xref linkend="cypher-call"/> subquery, followed by <xref linkend="cypher-insert"/>.
+  </para>
+
+  <para>
+   <command>MERGE</command> comes from openCypher, and AgensGraph keeps the openCypher
+   semantics: the pattern is considered as a whole, and both branches take the same assignment
+   list as <xref linkend="cypher-set"/>.
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-merge-see-also">
   <title>See Also</title>
   <simplelist type="inline">
-   <member><xref linkend="cypher-match"/></member>
    <member><xref linkend="cypher-create"/></member>
+   <member><xref linkend="cypher-match"/></member>
+   <member><xref linkend="cypher-set"/></member>
+   <member><xref linkend="cypher-delete"/></member>
+   <member><xref linkend="cypher-createconstraint"/></member>
   </simplelist>
  </refsect1>
 </refentry>

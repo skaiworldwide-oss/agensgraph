@@ -1,0 +1,268 @@
+<!--
+doc/src/sgml/ref/cypher_for.sgml
+PostgreSQL documentation
+-->
+
+<refentry id="cypher-for">
+ <indexterm zone="cypher-for">
+  <primary>FOR</primary>
+ </indexterm>
+
+ <refmeta>
+  <refentrytitle>FOR</refentrytitle>
+  <manvolnum>7</manvolnum>
+  <refmiscinfo>Cypher - Language Statements</refmiscinfo>
+ </refmeta>
+
+ <refnamediv>
+  <refname>FOR</refname>
+  <refpurpose>expand a list into one row per element</refpurpose>
+ </refnamediv>
+
+ <refsynopsisdiv>
+<synopsis>
+FOR <replaceable class="parameter">variable</replaceable> IN <replaceable class="parameter">list</replaceable> [ WITH OFFSET [ AS <replaceable class="parameter">offset_variable</replaceable> ] ]
+</synopsis>
+ </refsynopsisdiv>
+
+ <refsect1 id="cypher-for-description">
+  <title>Description</title>
+
+  <para>
+   <command>FOR</command> joins each input row with the elements of a list. An input row that
+   meets a list of four elements becomes four output rows. When the list depends on the row,
+   the expansion runs again for every row.
+  </para>
+
+  <para>
+   The element variable has to be a new name. Reusing a name that is in scope raises
+   <literal>duplicate variable "&lt;name&gt;"</literal>. <literal>WITH OFFSET</literal> binds
+   the position of each element, and the first position is 0.
+  </para>
+
+  <para>
+   An empty list, a null list and a missing property all produce zero rows, so a
+   <command>FOR</command> over nothing drops its input row. A scalar is not a list. It is
+   refused rather than wrapped in a list of one.
+  </para>
+
+  <para>
+   <command>FOR</command> may open a query, sit in the middle of one, or drive a write clause.
+   It cannot end one.
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-for-parameters">
+  <title>Parameters</title>
+
+  <variablelist>
+   <varlistentry>
+    <term><replaceable class="parameter">variable</replaceable></term>
+    <listitem>
+     <para>
+      Name bound to one element per output row. It must not already be in scope.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><replaceable class="parameter">list</replaceable></term>
+    <listitem>
+     <para>
+      Any expression that produces a list: a literal, <function>range()</function>, a property
+      holding a list, a list built by an earlier <function>collect()</function>, or two lists
+      concatenated with <literal>+</literal>.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><replaceable class="parameter">offset_variable</replaceable></term>
+    <listitem>
+     <para>
+      Name bound to the position of the element, counting from 0. Leave the
+      <literal>AS</literal> clause out and the position is bound to <literal>offset</literal>
+      instead. <literal>offset</literal> is a reserved word, so every later reference to it has
+      to be written <literal>"offset"</literal>. Prefer the <literal>AS</literal> form.
+     </para>
+    </listitem>
+   </varlistentry>
+  </variablelist>
+ </refsect1>
+
+ <refsect1 id="cypher-for-examples">
+  <title>Examples</title>
+
+  <para>
+   These examples use the graph in <xref linkend="agensgraph-example-data"/>.
+  </para>
+
+  <para>
+   Expand a list of titles and look each one up:
+<programlisting>
+FOR t IN ['The Matrix', 'Inception', 'Gattaca']
+MATCH (m:movie {title: t})
+RETURN t AS title, m.year AS year ORDER BY year;
+
+    title     | year
+--------------+------
+ "Gattaca"    | 1997
+ "The Matrix" | 1999
+ "Inception"  | 2010
+(3 rows)
+</programlisting>
+  </para>
+
+  <para>
+   <xref linkend="cypher-unwind"/> expands the same list and returns the same rows:
+<programlisting>
+UNWIND ['The Matrix', 'Inception', 'Gattaca'] AS t
+MATCH (m:movie {title: t})
+RETURN t AS title, m.year AS year ORDER BY year;
+</programlisting>
+  </para>
+
+  <para>
+   <literal>WITH OFFSET AS</literal> names the position. Use it when the order of the list is
+   part of the answer, as in a ranked list of titles:
+<programlisting>
+FOR t IN ['The Matrix', 'Inception', 'Gattaca'] WITH OFFSET AS i
+MATCH (m:movie {title: t})
+RETURN i, t AS title ORDER BY i;
+
+ i |    title
+---+--------------
+ 0 | "The Matrix"
+ 1 | "Inception"
+ 2 | "Gattaca"
+(3 rows)
+</programlisting>
+   The first element is at 0, not at 1.
+  </para>
+
+  <para>
+   Leaving the <literal>AS</literal> clause out still binds the position, but under the name
+   <literal>offset</literal>, which is a reserved keyword. Every later reference has to be
+   quoted:
+<programlisting>
+FOR t IN ['The Matrix', 'Inception'] WITH OFFSET RETURN "offset", t;
+
+ offset |      t
+--------+--------------
+ 0      | "The Matrix"
+ 1      | "Inception"
+(2 rows)
+</programlisting>
+  </para>
+
+  <para>
+   Drop the quotes and the query does not parse:
+<programlisting>
+FOR t IN ['The Matrix'] WITH OFFSET RETURN offset, t;
+
+ERROR:  syntax error at or near "offset"
+LINE 1: FOR t IN ['The Matrix'] WITH OFFSET RETURN offset, t;
+                                                   ^
+</programlisting>
+  </para>
+
+  <para>
+   The list can come from the matched row, in which case the expansion runs once per row:
+<programlisting>
+MATCH (m:movie {title: 'The Matrix'})
+FOR e IN m.embedding
+RETURN e ORDER BY e;
+
+      e
+-------------
+ -0.11921061
+ -0.07594558
+ 0.04081754
+ 0.29592122
+(4 rows)
+</programlisting>
+  </para>
+
+  <para>
+   <function>range()</function> is a list like any other, so <command>FOR</command> can drive a
+   lookup over generated keys:
+<programlisting>
+FOR y IN range(1999, 2001)
+MATCH (m:movie {year: y})
+RETURN y, m.title AS film ORDER BY y, film;
+
+  y   |     film
+------+--------------
+ 1999 | "The Matrix"
+(1 row)
+</programlisting>
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-for-notes">
+  <title>Notes</title>
+
+  <para>
+   <command>FOR</command> compiles to a lateral <function>unnest()</function>, while
+   <command>UNWIND</command> compiles to a <literal>ProjectSet</literal>. The two clauses mean
+   the same thing, but they are not the same plan:
+<programlisting>
+EXPLAIN (COSTS OFF) FOR x IN [1, 2, 3] RETURN x;
+
+                 QUERY PLAN
+--------------------------------------------
+ Function Scan on unnest _agens_default_for
+(1 row)
+</programlisting>
+  </para>
+
+  <para>
+   Because the expansion goes through <function>unnest()</function>, a scalar source is a type
+   error rather than a list of one element. An integer raises
+   <literal>function unnest(integer) does not exist</literal> and a scalar property raises
+   <literal>cannot extract elements from a scalar</literal>. A null is different. It is treated
+   as an empty list and yields no rows.
+  </para>
+
+  <para>
+   <literal>for</literal> is already a reserved keyword in
+   <productname>PostgreSQL</productname>, so the clause puts no new restriction on identifier
+   names. <literal>offset</literal> is reserved as well, which is why the bare
+   <literal>WITH OFFSET</literal> form has to be quoted where the position is read back.
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-for-compatibility">
+  <title>Compatibility</title>
+
+  <para>
+   <command>FOR</command> implements the GQL FOR statement of ISO/IEC 39075:2024, section
+   14.8, feature GQ10, "FOR statement: list value support", and feature GQ24, "FOR statement:
+   WITH OFFSET". Expansion of a list value expression, evaluation once per input row, a null
+   source treated as an empty list, and the position counting from 0 that section 14.8 general
+   rule 2 specifies are all supported. <literal>WITH ORDINALITY</literal>, feature GQ11, which
+   counts from 1, is not. Add one to the offset instead. A binding table reference as the
+   source, feature GQ23, is not supported either, because AgensGraph has no named binding
+   tables. One deviation remains: the standard writes the position variable without
+   <literal>AS</literal>, as <literal>WITH OFFSET i</literal>, while AgensGraph requires
+   <literal>WITH OFFSET AS i</literal> and defaults a bare <literal>WITH OFFSET</literal> to the
+   name <literal>offset</literal>.
+  </para>
+
+  <para>
+   openCypher spells this clause <literal>UNWIND ... AS x</literal>, which AgensGraph accepts
+   unchanged and which has no offset form.
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-for-see-also">
+  <title>See Also</title>
+  <simplelist type="inline">
+   <member><xref linkend="cypher-unwind"/></member>
+   <member><xref linkend="cypher-insert"/></member>
+   <member><xref linkend="cypher-let"/></member>
+   <member><xref linkend="cypher-filter"/></member>
+   <member><xref linkend="cypher-orderby"/></member>
+  </simplelist>
+ </refsect1>
+</refentry>

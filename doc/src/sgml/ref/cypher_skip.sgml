@@ -7,58 +7,259 @@ PostgreSQL documentation
  <indexterm zone="cypher-skip">
   <primary>SKIP</primary>
  </indexterm>
+ <indexterm zone="cypher-skip">
+  <primary>OFFSET</primary>
+ </indexterm>
 
  <refmeta>
   <refentrytitle>SKIP</refentrytitle>
   <manvolnum>7</manvolnum>
-  <refmiscinfo>SQL - Language Statements</refmiscinfo>
+  <refmiscinfo>Cypher - Language Statements</refmiscinfo>
  </refmeta>
 
  <refnamediv>
   <refname>SKIP</refname>
-  <refpurpose>skip the result of cypher query</refpurpose>
+  <refpurpose>discard working rows from the front of the result</refpurpose>
  </refnamediv>
 
  <refsynopsisdiv>
 <synopsis>
-SKIP <replaceable class="parameter">count</replaceable>
+{ SKIP | OFFSET } <replaceable class="parameter">count</replaceable>
 </synopsis>
  </refsynopsisdiv>
 
- <refsect1>
+ <refsect1 id="cypher-skip-description">
   <title>Description</title>
+
   <para>
-   SKIP clause will skip the number of result.
+   <command>SKIP</command> discards the first <replaceable class="parameter">count</replaceable>
+   rows and passes on the rest. It is a clause of its own, so it can page the rows anywhere
+   in a query. Write it after a <xref linkend="cypher-return"/> or a
+   <xref linkend="cypher-with"/>, or straight after a <xref linkend="cypher-match"/>.
+  </para>
+
+  <para>
+   <command>SKIP</command> and <command>OFFSET</command> are one clause with two spellings.
+   They parse to the same node and behave identically, so use whichever reads better.
+   <command>OFFSET</command> is the spelling ISO/IEC 39075 lists first.
+  </para>
+
+  <para>
+   <command>LIMIT</command> caps how many rows are kept instead. It is a separate clause with
+   a page of its own, and either clause may be used without the other. See
+   <xref linkend="cypher-limit"/>.
+  </para>
+
+  <para>
+   The count is an expression, not only a literal, and it is evaluated once. A negative count
+   is an error. A count larger than the number of rows is not: the query returns no rows. A
+   fractional count is rounded to the nearest integer.
+  </para>
+
+  <para>
+   Without an <xref linkend="cypher-orderby"/>, which rows are discarded is not defined. Sort
+   first whenever the page has to be reproducible.
+  </para>
+
+  <para>
+   <command>SKIP</command> cannot open a query and cannot end one. A statement that starts
+   with it is a syntax error, and a query that stops on it raises
+   <literal>Cypher query must end with RETURN, FINISH or update clause</literal>. Finish with
+   <command>RETURN</command>, <command>FINISH</command> or a write clause.
+  </para>
+
+  <para>
+   Written after a projection, the modifiers have to be in the order
+   <command>ORDER BY</command>, then <command>SKIP</command> or <command>OFFSET</command>,
+   then <command>LIMIT</command>. Only that order folds into the projection. In the middle of
+   a query both orders parse and they mean different things, because each clause applies to
+   the rows the clause before it produced. See <xref linkend="cypher-skip-notes"/>.
   </para>
  </refsect1>
 
- <refsect1>
+ <refsect1 id="cypher-skip-parameters">
   <title>Parameters</title>
+
   <variablelist>
    <varlistentry>
     <term><replaceable class="parameter">count</replaceable></term>
     <listitem>
      <para>
-      Specify how many results will be skipped.
+      An integer expression that is not negative. That many leading rows are discarded. A
+      fraction is rounded to the nearest integer.
+     </para>
+     <para>
+      A negative count is refused with <literal>OFFSET must not be negative</literal>, under
+      that name whichever spelling of the clause was written, because the two are one clause.
      </para>
     </listitem>
    </varlistentry>
   </variablelist>
  </refsect1>
 
- <refsect1>
+ <refsect1 id="cypher-skip-examples">
   <title>Examples</title>
+
   <para>
+   These examples use the graph in <xref linkend="agensgraph-example-data"/>.
+  </para>
+
+  <para>
+   Take a page from the middle of a sorted result:
 <programlisting>
-UNWIND [ 1, 2, 3, 4, 5 ] as seq 
-RETURN seq
-SKIP 3;
- seq 
------
- 4
- 5
+MATCH (m:movie)
+RETURN m.title AS film
+ORDER BY film
+SKIP 2
+LIMIT 3;
+
+        film
+---------------------
+ "Blade Runner 2049"
+ "Elysium"
+ "Gattaca"
+(3 rows)
+</programlisting>
+  </para>
+
+  <para>
+   <command>OFFSET</command> reads the same:
+<programlisting>
+MATCH (m:movie)
+RETURN m.title AS film
+ORDER BY film
+OFFSET 2
+LIMIT 3;
+
+        film
+---------------------
+ "Blade Runner 2049"
+ "Elysium"
+ "Gattaca"
+(3 rows)
+</programlisting>
+  </para>
+
+  <para>
+   Any expression will do as the count:
+<programlisting>
+MATCH (m:movie)
+RETURN m.title AS film
+ORDER BY film
+SKIP 1+1
+LIMIT 2;
+
+        film
+---------------------
+ "Blade Runner 2049"
+ "Elysium"
 (2 rows)
 </programlisting>
   </para>
+
+  <para>
+   Paging past the end is not an error. There are eighteen films, so nothing is left:
+<programlisting>
+MATCH (m:movie)
+RETURN m.title AS film
+ORDER BY film
+SKIP 20;
+
+ film
+------
+(0 rows)
+</programlisting>
+  </para>
+
+  <para>
+   A negative count is refused:
+<programlisting>
+MATCH (m:movie) RETURN m.title AS film ORDER BY film SKIP -1;
+
+ERROR:  OFFSET must not be negative
+</programlisting>
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-skip-notes">
+  <title>Notes</title>
+
+  <para>
+   After a projection, write the modifiers in the order <command>ORDER BY</command>, then
+   <command>SKIP</command> or <command>OFFSET</command>, then <command>LIMIT</command>. Only
+   that order folds into the projection. Put <command>LIMIT</command> first and the trailing
+   <command>SKIP</command> is read as a clause of its own, so the query no longer ends on a
+   projection. That is what the error reports:
+<programlisting>
+MATCH (m:movie) RETURN m.title AS film ORDER BY film LIMIT 3 SKIP 2;
+
+ERROR:  Cypher query must end with RETURN, FINISH or update clause
+</programlisting>
+  </para>
+
+  <para>
+   In the middle of a query both orders parse and they answer differently. Each clause applies
+   to the rows the clause before it produced. Skipping first takes rows three to six:
+<programlisting>
+MATCH (m:movie) ORDER BY m.title SKIP 2 LIMIT 4 RETURN m.title AS film;
+
+        film
+---------------------
+ "Blade Runner 2049"
+ "Elysium"
+ "Gattaca"
+ "Inception"
+(4 rows)
+</programlisting>
+  </para>
+
+  <para>
+   Limiting first cuts to four rows and then drops two of them, leaving two:
+<programlisting>
+MATCH (m:movie) ORDER BY m.title LIMIT 4 SKIP 2 RETURN m.title AS film;
+
+        film
+---------------------
+ "Blade Runner 2049"
+ "Elysium"
+(2 rows)
+</programlisting>
+  </para>
+
+  <para>
+   <literal>skip</literal> is an unreserved keyword, so it stays available as a variable, a
+   label or a property name. <literal>offset</literal> is reserved and has to be quoted to be
+   used as a name.
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-skip-compatibility">
+  <title>Compatibility</title>
+
+  <para>
+   <command>SKIP</command> implements the offset clause of ISO/IEC 39075:2024, section 16.19,
+   as part of the order by and page statement of section 14.9. The offset synonym the standard
+   defines is <literal>OFFSET | SKIP</literal>, so both spellings conform. The standard's count
+   is an integer that is not negative, and AgensGraph accepts any integer expression in that
+   position, rounding a fraction.
+  </para>
+
+  <para>
+   openCypher has only <command>SKIP</command>, and writes it as a trailing modifier of
+   <command>RETURN</command> or <command>WITH</command>. Both of those forms are accepted here
+   unchanged. The standalone clause, which pages the rows after a <command>MATCH</command> or
+   anywhere else in a query, is the addition.
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-skip-see-also">
+  <title>See Also</title>
+  <simplelist type="inline">
+   <member><xref linkend="cypher-limit"/></member>
+   <member><xref linkend="cypher-orderby"/></member>
+   <member><xref linkend="cypher-return"/></member>
+   <member><xref linkend="cypher-with"/></member>
+   <member><xref linkend="cypher-match"/></member>
+  </simplelist>
  </refsect1>
 </refentry>

@@ -1,0 +1,191 @@
+<!--
+doc/src/sgml/ref/cypher_let.sgml
+PostgreSQL documentation
+-->
+
+<refentry id="cypher-let">
+ <indexterm zone="cypher-let">
+  <primary>LET</primary>
+ </indexterm>
+
+ <refmeta>
+  <refentrytitle>LET</refentrytitle>
+  <manvolnum>7</manvolnum>
+  <refmiscinfo>Cypher - Language Statements</refmiscinfo>
+ </refmeta>
+
+ <refnamediv>
+  <refname>LET</refname>
+  <refpurpose>add computed values to the current row</refpurpose>
+ </refnamediv>
+
+ <refsynopsisdiv>
+<synopsis>
+LET <replaceable class="parameter">variable</replaceable> = <replaceable class="parameter">expression</replaceable> [, <replaceable class="parameter">variable</replaceable> = <replaceable class="parameter">expression</replaceable> ] ...
+</synopsis>
+ </refsynopsisdiv>
+
+ <refsect1 id="cypher-let-description">
+  <title>Description</title>
+
+  <para>
+   <command>LET</command> introduces one or more new variables into the current row. Each one
+   is computed from an expression over the variables that are already in scope.
+  </para>
+
+  <para>
+   <command>LET</command> is additive. Every binding in scope stays in scope, so
+   <command>LET</command> can never drop a variable from the pipeline. That is what separates
+   it from <xref linkend="cypher-with"/>, which projects only the items it lists. The
+   equivalent <command>WITH</command> form is
+   <literal>WITH *, <replaceable class="parameter">expression</replaceable> AS <replaceable class="parameter">variable</replaceable></literal>.
+  </para>
+
+  <para>
+   Each variable is introduce only. A name that is already in scope cannot be rebound. That
+   holds inside the body of a subquery expression, and inside an importing
+   <literal>CALL { }</literal>, as much as it holds at the top level.
+  </para>
+
+  <para>
+   Expressions are evaluated once per input row. Aggregates are not allowed.
+  </para>
+
+  <para>
+   <command>LET</command> may open a query or sit in the middle of one. It cannot end one. It
+   is the clause to open a statement with, because <command>WITH</command> in that position is
+   SQL's common table expression rather than a Cypher projection.
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-let-parameters">
+  <title>Parameters</title>
+
+  <variablelist>
+   <varlistentry>
+    <term><replaceable class="parameter">variable</replaceable></term>
+    <listitem>
+     <para>
+      Name of the new binding. It must not already be in scope. It is visible to every clause
+      that follows.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><replaceable class="parameter">expression</replaceable></term>
+    <listitem>
+     <para>
+      Any value expression over the current row: property access, arithmetic, a function call,
+      <literal>CASE</literal>, a list constructor or a map constructor. It is evaluated once
+      per input row.
+     </para>
+    </listitem>
+   </varlistentry>
+  </variablelist>
+ </refsect1>
+
+ <refsect1 id="cypher-let-examples">
+  <title>Examples</title>
+
+  <para>
+   These examples use the graph in <xref linkend="agensgraph-example-data"/>.
+  </para>
+
+  <para>
+   Add a derived value and keep everything else in scope:
+<programlisting>
+MATCH (p:person)
+LET age_in_2026 = 2026 - p.born
+RETURN p.name AS name, age_in_2026
+ORDER BY age_in_2026 LIMIT 3;
+
+       name        | age_in_2026
+-------------------+-------------
+ "Ryan Gosling"    | 46
+ "Neill Blomkamp"  | 47
+ "Sam Worthington" | 50
+(3 rows)
+</programlisting>
+  </para>
+
+  <para>
+   The <command>WITH</command> form returns the same rows:
+<programlisting>
+MATCH (p:person)
+WITH *, 2026 - p.born AS age_in_2026
+RETURN p.name AS name, age_in_2026
+ORDER BY age_in_2026 LIMIT 3;
+</programlisting>
+  </para>
+
+  <para>
+   The difference is what happens to <literal>p</literal>. <command>LET</command> keeps it
+   without being asked. The <command>WITH</command> form has to ask for it with
+   <literal>*</literal>, and a <command>WITH</command> that leaves the <literal>*</literal> out
+   drops <literal>p</literal>, so the <command>RETURN</command> then fails.
+  </para>
+
+  <para>
+   Because <command>LET</command> is additive it can open a statement, seeding values with
+   nothing yet in scope:
+<programlisting>
+LET radius = 7, area = 3.14159 * 7 * 7
+RETURN radius, area;
+
+ radius |   area
+--------+-----------
+ 7      | 153.93791
+(1 row)
+</programlisting>
+  </para>
+
+  <para>
+   A name that is already in scope cannot be rebound:
+<programlisting>
+MATCH (p:person) LET p = 1 RETURN p;
+
+ERROR:  variable "p" already exists
+HINT:  LET cannot redefine an existing variable; use a different name.
+</programlisting>
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-let-notes">
+  <title>Notes</title>
+
+  <para>
+   <literal>let</literal> became a reserved keyword in 2.18. A database that used
+   <literal>let</literal> as a label name or as a variable name under an earlier version has to
+   quote it as <literal>"let"</literal>, with double quotes rather than backticks, or rename
+   it. Property keys and <command>RETURN</command> aliases are not affected.
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-let-compatibility">
+  <title>Compatibility</title>
+
+  <para>
+   <command>LET</command> implements the GQL LET statement of ISO/IEC 39075:2024, section
+   14.7. Variable definition, several bindings in one clause, the leading position and
+   expressions evaluated per row are all supported. A <command>LET</command> over an aggregate
+   expression is not.
+  </para>
+
+  <para>
+   openCypher has no <command>LET</command> statement. The equivalent there is
+   <literal>WITH *, <replaceable class="parameter">expression</replaceable> AS <replaceable class="parameter">variable</replaceable></literal>,
+   which AgensGraph accepts unchanged.
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-let-see-also">
+  <title>See Also</title>
+  <simplelist type="inline">
+   <member><xref linkend="cypher-with"/></member>
+   <member><xref linkend="cypher-return"/></member>
+   <member><xref linkend="cypher-filter"/></member>
+   <member><xref linkend="cypher-next"/></member>
+  </simplelist>
+ </refsect1>
+</refentry>

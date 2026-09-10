@@ -11,95 +11,285 @@ PostgreSQL documentation
  <refmeta>
   <refentrytitle>WHERE</refentrytitle>
   <manvolnum>7</manvolnum>
-  <refmiscinfo>SQL - Language Statements</refmiscinfo>
+  <refmiscinfo>Cypher - Language Statements</refmiscinfo>
  </refmeta>
 
  <refnamediv>
   <refname>WHERE</refname>
-  <refpurpose>filter the results of cypher query</refpurpose>
+  <refpurpose>constrain a pattern or filter a projection</refpurpose>
  </refnamediv>
 
  <refsynopsisdiv>
 <synopsis>
-
-WHERE <replaceable class="parameter">expression</replaceable>
-
+WHERE <replaceable class="parameter">condition</replaceable>
 </synopsis>
  </refsynopsisdiv>
 
- <refsect1>
+ <refsect1 id="cypher-where-description">
   <title>Description</title>
+
   <para>
-    The WHERE clause is a clause that adds constraints to the MATCH or OPTIONAL MATCH
-    clause or filters the results of the WITH clause. The WHERE clause cannot be used alone; it
-    is dependent on the MATCH, OPTIONAL MATCH, START, and WITH clauses when used.
+   <literal>WHERE</literal> drops every row whose condition is not true. It is not a clause of
+   its own. It attaches to one of three clauses and takes its meaning from the one it attaches
+   to.
+  </para>
+
+  <para>
+   On <xref linkend="cypher-match"/> it is part of the match. Every variable of the pattern is
+   bound when the condition runs, and a match that fails it is not produced.
+  </para>
+
+  <para>
+   On <literal>OPTIONAL MATCH</literal> it is part of the optional match. A row that fails the
+   condition is kept, with the variables of the pattern set to null.
+  </para>
+
+  <para>
+   On <xref linkend="cypher-with"/> it filters the projected rows, after any grouping. This is
+   where a condition over an aggregate goes.
+  </para>
+
+  <para>
+   The condition has to be a boolean expression. A value of another type is not coerced: a
+   jsonb string or number in a condition raises an error rather than counting as true.
+   Aggregates are not allowed in a <literal>WHERE</literal>. Put the aggregate in a
+   <command>WITH</command> and filter its output.
+  </para>
+
+  <para>
+   <literal>WHERE</literal> on its own is a syntax error, and a query cannot end with it. The
+   standalone filter that can stand anywhere in a query is <xref linkend="cypher-filter"/>,
+   which accepts both <literal>FILTER condition</literal> and
+   <literal>FILTER WHERE condition</literal>.
   </para>
  </refsect1>
 
- <refsect1>
+ <refsect1 id="cypher-where-parameters">
   <title>Parameters</title>
+
   <variablelist>
    <varlistentry>
-    <term><replaceable class="parameter">expression</replaceable></term>
+    <term><replaceable class="parameter">condition</replaceable></term>
     <listitem>
      <para>
-      where <replaceable class="parameter">expression</replaceable> is
-      any expression that evaluates to a result of type
-      <type>boolean</type>.  Any row that does not satisfy this
-      condition will be eliminated from the output.  A row satisfies the
-      condition if it returns true when the actual row values are
-      substituted for any variable references.
+      An expression of type <type>boolean</type> over the variables in scope. Combine tests
+      with <literal>AND</literal>, <literal>OR</literal>, <literal>XOR</literal> and
+      <literal>NOT</literal>. See <xref linkend="cypher-expr"/>.
+     </para>
+     <para>
+      A value of another type is refused rather than treated as true.
+      <literal>WHERE m.title</literal> raises
+      <literal>cannot cast "The Matrix" (jsonb type string) to boolean</literal>. Compare
+      explicitly, or use <literal>IS NOT NULL</literal>.
      </para>
     </listitem>
    </varlistentry>
   </variablelist>
  </refsect1>
 
- <refsect1>
+ <refsect1 id="cypher-where-examples">
   <title>Examples</title>
 
   <para>
-   Boolean operations:
+   These examples use the graph in <xref linkend="agensgraph-example-data"/>.
+  </para>
+
+  <para>
+   Compare a property:
 <programlisting>
-MATCH (v)
-WHERE v.name = 'Jack' AND v.age &lt; '30' OR NOT (v.name= 'Emily' OR v.name='Tom')
-RETURN v.name, v.age;
+MATCH (m:movie) WHERE m.year &gt; 2015
+RETURN m.title AS film, m.year AS year
+ORDER BY year, film;
+
+            film            | year
+----------------------------+------
+ "Blade Runner 2049"        | 2017
+ "The Matrix Resurrections" | 2021
+(2 rows)
 </programlisting>
   </para>
 
   <para>
-   Filter on vertex label:
+   Combine conditions:
 <programlisting>
-MATCH (v)
-WHERE label(v) = 'person'
-RETURN v.name;
+MATCH (m:movie) WHERE m.genre = 'Action' AND m.year &lt; 1995
+RETURN m.title AS film
+ORDER BY film;
+
+             film
+------------------------------
+ "Terminator 2: Judgment Day"
+ "The Terminator"
+(2 rows)
 </programlisting>
   </para>
 
   <para>
-   Filter on vertex property:
+   <literal>XOR</literal> is available alongside <literal>AND</literal>,
+   <literal>OR</literal> and <literal>NOT</literal>:
 <programlisting>
-MATCH (v)
-WHERE v.age &lt; '30'
-RETURN v.name, v.age;
+MATCH (m:movie) WHERE m.genre = 'Action' XOR m.year &lt; 1995
+RETURN count(*) AS n;
+
+ n
+---
+ 8
+(1 row)
 </programlisting>
   </para>
 
   <para>
-   Filter on edge property:
+   <literal>label()</literal> returns the label of an element as a string, for vertices and
+   edges alike. <literal>IN</literal> over a list of names is how one pattern matches several
+   edge labels, which an edge pattern cannot express:
 <programlisting>
-MATCH (v)-[l:likes]-&gt;(p)
-WHERE l.why = 'She is lovely'
-RETURN p;
+MATCH (p:person)-[r]-&gt;(m:movie)
+WHERE label(r) IN ['acted_in', 'directed']
+RETURN count(r) AS edges;
+
+ edges
+-------
+ 46
+(1 row)
+</programlisting>
+  </para>
+
+  <para>
+   <literal>STARTS WITH</literal>, <literal>ENDS WITH</literal> and
+   <literal>CONTAINS</literal> test a string property, and <literal>=~</literal> matches a
+   POSIX regular expression. Negate any of them with <literal>NOT</literal>; there is no
+   <literal>!~</literal> for a property:
+<programlisting>
+MATCH (m:movie) WHERE m.title =~ '^Blade.*'
+RETURN m.title AS film
+ORDER BY film;
+
+        film
+---------------------
+ "Blade Runner"
+ "Blade Runner 2049"
+(2 rows)
+</programlisting>
+  </para>
+
+  <para>
+   A property that was never set reads as null, so <literal>IS NULL</literal> is the test for
+   its absence. No film carries a <literal>runtime</literal>, so all eighteen match:
+<programlisting>
+MATCH (m:movie) WHERE m.runtime IS NULL
+RETURN count(*) AS n;
+
+ n
+----
+ 18
+(1 row)
+</programlisting>
+  </para>
+
+  <para>
+   A subquery value expression tests whether a pattern exists without binding anything from
+   it:
+<programlisting>
+MATCH (p:person) WHERE EXISTS { MATCH (p)-[:directed]-&gt;() }
+RETURN p.name AS director
+ORDER BY director
+LIMIT 4;
+
+      director
+---------------------
+ "Andrew Niccol"
+ "Christopher Nolan"
+ "Denis Villeneuve"
+ "James Cameron"
+(4 rows)
+</programlisting>
+  </para>
+
+  <para>
+   An aggregate in a <literal>WHERE</literal> is refused:
+<programlisting>
+MATCH (p:person)-[:acted_in]-&gt;(m:movie) WHERE count(m) &gt; 1
+RETURN p.name;
+
+ERROR:  aggregate functions are not allowed in WHERE
+LINE 1: MATCH (p:person)-[:acted_in]-&gt;(m:movie) WHERE count(m) &gt; 1
+                                                      ^
+</programlisting>
+  </para>
+
+  <para>
+   Aggregate in a <command>WITH</command> and filter the result instead. The
+   <literal>WHERE</literal> of a <command>WITH</command> runs after the grouping:
+<programlisting>
+MATCH (p:person)-[:acted_in]-&gt;(m:movie)
+WITH p, count(m) AS films WHERE films &gt;= 3
+RETURN p.name AS actor, films
+ORDER BY actor;
+
+          actor          | films
+-------------------------+-------
+ "Arnold Schwarzenegger" | 3
+ "Keanu Reeves"          | 4
+(2 rows)
 </programlisting>
   </para>
  </refsect1>
 
-  <refsect1>
+ <refsect1 id="cypher-where-notes">
+  <title>Notes</title>
+
+  <para>
+   A property holds a jsonb value, and comparing it to a literal compares jsonb values. In
+   jsonb ordering a number sorts above every string, so a quoted number compared against a
+   numeric property is not the comparison you meant:
+<programlisting>
+MATCH (m:movie {title: 'The Matrix'})
+RETURN m.year &gt; '9999' AS num_gt_str, m.year &gt; 1990 AS num_gt_num;
+
+ num_gt_str | num_gt_num
+------------+------------
+ t          | t
+(1 row)
+</programlisting>
+  </para>
+
+  <para>
+   Write the literal in the type of the property, or cast the property with
+   <literal>m.year::int &gt; 1990</literal>, when the stored type is not the one you expect.
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-where-compatibility">
+  <title>Compatibility</title>
+
+  <para>
+   ISO/IEC 39075:2024 attaches a search condition to a graph pattern in the same place, so
+   <literal>MATCH ... WHERE</literal> conforms. The labeled predicate of section 19.9, written
+   <literal>n IS LABELED movie</literal> or as the shorthand <literal>n:movie</literal>, is not
+   accepted; write <literal>label(n) = 'movie'</literal>. The existential subquery of section
+   19.4 is accepted, as <literal>EXISTS { MATCH ... }</literal>.
+  </para>
+
+  <para>
+   openCypher attaches <literal>WHERE</literal> to <command>MATCH</command>,
+   <literal>OPTIONAL MATCH</literal> and <command>WITH</command> the same way. A bare pattern
+   predicate is not an expression here, so <literal>WHERE (m)-[:related_to]-&gt;(:movie)</literal>
+   is a syntax error and so is the unlabelled <literal>WHERE (m)-[]-&gt;()</literal>. Wrap it in
+   <literal>EXISTS { MATCH ... }</literal>. SQL's <literal>LIKE</literal> and
+   <literal>NOT LIKE</literal> are not part of a Cypher condition either, with or without a
+   cast. Use <literal>STARTS WITH</literal>, <literal>ENDS WITH</literal>,
+   <literal>CONTAINS</literal> or <literal>=~</literal>.
+  </para>
+ </refsect1>
+
+ <refsect1 id="cypher-where-see-also">
   <title>See Also</title>
   <simplelist type="inline">
    <member><xref linkend="cypher-match"/></member>
+   <member><xref linkend="cypher-with"/></member>
+   <member><xref linkend="cypher-filter"/></member>
+   <member><xref linkend="cypher-subqueryexpressions"/></member>
+   <member><xref linkend="cypher-expr"/></member>
   </simplelist>
  </refsect1>
 </refentry>
-
