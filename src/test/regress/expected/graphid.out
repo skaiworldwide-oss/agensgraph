@@ -192,3 +192,116 @@ SELECT g.* FROM GRAPHID_TBL g WHERE g.f1 <= '12345.123'::graphid;
 
 SET enable_seqscan = on;
 DROP TABLE GRAPHID_TBL;
+-- Soft errors
+SELECT pg_input_is_valid('1.1', 'graphid');
+ pg_input_is_valid 
+-------------------
+ t
+(1 row)
+
+SELECT pg_input_is_valid('nodelim', 'graphid');
+ pg_input_is_valid 
+-------------------
+ f
+(1 row)
+
+SELECT pg_input_is_valid('99999999.1', 'graphid');
+ pg_input_is_valid 
+-------------------
+ f
+(1 row)
+
+SELECT pg_input_is_valid('1.x', 'graphid');
+ pg_input_is_valid 
+-------------------
+ f
+(1 row)
+
+SELECT pg_input_is_valid('1.288230376151711744', 'graphid');
+ pg_input_is_valid 
+-------------------
+ f
+(1 row)
+
+-- each answer is the one the hard path raises
+SELECT message, sql_error_code FROM pg_input_error_info('nodelim', 'graphid');
+                     message                      | sql_error_code 
+--------------------------------------------------+----------------
+ invalid input syntax for type graphid: "nodelim" | 22P02
+(1 row)
+
+SELECT message, sql_error_code FROM pg_input_error_info('99999999.1', 'graphid');
+      message       | sql_error_code 
+--------------------+----------------
+ labid out of range | 22023
+(1 row)
+
+SELECT message, sql_error_code FROM pg_input_error_info('1.x', 'graphid');
+                   message                    | sql_error_code 
+----------------------------------------------+----------------
+ invalid input syntax for type graphid: "1.x" | 22P02
+(1 row)
+
+SELECT message, sql_error_code FROM pg_input_error_info('1.288230376151711744', 'graphid');
+      message       | sql_error_code 
+--------------------+----------------
+ locid out of range | 22023
+(1 row)
+
+-- an array, a domain and a composite arrive at the same input function
+CREATE DOMAIN GRAPHID_DOM AS graphid;
+CREATE TYPE GRAPHID_COMP AS (f1 graphid);
+SELECT pg_input_is_valid('{1.1,bad}', 'graphid[]');
+ pg_input_is_valid 
+-------------------
+ f
+(1 row)
+
+SELECT pg_input_is_valid('bad', 'GRAPHID_DOM');
+ pg_input_is_valid 
+-------------------
+ f
+(1 row)
+
+SELECT pg_input_is_valid('(bad)', 'GRAPHID_COMP');
+ pg_input_is_valid 
+-------------------
+ f
+(1 row)
+
+DROP TYPE GRAPHID_COMP;
+DROP DOMAIN GRAPHID_DOM;
+-- COPY skips the row it cannot read
+CREATE TABLE GRAPHID_COPY_TBL(f1 graphid);
+COPY GRAPHID_COPY_TBL FROM STDIN WITH (on_error ignore);
+NOTICE:  1 row was skipped due to data type incompatibility
+SELECT * FROM GRAPHID_COPY_TBL ORDER BY f1;
+ f1  
+-----
+ 1.1
+ 2.2
+(2 rows)
+
+DROP TABLE GRAPHID_COPY_TBL;
+-- JSON_TABLE takes its default instead
+SELECT * FROM JSON_TABLE('[{"g":"bad"},{"g":"7.7"}]', '$[*]'
+       COLUMNS (g graphid PATH '$.g' DEFAULT '0.0'::graphid ON ERROR));
+  g  
+-----
+ 0.0
+ 7.7
+(2 rows)
+
+-- an element that is not a graphid is not a member, and says nothing
+SELECT graphid_in_jsonb_array('2.2'::graphid, '["junk","1.1",{"id":"2.2"}]'::jsonb);
+ graphid_in_jsonb_array 
+------------------------
+ t
+(1 row)
+
+SELECT graphid_in_jsonb_array('9.9'::graphid, '["junk","more junk"]'::jsonb);
+ graphid_in_jsonb_array 
+------------------------
+ f
+(1 row)
+
