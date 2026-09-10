@@ -466,6 +466,40 @@ DROP TABLE my_edges;
 DROP TABLE my_detailed_paths;
 
 --
+-- pg_identify_object / pg_get_acl
+--
+CREATE GRAPH objdesc;
+SET graph_path = objdesc;
+CREATE VLABEL person;
+CREATE ELABEL knows;
+-- a second graph with a label of the same name
+CREATE GRAPH objdesc2;
+SET graph_path = objdesc2;
+CREATE VLABEL person;
+SET graph_path = objdesc;
+
+-- a graph's name identifies it, so it is reported
+SELECT type, coalesce(name, '(null)') AS name, identity
+  FROM pg_identify_object('ag_graph'::regclass,
+                          (SELECT oid FROM ag_graph WHERE graphname = 'objdesc'), 0);
+
+-- a label's name does not, so only the identity carries it
+SELECT i.type, coalesce(i.name, '(null)') AS name, i.identity
+  FROM ag_label l
+  JOIN ag_graph g ON g.oid = l.graphid,
+       LATERAL pg_identify_object('ag_label'::regclass, l.oid, 0) i
+ WHERE g.graphname = 'objdesc' AND l.labname IN ('person', 'knows')
+ ORDER BY i.identity;
+
+-- neither catalog has an ACL column, so this answers null
+SELECT count(*) AS rows, count(pg_get_acl(classid, objid, objsubid)) AS acls
+  FROM pg_depend
+ WHERE classid IN ('ag_graph'::regclass, 'ag_label'::regclass);
+
+DROP GRAPH objdesc2 CASCADE;
+DROP GRAPH objdesc CASCADE;
+
+--
 -- DROP GRAPH
 --
 DROP GRAPH ddl;
