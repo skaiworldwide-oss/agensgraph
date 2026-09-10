@@ -7,10 +7,9 @@
 -- comparing the identities instead: the same answer, reached without reading
 -- the property map, so the element itself need not be built at all.
 --
--- Exactness rests on what the comparison reads, not on an identity being
--- unique.  The same graphid can appear under two labels (a label's id column
--- has a default, not a constraint), and both spellings answer the same there
--- too -- covered below.
+-- Exactness rests on what the comparison reads.  Two labels cannot share a
+-- graphid: the first part of one names the label that stores the row, and a
+-- write whose id names another label is refused -- covered below.
 --
 -- Oracle for every result-returning query: the rows must equal what the
 -- explicitly id-spelled query returns.  EXPLAIN (costs off) asserts that the
@@ -112,21 +111,37 @@ MATCH (x:p) WHERE x = x RETURN count(*);
 MATCH (x:p), (y:p) WHERE x = id(y) RETURN count(*);
 
 --
--- The identity need not be unique for either spelling to be right
+-- Two labels cannot share an identity
 --
--- Give a q vertex a p vertex's graphid.  Both spellings then match the pair,
--- because both ask the same question.
+-- The first part of a graphid is the label that stores the row, so giving a q
+-- vertex a p vertex's graphid is refused, and elements of two labels are never
+-- equal.
 --
 SET enable_graph_dml = on;
 INSERT INTO ei.q (id, properties)
   SELECT id, '{"n": "clone"}'::jsonb FROM ei.p ORDER BY id LIMIT 1;
 RESET enable_graph_dml;
 
-MATCH (x:p), (y:q) WHERE x = y RETURN x.n, y.n;
-MATCH (x:p), (y:q) WHERE id(x) = id(y) RETURN x.n, y.n;
+MATCH (x:p), (y:q) WHERE x = y RETURN count(*);
+MATCH (x:p), (y:q) WHERE id(x) = id(y) RETURN count(*);
 
+-- COPY writes a row without going through parse analysis, and is refused just
+-- the same; 9999 is no label of this graph
+COPY ei.q (id, properties) FROM STDIN;
+9999.1	{"n": "copied"}
+\.
+
+-- and so is moving a row that is already there onto another label's id
 SET enable_graph_dml = on;
-DELETE FROM ei.q WHERE properties->>'n' = 'clone';
+UPDATE ei.q SET id = graphid(9999, 1) WHERE properties->>'n' = 'z';
+
+-- an edge label is named by its id the same way
+UPDATE ei.k SET id = graphid(9999, 1);
+
+-- what the label's own default produces is accepted, so an ordinary SQL write
+-- of a graph element still works
+INSERT INTO ei.q (properties) VALUES ('{"n": "sql"}');
+DELETE FROM ei.q WHERE properties->>'n' = 'sql';
 RESET enable_graph_dml;
 
 --
