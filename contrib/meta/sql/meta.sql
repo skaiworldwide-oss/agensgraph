@@ -193,6 +193,67 @@ RETURN label_name ORDER BY label_name;
 MATCH (a:person {name: 'Alice'}) CALL meta.labels() YIELD label_name
 FILTER label_name = 'person' RETURN label_name;
 
+--
+-- meta.vertex_stats()
+--
+-- Reading every vertex takes one pass over the edges, so the whole graph costs
+-- one query rather than one query for each vertex.
+--
+CREATE GRAPH stats_graph;
+SET graph_path = stats_graph;
+
+CREATE (:node {n: 'a'}), (:node {n: 'b'}), (:node {n: 'c'}), (:node {n: 'd'});
+MATCH (a:node {n: 'a'}), (b:node {n: 'b'}) CREATE (a)-[:link]->(b);
+MATCH (a:node {n: 'a'}), (c:node {n: 'c'}) CREATE (a)-[:link]->(c);
+MATCH (b:node {n: 'b'}), (a:node {n: 'a'}) CREATE (b)-[:link]->(a);
+-- a self-loop is counted on its own and in both degrees
+MATCH (b:node {n: 'b'}) CREATE (b)-[:link]->(b);
+
+-- every vertex, including the one no edge touches
+SELECT n.properties->>'n' AS vertex, s.label, s.in_degree, s.out_degree,
+       s.self_loops
+FROM meta.vertex_stats() s JOIN stats_graph.node n ON n.id = s.id
+ORDER BY vertex;
+
+-- one vertex, named by the vertex itself
+MATCH (b:node {n: 'b'})
+CALL meta.vertex_stats(b) YIELD label, in_degree, out_degree, self_loops
+RETURN label, in_degree, out_degree, self_loops;
+MATCH (d:node {n: 'd'})
+CALL meta.vertex_stats(d) YIELD label, in_degree, out_degree, self_loops
+RETURN label, in_degree, out_degree, self_loops;
+
+-- a label that inherits another is named as itself, and an edge label that
+-- inherits another is still counted
+CREATE VLABEL employee INHERITS (node);
+CREATE ELABEL reports INHERITS (link);
+CREATE (:employee {n: 'e'});
+MATCH (a:node {n: 'a'}), (e:employee {n: 'e'}) CREATE (a)-[:reports]->(e);
+SELECT n.properties->>'n' AS vertex, s.label, s.in_degree, s.out_degree,
+       s.self_loops
+FROM meta.vertex_stats() s JOIN stats_graph.ag_vertex n ON n.id = s.id
+WHERE n.properties->>'n' IN ('a', 'e')
+ORDER BY vertex;
+
+-- a vertex the graph does not hold gives no row at all, even where the label
+-- the id names is one the graph has
+SELECT count(*) AS rows
+FROM meta.vertex_stats(ROW(graphid(graphid_labid((SELECT id
+                                                  FROM stats_graph.node
+                                                  ORDER BY id LIMIT 1)),
+                                   99999),
+                           '{}'::jsonb, NULL)::vertex);
+
+-- the graph can be named instead of read from graph_path
+SELECT count(*) FROM meta.vertex_stats(NULL, 'stats_graph');
+
+-- and a preceding clause drives the whole-graph form as it does the others
+UNWIND [1] AS x CALL meta.vertex_stats() YIELD id, out_degree
+RETURN count(id), sum(out_degree);
+
+DROP GRAPH stats_graph CASCADE;
+SET graph_path = graph1;
+
 -- clean up
 DROP GRAPH graph1 CASCADE;
 
