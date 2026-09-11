@@ -62,6 +62,7 @@ typedef bool (*ElemConvFn) (Datum d, Oid typeid, Datum *result);
 
 static Jsonb *FunctionCallJsonb(FunctionCallJsonbInfo *fcjinfo);
 static Datum jsonb_to_datum(Jsonb *j, Oid type);
+static bool jsonb_to_scalar_datum(Jsonb *j, Datum *result, Oid *typeid);
 static bool is_numeric_integer(Numeric n);
 static void ereport_invalid_jsonb_param(FunctionCallJsonbInfo *fcjinfo);
 static char *type_to_jsonb_type_str(Oid type);
@@ -987,6 +988,58 @@ jsonb_to_datum(Jsonb *j, Oid type)
 	}
 
 	return retval;
+}
+
+/*
+ * jsonb_to_scalar_datum
+ *		Reads a scalar jsonb as the datum and the type it names, so that a
+ *		conversion handed a graph property reads it the way it reads a value of
+ *		that type.
+ *
+ *		Unlike jsonb_to_datum(), no target type is asked for: what the jsonb
+ *		names is what comes back.  The element types are the ones
+ *		convert_jsonb_list() reads, so a scalar and a list of one element agree.
+ *
+ *		A null, a list and a map name no value: false comes back and the caller
+ *		yields null, as it already does for text that names no number.
+ */
+static bool
+jsonb_to_scalar_datum(Jsonb *j, Datum *result, Oid *typeid)
+{
+	JsonbValue *jv;
+
+	if (!JB_ROOT_IS_SCALAR(j))
+		return false;
+
+	jv = getIthJsonbValueFromContainer(&j->root, 0);
+
+	switch (jv->type)
+	{
+		case jbvString:
+
+			/*
+			 * The value is copied to its own string: its length is its own,
+			 * not that of the buffer it was read from.
+			 */
+			*result = CStringGetDatum(pnstrdup(jv->val.string.val,
+											   jv->val.string.len));
+			*typeid = CSTRINGOID;
+			return true;
+
+		case jbvNumeric:
+			*result = NumericGetDatum(jv->val.numeric);
+			*typeid = NUMERICOID;
+			return true;
+
+		case jbvBool:
+			*result = BoolGetDatum(jv->val.boolean);
+			*typeid = BOOLOID;
+			return true;
+
+		default:
+			/* a null, a list or a map names no value */
+			return false;
+	}
 }
 
 static bool
@@ -2542,6 +2595,24 @@ datum_to_int64(Datum d, Oid typeid, int64 *result)
 					return false;
 
 				return string_to_int64(s, result);
+			}
+
+		case JSONBOID:
+			{
+				Datum		sd;
+				Oid			stypeid;
+
+				/*
+				 * Every graph property is a jsonb, so the scalar one names is
+				 * read as a value of the type it names.  Reading it here is
+				 * what makes toInteger(v.prop) agree with
+				 * toIntegerList([v.prop]): the list walk reads the same
+				 * scalar the same way.
+				 */
+				if (!jsonb_to_scalar_datum(DatumGetJsonbP(d), &sd, &stypeid))
+					return false;
+
+				return datum_to_int64(sd, stypeid, result);
 			}
 
 		default:

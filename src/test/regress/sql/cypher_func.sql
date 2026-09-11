@@ -590,3 +590,37 @@ RETURN toIntegerList([
 	'11111111111111111111111111111111111111111111111111111111111111111111', 1]);
 
 DROP GRAPH list_graph CASCADE;
+
+--
+-- AGV2-360
+--
+-- Every graph property is a jsonb, so toInteger() handed one reads the scalar
+-- it names.  Read any other way it answers null for a property that plainly
+-- names a number, while the same value in a list answers the number: a scalar
+-- and a list of one element have to agree.
+CREATE GRAPH tointeger_graph;
+SET graph_path = tointeger_graph;
+
+CREATE (:p {i: 42, f: 1.5, s: '42', words: 'abc', b: true, l: [1, 2], m: {a: 1}});
+
+-- a property naming a number reads as that number
+MATCH (v:p) RETURN toInteger(v.i);
+-- one naming a number with a fraction reads as its whole part
+MATCH (v:p) RETURN toInteger(v.f);
+-- one naming a number as text reads as that number
+MATCH (v:p) RETURN toInteger(v.s);
+-- a boolean reads the way it reads everywhere else
+MATCH (v:p) RETURN toInteger(v.b);
+-- text naming no number is null, and so are a list, a map, and a property
+-- that is not there
+MATCH (v:p)
+	RETURN toInteger(v.words) IS NULL, toInteger(v.l) IS NULL,
+		toInteger(v.m) IS NULL, toInteger(v.missing) IS NULL;
+
+-- the same values given as jsonb, so the scalar and the list of one element
+-- can be read against each other form by form
+SELECT j, toInteger(j), toIntegerList(('[' || j::text || ']')::jsonb)
+FROM (VALUES ('42'::jsonb), ('1.2'), ('"42"'), ('"abc"'), ('true'), ('null'),
+	('[1,2]'), ('{"a":1}')) v(j);
+
+DROP GRAPH tointeger_graph CASCADE;
