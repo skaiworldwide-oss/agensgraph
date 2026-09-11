@@ -624,3 +624,60 @@ FROM (VALUES ('42'::jsonb), ('1.2'), ('"42"'), ('"abc"'), ('true'), ('null'),
 	('[1,2]'), ('{"a":1}')) v(j);
 
 DROP GRAPH tointeger_graph CASCADE;
+-- AGV2-355
+--
+CREATE GRAPH boolean_list_graph;
+SET graph_path = boolean_list_graph;
+
+-- An integer is false only where it is zero, the way an explicit cast to
+-- boolean reads one.
+RETURN toBooleanList([0,1,2,3,4]);
+-- A number written with a fractional part names no truth value.  jsonb
+-- keeps one number type, so how the number was written is the only signal
+-- there is: 2.0 carries a scale and names none, while 2 and 2e0 are both
+-- stored as 2 and name true.
+RETURN toBooleanList([0.0, -0.0, 1.5, -2]);
+RETURN toBooleanList([2.0, 2, 2e0]);
+-- the sibling reads such a number instead, since a number with a
+-- fractional part has an integer value but no truth value
+RETURN toIntegerList([2.0, 1.5]);
+-- and a boolean is already what it names
+RETURN toBooleanList([true, false, true]);
+
+-- The text a string names is read for the truth value it spells.
+RETURN toBooleanList(['true','false','t','f','1','0']);
+RETURN toBooleanList(['True','FALSE']);
+-- the reader is the one the scalar toBoolean() uses, so the range is the
+-- same one: a prefix of the word, the digits, on and off, and the spaces
+-- around any of them
+RETURN toBooleanList(['tr','on','off','  true  ']);
+-- a word that spells none names no value at all
+RETURN toBooleanList(['yes','no','','hello']);
+
+-- An element that names no truth value is null, and the list keeps its
+-- length: a null, a list and a map each name none.
+RETURN toBooleanList([null, ['a'], {k: 1}, 1]);
+RETURN toBooleanList([]);
+
+-- The array form gives a list of booleans, whatever the array was given as.
+SELECT toBooleanList(ARRAY[0,1,2]);
+SELECT toBooleanList(ARRAY[true, null, false]);
+SELECT toBooleanList(ARRAY['true','yes',null]);
+SELECT pg_typeof(toBooleanList(ARRAY[1]));
+-- a float names no truth value here either, whatever it holds, and neither
+-- does a value whose type names none
+SELECT toBooleanList(ARRAY['NaN'::float8, 0, 1]);
+SELECT toBooleanList(ARRAY[0::int8, 1::int8]);
+SELECT toBooleanList(ARRAY[now()]);
+
+-- What is not a list is not read as one.
+RETURN toBooleanList(1);
+RETURN toBooleanList('true'::jsonb);
+-- and an untyped string names neither form, as it does for the siblings
+RETURN toBooleanList('true');
+RETURN toIntegerList('12');
+
+-- The other list conversions are unchanged.
+RETURN toStringList([true, null, false]), toIntegerList([1,'2']), toFloatList([1.5]);
+
+DROP GRAPH boolean_list_graph CASCADE;
