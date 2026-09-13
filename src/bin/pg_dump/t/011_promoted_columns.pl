@@ -553,6 +553,17 @@ $node->command_fails_like(
 	qr/which label DDL cannot name and so cannot be dumped for a binary upgrade/,
 	'--binary-upgrade refuses a label with such a column instead of corrupting it');
 
+# Refusing is only half of it: the column has to be droppable or movable, and a
+# dump and reload takes the label as it stands, so the refusal says both.
+$node->command_fails_like(
+	[
+		'pg_dump', '--binary-upgrade', '-f',
+		"${PostgreSQL::Test::Utils::tmp_check}/plain_cols_bu.sql",
+		'-d', $node->connstr('agplain')
+	],
+	qr/hint:.*A dump and reload carries such a column/,
+	'and says what to do instead of leaving the upgrade with no way forward');
+
 # The same graph through the custom archive format and pg_restore, which writes
 # its own preamble: the ADD COLUMNs a label's ordinary columns need are refused
 # unless that preamble asks for label reshaping too.
