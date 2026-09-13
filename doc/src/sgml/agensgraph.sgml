@@ -1985,6 +1985,46 @@ pg_controldata -D <replaceable>olddatadir</replaceable> | grep checksum
    </para>
   </sect2>
 
+  <sect2 id="agensgraph-upgrading-ordinary-columns">
+   <title>Ordinary Columns on a Label</title>
+
+   <para>
+    <xref linkend="pgupgrade"/> reuses the old data files, so every column has to keep the
+    attribute number it already has. Label DDL names only the columns a graph element is made
+    of and the properties promoted to columns, so a column outside both cannot be written into
+    the <command>CREATE VLABEL</command> at its own position.
+    <application>pg_dump</application> stops rather than write a dump that would restore into a
+    mis-aligned heap, and the upgrade stops with it. This holds whichever version is being
+    upgraded from, 2.18 included.
+   </para>
+
+   <para>
+    <option>--check</option> does not look for it: it ends with <literal>Clusters are
+    compatible</literal> and the upgrade then fails. Look first, in every database:
+   </para>
+
+<programlisting>
+SELECT c.relname AS label, a.attname AS column_name
+  FROM pg_catalog.ag_label l
+  JOIN pg_class c ON c.oid = l.relid
+  JOIN pg_attribute a ON a.attrelid = c.oid
+  JOIN pg_type t ON t.oid = a.atttypid
+ WHERE NOT a.attisdropped
+   AND a.attislocal
+   AND a.attnum &gt; CASE l.labkind WHEN 'v' THEN 2 ELSE 4 END
+   AND (a.attgenerated = '' OR a.attcollation &lt;&gt; t.typcollation);
+</programlisting>
+
+   <para>
+    Each row is a column the upgrade will stop on. Filtering by column name instead reports
+    promoted columns and inherited ones, which are dumped by other means and are not the
+    obstacle. Drop what the query returns, or move the values into the property map, and the
+    upgrade proceeds. A dump and reload does not have the restriction: it writes the column as
+    an <command>ALTER TABLE</command> after the label, so a label carrying one survives that
+    route unchanged.
+   </para>
+  </sect2>
+
   <sect2 id="agensgraph-upgrading-after">
    <title>After the Upgrade</title>
 

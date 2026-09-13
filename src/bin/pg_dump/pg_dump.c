@@ -20918,8 +20918,12 @@ dumpLabelSchema(Archive *fout, const TableInfo *tblinfo)
 		 * dump that restores into a corrupt heap.
 		 */
 		if (dopt->binary_upgrade)
-			pg_fatal("label \"%s\" has column \"%s\", which label DDL cannot name and so cannot be dumped for a binary upgrade",
-					 tblinfo->dobj.name, tblinfo->attnames[j]);
+		{
+			pg_log_error("label \"%s\" has column \"%s\", which label DDL cannot name and so cannot be dumped for a binary upgrade",
+						 tblinfo->dobj.name, tblinfo->attnames[j]);
+			pg_log_error_hint("Drop the column, or move its values into the label's property map. A dump and reload carries such a column, so that route is open either way.");
+			exit_nicely(1);
+		}
 
 		if (!askedforddl)
 		{
