@@ -61,6 +61,12 @@ See more information on the [Docker Hub](https://hub.docker.com/r/skaiworldwide/
 
 To build, install and setup AgensGraph for source, follow instructions in [Installation Guide](INSTALL.md)
 
+## Branches and Releases
+
+- `main` is the development branch.
+- `v2.<N>` is the release line on PostgreSQL `<N>`, for example `v2.18`.
+- A release is a tag on its line, `v2.<PG major>.<PG minor>.<minor>`, for example `v2.18.4.0`. Release candidates end in `-rcN`.
+- `prod` is the newest release of the newest line. A workflow moves it when a release tag is created. Build from a tag, not from `prod`.
 
 ## Performance Tuning for Graph Workloads
 
