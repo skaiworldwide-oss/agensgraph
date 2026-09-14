@@ -1821,6 +1821,17 @@ DROP TABLE rating;
     </listitem>
     <listitem>
      <para>
+      <emphasis>A Cypher write to a published label without a replica identity is
+      refused</emphasis>, as the same SQL <command>UPDATE</command> or
+      <command>DELETE</command> is. An edge label has no primary key and so starts without
+      one; once it is in a publication, <literal>SET</literal>, <literal>REMOVE</literal>,
+      <literal>DELETE</literal> and <literal>MERGE ... ON MATCH SET</literal> on it used to go
+      through and leave logical replication broken. Give the label one first with
+      <literal>ALTER ELABEL ... REPLICA IDENTITY</literal>.
+     </para>
+    </listitem>
+    <listitem>
+     <para>
       <emphasis>A <command>WITH</command> may not carry one name twice.</emphasis>
       <literal>WITH a AS t, b AS t</literal> was accepted and is now refused with
       <literal>WITH passes on "t" more than once</literal>. <command>RETURN</command> still

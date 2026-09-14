@@ -208,7 +208,9 @@ ALTER ELABEL [ IF EXISTS ] <replaceable class="parameter">label_name</replaceabl
     <term><literal>REPLICA IDENTITY { DEFAULT | USING INDEX <replaceable class="parameter">index_name</replaceable> | FULL | NOTHING }</literal></term>
     <listitem>
      <para>
-      Choose which old values a write logs to identify a row, for logical replication.
+      Choose which old values a write logs to identify a row, for logical replication. An
+      edge label has no primary key and so no identity by default; once it is in a
+      publication its rows cannot be updated or deleted until it is given one here.
      </para>
     </listitem>
    </varlistentry>
