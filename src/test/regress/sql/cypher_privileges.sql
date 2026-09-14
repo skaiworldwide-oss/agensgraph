@@ -416,6 +416,22 @@ UPDATE graph_priv_read.ag_vertex SET properties = properties || '{"seen": true}'
 RESET role;
 RESET enable_graph_dml;
 
+-- a policy that carries a sublink
+CREATE TABLE rd_allowed (name text);
+INSERT INTO rd_allowed VALUES ('par');
+GRANT SELECT ON rd_allowed TO group1;
+ALTER TABLE graph_priv_read."rd_par" ENABLE ROW LEVEL SECURITY;
+CREATE POLICY rd_par_sel ON graph_priv_read.rd_par FOR SELECT
+	USING (EXISTS (SELECT 1 FROM rd_allowed a
+				   WHERE a.name = properties->>'name'));
+SET role role2;
+MATCH (n) RETURN label(n), n.name ORDER BY label(n), n.name;
+RESET role;
+DELETE FROM rd_allowed;
+SET role role2;
+MATCH (n) RETURN label(n), n.name ORDER BY label(n), n.name;
+RESET role;
+
 -- a grant on the parents alone reads no label
 SET role role4;
 MATCH (n:rd_open) RETURN count(*);
@@ -426,6 +442,7 @@ RESET role;
 
 -- Clean up
 DROP GRAPH IF EXISTS graph_priv_read CASCADE;
+DROP TABLE rd_allowed;
 DROP GRAPH IF EXISTS graph_priv_test CASCADE;
 
 -- Dropping the graph removes the schema-scoped default privileges, but the
