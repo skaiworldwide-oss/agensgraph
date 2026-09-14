@@ -4916,3 +4916,67 @@ EXPLAIN (COSTS OFF) MATCH (n:src) CREATE (:c_plan {n: n.n}) FILTER true FINISH;
 
 DROP GRAPH finish_between CASCADE;
 RESET graph_path;
+
+--
+-- A published label with no replica identity refuses the writes that need
+-- one, as SQL on the same table does
+--
+CREATE GRAPH pub_ident;
+SET graph_path = pub_ident;
+CREATE VLABEL pv;
+CREATE ELABEL pe;
+CREATE (:pv {k: 1})-[:pe {k: 1}]->(:pv {k: 2});
+
+-- suppress the warning that depends on wal_level
+SET client_min_messages = 'ERROR';
+CREATE PUBLICATION pub_ident_all FOR TABLE pub_ident.pe, pub_ident.pv;
+RESET client_min_messages;
+
+-- an edge label has no primary key: every clause that updates or deletes its
+-- rows is refused, including the ones a DETACH DELETE and a MERGE reach it by
+MATCH ()-[r:pe]->() SET r.t = 1;
+MATCH ()-[r:pe]->() SET r += {t: 1};
+MATCH ()-[r:pe]->() REMOVE r.k;
+MATCH ()-[r:pe]->() SET r.t = 1 FINISH;
+MATCH ()-[r:pe]->() DELETE r;
+MATCH (n:pv {k: 1}) DETACH DELETE n;
+MATCH (a:pv {k: 1}), (b:pv {k: 2})
+MERGE (a)-[r:pe {k: 1}]->(b) ON MATCH SET r.t = 1;
+MATCH (a:pv {k: 1}), (b:pv {k: 2})
+MERGE (a)-[r:pe {k: 9}]->(b) ON CREATE SET r.t = 1;
+
+-- creating needs no identity
+MATCH (a:pv {k: 1}), (b:pv {k: 2}) CREATE (a)-[:pe {k: 2}]->(b);
+MATCH (a:pv {k: 1}), (b:pv {k: 2}) MERGE (a)-[:pe {k: 3}]->(b);
+MATCH ()-[r:pe]->() RETURN count(r) AS edges;
+
+-- a vertex label has its primary key, until the identity is taken away
+MATCH (n:pv {k: 1}) SET n.t = 1 RETURN n.t;
+ALTER VLABEL pv REPLICA IDENTITY NOTHING;
+MATCH (n:pv {k: 1}) SET n.t = 2;
+MATCH (n:pv {k: 1}) DELETE n;
+ALTER VLABEL pv REPLICA IDENTITY DEFAULT;
+
+-- a publication of inserts alone asks for none
+ALTER PUBLICATION pub_ident_all SET (publish = 'insert');
+MATCH ()-[r:pe {k: 3}]->() SET r.t = 1 RETURN r.t;
+MATCH ()-[r:pe {k: 3}]->() DELETE r;
+ALTER PUBLICATION pub_ident_all SET (publish = 'insert, update, delete');
+
+-- with an identity the edge label takes the writes again: the whole row, or
+-- a unique index on id
+ALTER ELABEL pe REPLICA IDENTITY FULL;
+MATCH ()-[r:pe {k: 1}]->() SET r.t = 1 RETURN r.t;
+MATCH ()-[r:pe {k: 2}]->() DELETE r;
+ALTER ELABEL pe REPLICA IDENTITY DEFAULT;
+CREATE UNIQUE INDEX pe_id_key ON pub_ident.pe (id);
+ALTER ELABEL pe REPLICA IDENTITY USING INDEX pe_id_key;
+MATCH ()-[r:pe {k: 1}]->() SET r.t = 2 RETURN r.t;
+
+-- a column list that leaves the identity out takes it away as well
+ALTER PUBLICATION pub_ident_all SET TABLE pub_ident.pv (properties);
+MATCH (n:pv {k: 1}) SET n.t = 3;
+
+DROP PUBLICATION pub_ident_all;
+DROP GRAPH pub_ident CASCADE;
+RESET graph_path;

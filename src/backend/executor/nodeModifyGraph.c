@@ -65,6 +65,8 @@ static void predrainEagerWriters(PlanState *node);
 /* common */
 static bool isEdgeArrayOfPath(List *exprs, char *variable);
 
+static void checkValidResultRelation(ResultRelInfo *resultRelInfo,
+									 ModifyGraph *plan);
 static void openResultRelInfosIndices(ModifyGraphState *mgstate);
 static bool planIsScanOfRel(Plan *plan, Index rti);
 static bool elementScanRelIndexes(Plan *plan, AttrNumber resno, List **scans);
@@ -136,6 +138,7 @@ ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 		Index		resultRelation = lfirst_int(l);
 
 		ExecInitResultRelation(estate, resultRelInfo, resultRelation);
+		checkValidResultRelation(resultRelInfo, mgplan);
 		resultRelInfo++;
 	}
 
@@ -1031,6 +1034,37 @@ reflectModifiedProp(ModifyGraphState *mgstate)
 			pfree(DatumGetPointer(entry->elem));
 			entry->elem = newelem;
 		}
+	}
+}
+
+/*
+ * Check a target label against each command the write runs on it, as
+ * ExecInitModifyTable does for a SQL write's result relations; this is where
+ * a label published without a replica identity refuses an update or a
+ * delete.  A MERGE with ON MATCH or ON CREATE SET updates the rows it matched
+ * or inserted, so its labels take an UPDATE as well as an INSERT.
+ */
+static void
+checkValidResultRelation(ResultRelInfo *resultRelInfo, ModifyGraph *plan)
+{
+	switch (plan->operation)
+	{
+		case GWROP_CREATE:
+			CheckValidResultRel(resultRelInfo, CMD_INSERT, NIL);
+			break;
+		case GWROP_DELETE:
+			CheckValidResultRel(resultRelInfo, CMD_DELETE, NIL);
+			break;
+		case GWROP_SET:
+			CheckValidResultRel(resultRelInfo, CMD_UPDATE, NIL);
+			break;
+		case GWROP_MERGE:
+			CheckValidResultRel(resultRelInfo, CMD_INSERT, NIL);
+			if (plan->sets != NIL)
+				CheckValidResultRel(resultRelInfo, CMD_UPDATE, NIL);
+			break;
+		default:
+			elog(ERROR, "unknown operation");
 	}
 }
 
