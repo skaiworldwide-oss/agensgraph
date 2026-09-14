@@ -164,7 +164,10 @@ typedef struct CachedPlan
 	bool		is_saved;		/* is CachedPlan in a long-lived context? */
 	bool		is_valid;		/* is the stmt_list currently valid? */
 	Oid			planRoleId;		/* Role ID the plan was created for */
-	bool		dependsOnRole;	/* is plan specific to that role? */
+	bool		planRowSecurity;	/* row_security setting it was created
+									 * under */
+	bool		dependsOnRole;	/* is plan specific to that role and
+								 * setting? */
 	TransactionId saved_xmin;	/* if valid, replan when TransactionXmin
 								 * changes from this value */
 	int			generation;		/* parent's generation number for this plan */
