@@ -10,12 +10,9 @@ CREATE GRAPH graph_priv_test;
 SET graph_path = graph_priv_test;
 -- Create user
 CREATE USER readonly_user LOGIN PASSWORD 'ru';
-ERROR:  role "readonly_user" already exists
 CREATE USER new_user LOGIN PASSWORD 'nu';
-ERROR:  role "new_user" already exists
 -- Create role
 CREATE ROLE readonly LOGIN;
-ERROR:  role "readonly" already exists
 GRANT SELECT ON ALL SEQUENCES IN SCHEMA graph_priv_test TO readonly;
 GRANT SELECT ON ALL TABLES IN SCHEMA graph_priv_test TO readonly;
 GRANT USAGE ON SCHEMA graph_priv_test TO readonly;
@@ -69,11 +66,8 @@ RESET SESSION AUTHORIZATION;
 -- Test ROW LEVEL SECURITY
 --
 CREATE ROLE group1;
-ERROR:  role "group1" already exists
 CREATE ROLE role2 IN ROLE group1;
-ERROR:  role "role2" already exists
 CREATE ROLE role3 IN ROLE group1;
-ERROR:  role "role3" already exists
 MATCH (a:v1) RETURN a;
             a             
 --------------------------
@@ -376,7 +370,6 @@ MATCH (a:rd_open), (b:rd_movie {name: 'drama'}) CREATE (a)-[:rd_e {w: 1}]->(b);
 MATCH (a:rd_open), (b:rd_movie {name: 'scifi'}) CREATE (a)-[:rd_e {w: 2}]->(b);
 -- role4 may read the two parents and no label
 CREATE ROLE role4;
-ERROR:  role "role4" already exists
 GRANT USAGE ON SCHEMA graph_priv_read TO group1, role4;
 GRANT SELECT ON ALL TABLES IN SCHEMA graph_priv_read TO group1;
 GRANT INSERT ON graph_priv_read."ag_vertex" TO group1;
@@ -555,6 +548,38 @@ UPDATE graph_priv_read.ag_vertex SET properties = properties || '{"seen": true}'
 
 RESET role;
 RESET enable_graph_dml;
+-- a policy that carries a sublink
+CREATE TABLE rd_allowed (name text);
+INSERT INTO rd_allowed VALUES ('par');
+GRANT SELECT ON rd_allowed TO group1;
+ALTER TABLE graph_priv_read."rd_par" ENABLE ROW LEVEL SECURITY;
+CREATE POLICY rd_par_sel ON graph_priv_read.rd_par FOR SELECT
+	USING (EXISTS (SELECT 1 FROM rd_allowed a
+				   WHERE a.name = properties->>'name'));
+SET role role2;
+MATCH (n) RETURN label(n), n.name ORDER BY label(n), n.name;
+    label    |  name   
+-------------+---------
+ "ag_vertex" | "drama"
+ "rd_child"  | "child"
+ "rd_movie"  | "scifi"
+ "rd_open"   | "open"
+ "rd_par"    | "par"
+(5 rows)
+
+RESET role;
+DELETE FROM rd_allowed;
+SET role role2;
+MATCH (n) RETURN label(n), n.name ORDER BY label(n), n.name;
+    label    |  name   
+-------------+---------
+ "ag_vertex" | "drama"
+ "rd_child"  | "child"
+ "rd_movie"  | "scifi"
+ "rd_open"   | "open"
+(4 rows)
+
+RESET role;
 -- a grant on the parents alone reads no label
 SET role role4;
 MATCH (n:rd_open) RETURN count(*);
@@ -568,6 +593,7 @@ ERROR:  permission denied for table rd_open
 RESET role;
 -- Clean up
 DROP GRAPH IF EXISTS graph_priv_read CASCADE;
+DROP TABLE rd_allowed;
 DROP GRAPH IF EXISTS graph_priv_test CASCADE;
 -- Dropping the graph removes the schema-scoped default privileges, but the
 -- "FOR USER new_user" grant near the top is global (not schema-scoped), so it
