@@ -12765,3 +12765,111 @@ drop cascades to vlabel x_after
 drop cascades to vlabel x_before
 drop cascades to vlabel c_plan
 RESET graph_path;
+--
+-- A published label with no replica identity refuses the writes that need
+-- one, as SQL on the same table does
+--
+CREATE GRAPH pub_ident;
+SET graph_path = pub_ident;
+CREATE VLABEL pv;
+CREATE ELABEL pe;
+CREATE (:pv {k: 1})-[:pe {k: 1}]->(:pv {k: 2});
+-- suppress the warning that depends on wal_level
+SET client_min_messages = 'ERROR';
+CREATE PUBLICATION pub_ident_all FOR TABLE pub_ident.pe, pub_ident.pv;
+RESET client_min_messages;
+-- an edge label has no primary key: every clause that updates or deletes its
+-- rows is refused, including the ones a DETACH DELETE and a MERGE reach it by
+MATCH ()-[r:pe]->() SET r.t = 1;
+ERROR:  cannot update table "pe" because it does not have a replica identity and publishes updates
+HINT:  To enable updating the table, set REPLICA IDENTITY using ALTER TABLE.
+MATCH ()-[r:pe]->() SET r += {t: 1};
+ERROR:  cannot update table "pe" because it does not have a replica identity and publishes updates
+HINT:  To enable updating the table, set REPLICA IDENTITY using ALTER TABLE.
+MATCH ()-[r:pe]->() REMOVE r.k;
+ERROR:  cannot update table "pe" because it does not have a replica identity and publishes updates
+HINT:  To enable updating the table, set REPLICA IDENTITY using ALTER TABLE.
+MATCH ()-[r:pe]->() SET r.t = 1 FINISH;
+ERROR:  cannot update table "pe" because it does not have a replica identity and publishes updates
+HINT:  To enable updating the table, set REPLICA IDENTITY using ALTER TABLE.
+MATCH ()-[r:pe]->() DELETE r;
+ERROR:  cannot delete from table "pe" because it does not have a replica identity and publishes deletes
+HINT:  To enable deleting from the table, set REPLICA IDENTITY using ALTER TABLE.
+MATCH (n:pv {k: 1}) DETACH DELETE n;
+ERROR:  cannot delete from table "pe" because it does not have a replica identity and publishes deletes
+HINT:  To enable deleting from the table, set REPLICA IDENTITY using ALTER TABLE.
+MATCH (a:pv {k: 1}), (b:pv {k: 2})
+MERGE (a)-[r:pe {k: 1}]->(b) ON MATCH SET r.t = 1;
+ERROR:  cannot update table "pe" because it does not have a replica identity and publishes updates
+HINT:  To enable updating the table, set REPLICA IDENTITY using ALTER TABLE.
+MATCH (a:pv {k: 1}), (b:pv {k: 2})
+MERGE (a)-[r:pe {k: 9}]->(b) ON CREATE SET r.t = 1;
+ERROR:  cannot update table "pe" because it does not have a replica identity and publishes updates
+HINT:  To enable updating the table, set REPLICA IDENTITY using ALTER TABLE.
+-- creating needs no identity
+MATCH (a:pv {k: 1}), (b:pv {k: 2}) CREATE (a)-[:pe {k: 2}]->(b);
+MATCH (a:pv {k: 1}), (b:pv {k: 2}) MERGE (a)-[:pe {k: 3}]->(b);
+MATCH ()-[r:pe]->() RETURN count(r) AS edges;
+ edges 
+-------
+ 3
+(1 row)
+
+-- a vertex label has its primary key, until the identity is taken away
+MATCH (n:pv {k: 1}) SET n.t = 1 RETURN n.t;
+ t 
+---
+ 1
+(1 row)
+
+ALTER VLABEL pv REPLICA IDENTITY NOTHING;
+MATCH (n:pv {k: 1}) SET n.t = 2;
+ERROR:  cannot update table "pv" because it does not have a replica identity and publishes updates
+HINT:  To enable updating the table, set REPLICA IDENTITY using ALTER TABLE.
+MATCH (n:pv {k: 1}) DELETE n;
+ERROR:  cannot delete from table "pv" because it does not have a replica identity and publishes deletes
+HINT:  To enable deleting from the table, set REPLICA IDENTITY using ALTER TABLE.
+ALTER VLABEL pv REPLICA IDENTITY DEFAULT;
+-- a publication of inserts alone asks for none
+ALTER PUBLICATION pub_ident_all SET (publish = 'insert');
+MATCH ()-[r:pe {k: 3}]->() SET r.t = 1 RETURN r.t;
+ t 
+---
+ 1
+(1 row)
+
+MATCH ()-[r:pe {k: 3}]->() DELETE r;
+ALTER PUBLICATION pub_ident_all SET (publish = 'insert, update, delete');
+-- with an identity the edge label takes the writes again: the whole row, or
+-- a unique index on id
+ALTER ELABEL pe REPLICA IDENTITY FULL;
+MATCH ()-[r:pe {k: 1}]->() SET r.t = 1 RETURN r.t;
+ t 
+---
+ 1
+(1 row)
+
+MATCH ()-[r:pe {k: 2}]->() DELETE r;
+ALTER ELABEL pe REPLICA IDENTITY DEFAULT;
+CREATE UNIQUE INDEX pe_id_key ON pub_ident.pe (id);
+ALTER ELABEL pe REPLICA IDENTITY USING INDEX pe_id_key;
+MATCH ()-[r:pe {k: 1}]->() SET r.t = 2 RETURN r.t;
+ t 
+---
+ 2
+(1 row)
+
+-- a column list that leaves the identity out takes it away as well
+ALTER PUBLICATION pub_ident_all SET TABLE pub_ident.pv (properties);
+MATCH (n:pv {k: 1}) SET n.t = 3;
+ERROR:  cannot update table "pv"
+DETAIL:  Column list used by the publication does not cover the replica identity.
+DROP PUBLICATION pub_ident_all;
+DROP GRAPH pub_ident CASCADE;
+NOTICE:  drop cascades to 5 other objects
+DETAIL:  drop cascades to sequence pub_ident.ag_label_seq
+drop cascades to vlabel ag_vertex
+drop cascades to elabel ag_edge
+drop cascades to vlabel pv
+drop cascades to elabel pe
+RESET graph_path;
