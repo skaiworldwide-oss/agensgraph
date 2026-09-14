@@ -174,6 +174,35 @@ SELECT * FROM get_last_graph_write_stats();
 match (u) delete u;
 SELECT * FROM get_last_graph_write_stats();
 
+-- a write with RETURN describes itself alone, whatever the write before it
+-- left in the other counters
+create (:vertices {name: 'a'}), (:vertices {name: 'b'}), (:vertices {name: 'c'});
+match (u:vertices {name: 'a'}) set u.p = 1 return u.name;
+SELECT * FROM get_last_graph_write_stats();
+match (u:vertices {name: 'b'}) delete u return 1;
+SELECT * FROM get_last_graph_write_stats();
+create (u:vertices {name: 'd'}) return u.name;
+SELECT * FROM get_last_graph_write_stats();
+match (a:vertices {name: 'a'}), (d:vertices {name: 'd'})
+create (a)-[e:edges]->(d) return count(e);
+SELECT * FROM get_last_graph_write_stats();
+
+-- two write clauses in one statement add up
+match (u:vertices {name: 'c'}) delete u with 1 as x
+create (:vertices {name: 'e'}), (:vertices {name: 'f'}) return x;
+SELECT * FROM get_last_graph_write_stats();
+
+-- a MERGE that finds its row, and a write that touches no row, report zeros
+merge (u:vertices {name: 'a'}) return u.name;
+SELECT * FROM get_last_graph_write_stats();
+match (u:vertices {name: 'nobody'}) set u.p = 1 return u.name;
+SELECT * FROM get_last_graph_write_stats();
+
+-- an EXPLAIN that does not run the write leaves the last write's counters
+match (u:vertices {name: 'a'}) set u.p = 2;
+EXPLAIN (COSTS OFF) create (:vertices {name: 'g'});
+SELECT * FROM get_last_graph_write_stats();
+
 -- cleanup
 DROP GRAPH ag222 CASCADE;
 
