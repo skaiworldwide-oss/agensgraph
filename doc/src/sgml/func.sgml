@@ -14465,6 +14465,12 @@ CREATE TYPE rainbow AS ENUM ('red', 'orange', 'yellow', 'green', 'blue', 'purple
         sub-millisecond timestamp + random. The optional
         parameter <parameter>shift</parameter> will shift the computed
         timestamp by the given <type>interval</type>.
+        Infinite interval values are not accepted.
+        The shifted timestamp must fall within the range supported by
+        UUID version 7's 48-bit millisecond timestamp field: from
+        1970-01-01 00:00:00 UTC to approximately year 10889.
+        An error is raised if the resulting timestamp is outside this
+        range.
        </para>
        <para>
         <literal>uuidv7()</literal>
@@ -25771,20 +25777,6 @@ SELECT has_function_privilege('joeuser', 'myfunc(int, text)', 'execute');
         </para>
         <para>
          <literal>'{calvin=r*w/hobbes,hobbes=r*w*/postgres}'::aclitem[] @&gt; 'calvin=r*/hobbes'::aclitem</literal>
-         <returnvalue>t</returnvalue>
-        </para></entry>
-       </row>
-
-       <row>
-        <entry role="func_table_entry"><para role="func_signature">
-         <type>aclitem[]</type> <literal>~</literal> <type>aclitem</type>
-         <returnvalue>boolean</returnvalue>
-        </para>
-        <para>
-         This is a deprecated alias for <literal>@&gt;</literal>.
-        </para>
-        <para>
-         <literal>'{calvin=r*w/hobbes,hobbes=r*w*/postgres}'::aclitem[] ~ 'calvin=r*/hobbes'::aclitem</literal>
          <returnvalue>t</returnvalue>
         </para></entry>
        </row>

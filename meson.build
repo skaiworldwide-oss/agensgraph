@@ -8,7 +8,7 @@
 
 project('postgresql',
   ['c'],
-  version: '18.4',
+  version: '18.6',
   license: 'PostgreSQL',
 
   # We want < 0.56 for python 3.5 compatibility on old platforms. EPEL for
@@ -2096,6 +2096,12 @@ common_functional_flags = [
   # Disable optimizations that assume no overflow; needed for gcc 4.3+
   '-fwrapv',
   '-fexcess-precision=standard',
+  # Without -fpch-deps gcc emits dependencies that are insufficient for ccache
+  # to trigger a rebuild when the precompiled header changes. We could make
+  # this depend on using gcc and precompiled headers being enabled, but that's
+  # probably not worth it.  See also
+  # https://github.com/ccache/ccache/issues/1686
+  '-fpch-deps',
 ]
 
 cflags += cc.get_supported_arguments(common_functional_flags)

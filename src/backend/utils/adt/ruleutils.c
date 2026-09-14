@@ -508,6 +508,8 @@ static void get_json_agg_constructor(JsonConstructorExpr *ctor,
 									 deparse_context *context,
 									 const char *funcname,
 									 bool is_json_objectagg);
+static void get_json_agg_constructor_expr(Node *node, deparse_context *context,
+										  void *callback_arg);
 static void simple_quote_literal(StringInfo buf, const char *val);
 static void get_sublink_expr(SubLink *sublink, deparse_context *context);
 static void get_tablefunc(TableFunc *tf, deparse_context *context,
@@ -11541,7 +11543,7 @@ get_func_sql_syntax(FuncExpr *expr, deparse_context *context)
 				Assert(IsA(con, Const) &&
 					   con->consttype == TEXTOID &&
 					   !con->constisnull);
-				appendStringInfoString(buf, TextDatumGetCString(con->constvalue));
+				appendStringInfoString(buf, quote_identifier(TextDatumGetCString(con->constvalue)));
 			}
 			appendStringInfoString(buf, " FROM ");
 			get_rule_expr((Node *) lsecond(expr->args), context, false);
@@ -11561,6 +11563,7 @@ get_func_sql_syntax(FuncExpr *expr, deparse_context *context)
 				Assert(IsA(con, Const) &&
 					   con->consttype == TEXTOID &&
 					   !con->constisnull);
+				/* NB: safe because no allowed words need quoted/escaped */
 				appendStringInfo(buf, " %s",
 								 TextDatumGetCString(con->constvalue));
 			}
@@ -12227,9 +12230,39 @@ get_json_agg_constructor(JsonConstructorExpr *ctor, deparse_context *context,
 		get_windowfunc_expr_helper((WindowFunc *) ctor->func, context,
 								   funcname, options.data,
 								   is_json_objectagg);
+	else if (IsA(ctor->func, Var))
+	{
+		/*
+		 * If the aggregate is computed by a lower plan node, setrefs.c will
+		 * have replaced the Aggref or WindowFunc with a Var referencing that
+		 * node's output.  Chase the Var back to it so we can still print the
+		 * original JSON aggregate syntax.  This only happens in EXPLAIN.
+		 */
+		resolve_special_varno((Node *) ctor->func, context,
+							  get_json_agg_constructor_expr, ctor);
+	}
 	else
 		elog(ERROR, "invalid JsonConstructorExpr underlying node type: %d",
 			 nodeTag(ctor->func));
+}
+
+/*
+ * Deparse a JsonConstructorExpr whose aggregate is computed by a lower plan
+ * node; resolve_special_varno has located the underlying Aggref/WindowFunc.
+ */
+static void
+get_json_agg_constructor_expr(Node *node, deparse_context *context,
+							  void *callback_arg)
+{
+	JsonConstructorExpr ctor;
+
+	if (!IsA(node, Aggref) && !IsA(node, WindowFunc))
+		elog(ERROR, "JSON aggregate constructor does not point to an Aggref or WindowFunc");
+
+	/* Flat copy suffices; we only replace func. */
+	ctor = *(JsonConstructorExpr *) callback_arg;
+	ctor.func = (Expr *) node;
+	get_json_constructor(&ctor, context, false);
 }
 
 /*

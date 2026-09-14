@@ -532,6 +532,15 @@ InitWalRecovery(ControlFileData *ControlFile, bool *wasShutdown_ptr,
 	dbstate_at_startup = ControlFile->state;
 
 	/*
+	 * A startup process always starts with an inconsistent database. Set the
+	 * flag accordingly, even if it was inherited from a postmaster that had
+	 * already marked the database as consistent. This keeps the invariant
+	 * local to the startup process without requiring every fork path to clear
+	 * the flag.
+	 */
+	reachedConsistency = false;
+
+	/*
 	 * Initialize on the assumption we want to recover to the latest timeline
 	 * that's active according to pg_control.
 	 */
@@ -3431,8 +3440,10 @@ retry:
 
 		pgstat_report_wait_end();
 
-		pgstat_count_io_op_time(IOOBJECT_WAL, IOCONTEXT_NORMAL, IOOP_READ,
-								io_start, 1, r);
+		/* Count I/O stats only for successful short reads */
+		if (r > 0)
+			pgstat_count_io_op_time(IOOBJECT_WAL, IOCONTEXT_NORMAL, IOOP_READ,
+									io_start, 1, r);
 
 		XLogFileName(fname, curFileTLI, readSegNo, wal_segment_size);
 		if (r < 0)

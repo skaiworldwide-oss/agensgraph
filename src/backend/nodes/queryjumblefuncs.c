@@ -230,7 +230,7 @@ DoJumble(JumbleState *jstate, Node *node)
  *
  * Note: Callers must ensure that size > 0.
  */
-static pg_attribute_always_inline void
+static pg_always_inline void
 AppendJumbleInternal(JumbleState *jstate, const unsigned char *item,
 					 Size size)
 {
@@ -306,7 +306,7 @@ AppendJumble(JumbleState *jstate, const unsigned char *value, Size size)
  * AppendJumbleNull
  *		For jumbling NULL pointers
  */
-static pg_attribute_always_inline void
+static pg_always_inline void
 AppendJumbleNull(JumbleState *jstate)
 {
 	jstate->pending_nulls++;
@@ -373,7 +373,7 @@ AppendJumble64(JumbleState *jstate, const unsigned char *value)
  *
  * Note: Callers must ensure that there's at least 1 pending NULL.
  */
-static pg_attribute_always_inline void
+static pg_always_inline void
 FlushPendingNulls(JumbleState *jstate)
 {
 	Assert(jstate->pending_nulls > 0);

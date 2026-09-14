@@ -2,6 +2,7 @@
 
 #include "fmgr.h"
 #include "hstore/hstore.h"
+#include "miscadmin.h"
 #include "plperl.h"
 
 PG_MODULE_MAGIC_EXT(
@@ -110,7 +111,15 @@ plperl_to_hstore(PG_FUNCTION_ARGS)
 
 	/* Dereference references recursively. */
 	while (SvROK(in))
+	{
+		/*
+		 * It's possible for circular references to make this an infinite
+		 * loop.  Checking for such a situation seems like much more trouble
+		 * than it's worth, but let's provide a way to break out of the loop.
+		 */
+		CHECK_FOR_INTERRUPTS();
 		in = SvRV(in);
+	}
 
 	/* Now we must have a hash. */
 	if (SvTYPE(in) != SVt_PVHV)
@@ -119,8 +128,9 @@ plperl_to_hstore(PG_FUNCTION_ARGS)
 				 errmsg("cannot transform non-hash Perl value to hstore")));
 	hv = (HV *) in;
 
-	pcount = hv_iterinit(hv);
+	(void) hv_iterinit(hv);
 
+	pcount = 64;				/* arbitrary initial guess */
 	pairs = palloc_array(Pairs, pcount);
 
 	i = 0;
@@ -128,6 +138,12 @@ plperl_to_hstore(PG_FUNCTION_ARGS)
 	{
 		char	   *key = sv2cstr(HeSVKEY_force(he));
 		SV		   *value = HeVAL(he);
+
+		if (i >= pcount)
+		{
+			pcount *= 2;
+			pairs = repalloc_array(pairs, Pairs, pcount);
+		}
 
 		pairs[i].key = pstrdup(key);
 		pairs[i].keylen = hstoreCheckKeyLen(strlen(pairs[i].key));
@@ -149,7 +165,7 @@ plperl_to_hstore(PG_FUNCTION_ARGS)
 		i++;
 	}
 
-	pcount = hstoreUniquePairs(pairs, pcount, &buflen);
+	pcount = hstoreUniquePairs(pairs, i, &buflen);
 	out = hstorePairs(pairs, pcount, buflen);
 	PG_RETURN_POINTER(out);
 }

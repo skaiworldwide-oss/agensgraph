@@ -2164,21 +2164,13 @@ static void
 ReorderBufferResetTXN(ReorderBuffer *rb, ReorderBufferTXN *txn,
 					  Snapshot snapshot_now,
 					  CommandId command_id,
-					  XLogRecPtr last_lsn,
-					  ReorderBufferChange *specinsert)
+					  XLogRecPtr last_lsn)
 {
 	/* Discard the changes that we just streamed */
 	ReorderBufferTruncateTXN(rb, txn, rbtxn_is_prepared(txn));
 
 	/* Free all resources allocated for toast reconstruction */
 	ReorderBufferToastReset(rb, txn);
-
-	/* Return the spec insert change if it is not NULL */
-	if (specinsert != NULL)
-	{
-		ReorderBufferFreeChange(rb, specinsert, true);
-		specinsert = NULL;
-	}
 
 	/*
 	 * For the streaming case, stop the stream and remember the command ID and
@@ -2443,7 +2435,7 @@ ReorderBufferProcessTXN(ReorderBuffer *rb, ReorderBufferTXN *txn,
 					 * CheckTableNotInUse() and locking.
 					 */
 
-					/* clear out a pending (and thus failed) speculation */
+					/* clear out a pending (= failed) speculative insertion */
 					if (specinsert != NULL)
 					{
 						ReorderBufferFreeChange(rb, specinsert, true);
@@ -2753,6 +2745,13 @@ ReorderBufferProcessTXN(ReorderBuffer *rb, ReorderBufferTXN *txn,
 		if (using_subtxn)
 			RollbackAndReleaseCurrentSubTransaction();
 
+		/* Free the specinsert change before freeing the ReorderBufferTXN */
+		if (specinsert != NULL)
+		{
+			ReorderBufferFreeChange(rb, specinsert, true);
+			specinsert = NULL;
+		}
+
 		/*
 		 * The error code ERRCODE_TRANSACTION_ROLLBACK indicates a concurrent
 		 * abort of the (sub)transaction we are streaming or preparing. We
@@ -2786,8 +2785,7 @@ ReorderBufferProcessTXN(ReorderBuffer *rb, ReorderBufferTXN *txn,
 
 			/* Reset the TXN so that it is allowed to stream remaining data. */
 			ReorderBufferResetTXN(rb, txn, snapshot_now,
-								  command_id, prev_lsn,
-								  specinsert);
+								  command_id, prev_lsn);
 		}
 		else
 		{
@@ -2973,11 +2971,18 @@ ReorderBufferPrepare(ReorderBuffer *rb, TransactionId xid,
 						txn->xact_time.prepare_time, txn->origin_id, txn->origin_lsn);
 
 	/*
-	 * Send a prepare if not already done so. This might occur if we have
-	 * detected a concurrent abort while replaying the non-streaming
-	 * transaction.
+	 * Send a prepare if not already done so. The "not already sent" case can
+	 * occur if we have detected a concurrent abort while replaying the
+	 * non-streaming transaction; we still send the prepare so that later when
+	 * rollback prepared is decoded and sent, the downstream should be able to
+	 * rollback such a xact. See comments atop DecodePrepare.
+	 *
+	 * Skip this for a transaction that made no changes to the database (i.e.
+	 * has no base snapshot), as we haven't sent any changes for it. Such a
+	 * transaction is cleaned up without invoking the commit/rollback prepared
+	 * callbacks in ReorderBufferFinishPrepared().
 	 */
-	if (!rbtxn_sent_prepare(txn))
+	if (!rbtxn_sent_prepare(txn) && txn->base_snapshot != NULL)
 	{
 		rb->prepare(rb, txn, txn->final_lsn);
 		txn->txn_flags |= RBTXN_SENT_PREPARE;
@@ -3042,6 +3047,25 @@ ReorderBufferFinishPrepared(ReorderBuffer *rb, TransactionId xid,
 		 */
 		ReorderBufferReplay(txn, rb, xid, txn->final_lsn, txn->end_lsn,
 							txn->xact_time.prepare_time, txn->origin_id, txn->origin_lsn);
+	}
+
+	/*
+	 * If this transaction has no snapshot, it didn't make any changes to the
+	 * database, so there's nothing to decode.  Note that
+	 * ReorderBufferCommitChild will have transferred any snapshots from
+	 * subtransactions if there were any.
+	 */
+	if (txn->base_snapshot == NULL)
+	{
+		Assert(txn->ninvalidations == 0);
+		Assert(!rbtxn_sent_prepare(txn));
+
+		/*
+		 * Removing this txn before a commit might result in the computation
+		 * of an incorrect restart_lsn. See SnapBuildProcessRunningXacts.
+		 */
+		ReorderBufferCleanupTXN(rb, txn);
+		return;
 	}
 
 	txn->final_lsn = commit_lsn;

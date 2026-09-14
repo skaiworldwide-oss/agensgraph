@@ -131,26 +131,21 @@ typedef struct
 } standard_qp_extra;
 
 /*
- * Context for the find_having_collation_conflicts walker.
- *
- * ancestor_collids is a stack of inputcollids contributed by collation-aware
- * ancestors of the current node.  Entries are pushed before recursing into a
- * node's children and popped afterwards, so the stack reflects exactly the
- * inputcollids on the current root-to-node path.
+ * Context for find_having_conflicts.  This is the callback context passed to
+ * expression_has_grouping_conflict in clauses.c.
  */
 typedef struct
 {
+	Query	   *parse;
 	Index		group_rtindex;
-	List	   *ancestor_collids;
-} having_collation_ctx;
+} having_grouping_ctx;
 
 /* Local functions */
 static Node *preprocess_expression(PlannerInfo *root, Node *expr, int kind);
 static void preprocess_qual_conditions(PlannerInfo *root, Node *jtnode);
-static Bitmapset *find_having_collation_conflicts(Query *parse,
-												  Index group_rtindex);
-static bool having_collation_conflict_walker(Node *node,
-											 having_collation_ctx *ctx);
+static Bitmapset *find_having_conflicts(Query *parse, Index group_rtindex);
+static Oid	having_var_grouping_eqop(Var *var, void *context);
+static Oid	group_var_eqop(Query *parse, Var *var);
 static void grouping_planner(PlannerInfo *root, double tuple_fraction,
 							 SetOperationStmt *setops);
 static grouping_sets_data *preprocess_grouping_sets(PlannerInfo *root);
@@ -701,7 +696,7 @@ subquery_planner(PlannerGlobal *glob, Query *parse, PlannerInfo *parent_root,
 	PlannerInfo *root;
 	List	   *newWithCheckOptions;
 	List	   *newHaving;
-	Bitmapset  *havingCollationConflicts;
+	Bitmapset  *havingPushdownConflicts;
 	int			havingIdx;
 	bool		hasOuterJoins;
 	bool		hasResultRTEs;
@@ -1129,25 +1124,14 @@ subquery_planner(PlannerGlobal *glob, Query *parse, PlannerInfo *parent_root,
 	}
 
 	/*
-	 * Before we flatten GROUP Vars, check which HAVING clauses have collation
-	 * conflicts.  When GROUP BY uses a nondeterministic collation, values
-	 * that are "equal" for grouping may be distinguishable under a different
-	 * collation.  If such a HAVING clause were moved to WHERE, it would
-	 * filter individual rows before grouping, potentially eliminating some
-	 * members of a group and thereby changing aggregate results.
-	 *
-	 * We do this check before flatten_group_exprs because we can easily
-	 * identify grouping expressions by checking whether a Var references
-	 * RTE_GROUP, and such Vars directly carry the GROUP BY collation as their
-	 * varcollid.  After flattening, these Vars are replaced by the underlying
-	 * expressions, and we would have to match expressions in the HAVING
-	 * clause back to grouping expressions, which is much more complex.
+	 * Before we flatten GROUP Vars, identify HAVING clauses whose equality
+	 * semantics disagree with the GROUP BY's.  See find_having_conflicts.
 	 */
 	if (parse->hasGroupRTE)
-		havingCollationConflicts =
-			find_having_collation_conflicts(parse, root->group_rtindex);
+		havingPushdownConflicts = find_having_conflicts(parse,
+														root->group_rtindex);
 	else
-		havingCollationConflicts = NULL;
+		havingPushdownConflicts = NULL;
 
 	/*
 	 * Replace any Vars in the subquery's targetlist and havingQual that
@@ -1193,13 +1177,13 @@ subquery_planner(PlannerGlobal *glob, Query *parse, PlannerInfo *parent_root,
 	 * but it's okay: it's just an optimization to avoid running pull_varnos
 	 * when there cannot be any Vars in the HAVING clause.)
 	 *
-	 * We also cannot do this if the HAVING clause uses a different collation
-	 * than the GROUP BY for any grouping expression whose GROUP BY collation
-	 * is nondeterministic.  This is detected before flatten_group_exprs (see
-	 * find_having_collation_conflicts above) and recorded in the
-	 * havingCollationConflicts bitmapset.  The bitmapset indexes remain valid
-	 * here because flatten_group_exprs uses expression_tree_mutator, which
-	 * preserves the list length and ordering of havingQual.
+	 * We also cannot do this for HAVING clauses that conflict with GROUP BY
+	 * on collation or operator family.  Both kinds of conflict are detected
+	 * before flatten_group_exprs (see find_having_conflicts above) and
+	 * recorded in the havingPushdownConflicts bitmapset.  The bitmapset
+	 * indexes remain valid here because flatten_group_exprs uses
+	 * expression_tree_mutator, which preserves the list length and ordering
+	 * of havingQual.
 	 *
 	 * Also, it may be that the clause is so expensive to execute that we're
 	 * better off doing it only once per group, despite the loss of
@@ -1241,7 +1225,7 @@ subquery_planner(PlannerGlobal *glob, Query *parse, PlannerInfo *parent_root,
 		if (contain_agg_clause(havingclause) ||
 			contain_volatile_functions(havingclause) ||
 			contain_subplans(havingclause) ||
-			bms_is_member(havingIdx, havingCollationConflicts) ||
+			bms_is_member(havingIdx, havingPushdownConflicts) ||
 			(parse->groupClause && parse->groupingSets &&
 			 bms_is_member(root->group_rtindex, pull_varnos(root, havingclause))))
 		{
@@ -1577,192 +1561,99 @@ preprocess_graph_delete(PlannerInfo *root, List *exprs)
 }
 
 /*
- * find_having_collation_conflicts
- *	  Identify HAVING clauses that must not be moved to WHERE due to collation
- *	  mismatches with GROUP BY.
+ * find_having_conflicts
+ *	  Identify HAVING clauses that must not be moved to WHERE because they
+ *	  apply a different equivalence relation than GROUP BY.  Pushing such a
+ *	  clause to WHERE would filter individual rows before grouping happens,
+ *	  eliminating rows that GROUP BY would have merged into a single group
+ *	  and thereby changing aggregate results.
+ *
+ * The actual walking is done by expression_has_grouping_conflict; see that
+ * function for the kinds of conflict it looks for.  We just iterate over
+ * havingQual and supply a HAVING-specific callback that identifies GROUP
+ * Vars.
  *
  * This must be called before flatten_group_exprs, while the HAVING clause
  * still contains GROUP Vars (Vars referencing RTE_GROUP).  These GROUP Vars
- * carry the GROUP BY collation as their varcollid.  A GROUP Var with a
- * nondeterministic varcollid conflicts whenever some collation-aware ancestor
- * on its path applies a different inputcollid: that operator would distinguish
- * values which the GROUP BY considers equal, so the clause is unsafe to push
- * to WHERE.
+ * carry the GROUP BY collation as their varcollid and let us recover the
+ * grouping eqop via varattno.  After flattening, those Vars are replaced by
+ * the underlying expressions, and matching back to grouping expressions is
+ * much harder.
  *
  * Returns a Bitmapset of zero-based indexes into the havingQual list for
- * clauses that have collation conflicts and must stay in HAVING.
+ * clauses that conflict and must stay in HAVING.
  */
 static Bitmapset *
-find_having_collation_conflicts(Query *parse, Index group_rtindex)
+find_having_conflicts(Query *parse, Index group_rtindex)
 {
 	Bitmapset  *result = NULL;
-	having_collation_ctx ctx;
+	having_grouping_ctx ctx;
 	int			idx;
 
 	if (parse->havingQual == NULL)
 		return NULL;
 
+	ctx.parse = parse;
 	ctx.group_rtindex = group_rtindex;
-	ctx.ancestor_collids = NIL;
 
 	idx = 0;
 	foreach_ptr(Node, clause, (List *) parse->havingQual)
 	{
-		if (having_collation_conflict_walker(clause, &ctx))
+		if (expression_has_grouping_conflict(clause, having_var_grouping_eqop,
+											 &ctx))
 			result = bms_add_member(result, idx);
 		idx++;
-		Assert(ctx.ancestor_collids == NIL);
 	}
 
 	return result;
 }
 
 /*
- * Walker function for find_having_collation_conflicts.
+ * having_var_grouping_eqop
+ *	  grouping_eqop_callback for find_having_conflicts.
  *
- * Walk the clause top-down, maintaining a stack of inputcollids contributed
- * by collation-aware ancestors.  At each GROUP Var with a nondeterministic
- * varcollid, the clause has a conflict if any ancestor's inputcollid differs
- * from the GROUP Var's varcollid.  Most collation-aware nodes expose their
- * inputcollid through exprInputCollation().  Two structural exceptions need
- * special handling:
- *
- * - RowCompareExpr carries one inputcollid per column in inputcollids[], so we
- *   descend into its (largs[i], rargs[i]) pairs explicitly with the matching
- *   collation pushed onto the stack.
- *
- * - A simple CASE (CaseExpr with a non-NULL arg) holds the arg outside the
- *   WHEN's OpExpr, even though the WHEN's OpExpr is the place where the
- *   comparison's inputcollid lives.  Parse analysis builds each WHEN as
- *   "OpExpr(CaseTestExpr op val)" -- the CaseTestExpr is a placeholder for
- *   the arg.  Before walking cexpr->arg we therefore push every WHEN's
- *   inputcollid onto the ancestor stack, so a GROUP Var at the arg is
- *   checked against the same collations the WHEN comparisons would apply.
- *   The WHEN bodies and defresult are then walked under the unchanged stack
- *   so their own collation contexts are picked up by the default path.
+ * Returns the GROUP BY equality operator for 'var' if it references the
+ * query's RTE_GROUP, or InvalidOid otherwise.
  */
-static bool
-having_collation_conflict_walker(Node *node, having_collation_ctx *ctx)
+static Oid
+having_var_grouping_eqop(Var *var, void *context)
 {
-	Oid			this_collid;
-	bool		result;
+	having_grouping_ctx *ctx = (having_grouping_ctx *) context;
 
-	if (node == NULL)
-		return false;
+	if (var->varno != ctx->group_rtindex || var->varlevelsup != 0)
+		return InvalidOid;
 
-	if (IsA(node, Var))
+	return group_var_eqop(ctx->parse, var);
+}
+
+/*
+ * group_var_eqop
+ *	  Return the equality operator that GROUP BY uses for the given GROUP Var.
+ *
+ * A GROUP Var's varattno is its 1-based position in the RTE_GROUP's groupexprs
+ * list, which addRangeTableEntryForGroup built by iterating parse->groupClause
+ * and including every SortGroupClause whose TLE was present in the targetlist.
+ * Replay that traversal here to recover the SortGroupClause for the given
+ * varattno.
+ */
+static Oid
+group_var_eqop(Query *parse, Var *var)
+{
+	int			counter = 0;
+
+	Assert(var->varlevelsup == 0);
+
+	foreach_node(SortGroupClause, sgc, parse->groupClause)
 	{
-		Var		   *var = (Var *) node;
-
-		/* We should not see any upper-level Vars here */
-		Assert(var->varlevelsup == 0);
-
-		if (var->varno == ctx->group_rtindex &&
-			OidIsValid(var->varcollid) &&
-			!get_collation_isdeterministic(var->varcollid))
-		{
-			foreach_oid(collid, ctx->ancestor_collids)
-			{
-				if (collid != var->varcollid)
-					return true;
-			}
-		}
-		return false;
+		if (get_sortgroupclause_tle(sgc, parse->targetList) == NULL)
+			continue;
+		if (++counter == var->varattno)
+			return sgc->eqop;
 	}
 
-	if (IsA(node, RowCompareExpr))
-	{
-		RowCompareExpr *rcexpr = (RowCompareExpr *) node;
-		ListCell   *lc_l;
-		ListCell   *lc_r;
-		ListCell   *lc_c;
-
-		/*
-		 * Each column of a row comparison is compared under its own
-		 * inputcollids[i].  Walk each (largs[i], rargs[i]) pair with that
-		 * collation pushed, so a Var in column i is checked against the
-		 * collation that actually applies to it.
-		 */
-		forthree(lc_l, rcexpr->largs,
-				 lc_r, rcexpr->rargs,
-				 lc_c, rcexpr->inputcollids)
-		{
-			Oid			collid = lfirst_oid(lc_c);
-			bool		found;
-
-			if (OidIsValid(collid))
-				ctx->ancestor_collids = lappend_oid(ctx->ancestor_collids,
-													collid);
-
-			found = having_collation_conflict_walker((Node *) lfirst(lc_l),
-													 ctx) ||
-				having_collation_conflict_walker((Node *) lfirst(lc_r),
-												 ctx);
-
-			if (OidIsValid(collid))
-				ctx->ancestor_collids =
-					list_delete_last(ctx->ancestor_collids);
-
-			if (found)
-				return true;
-		}
-		return false;
-	}
-
-	if (IsA(node, CaseExpr) && ((CaseExpr *) node)->arg != NULL)
-	{
-		CaseExpr   *cexpr = (CaseExpr *) node;
-		int			saved_len = list_length(ctx->ancestor_collids);
-		bool		found;
-
-		/*
-		 * Push every WHEN's inputcollid before walking cexpr->arg, since each
-		 * WHEN implicitly compares the arg under that inputcollid.
-		 */
-		foreach_node(CaseWhen, cw, cexpr->args)
-		{
-			Oid			collid = exprInputCollation((Node *) cw->expr);
-
-			if (OidIsValid(collid))
-				ctx->ancestor_collids = lappend_oid(ctx->ancestor_collids,
-													collid);
-		}
-
-		found = having_collation_conflict_walker((Node *) cexpr->arg, ctx);
-
-		ctx->ancestor_collids = list_truncate(ctx->ancestor_collids,
-											  saved_len);
-
-		if (found)
-			return true;
-
-		/*
-		 * Walk the WHEN bodies and defresult under the unchanged ancestor
-		 * stack; any inputcollids inside them are picked up by the default
-		 * path.
-		 */
-		foreach_node(CaseWhen, cw, cexpr->args)
-		{
-			if (having_collation_conflict_walker((Node *) cw->expr, ctx) ||
-				having_collation_conflict_walker((Node *) cw->result, ctx))
-				return true;
-		}
-		return having_collation_conflict_walker((Node *) cexpr->defresult,
-												ctx);
-	}
-
-	this_collid = exprInputCollation(node);
-	if (OidIsValid(this_collid))
-		ctx->ancestor_collids = lappend_oid(ctx->ancestor_collids,
-											this_collid);
-
-	result = expression_tree_walker(node, having_collation_conflict_walker,
-									ctx);
-
-	if (OidIsValid(this_collid))
-		ctx->ancestor_collids = list_delete_last(ctx->ancestor_collids);
-
-	return result;
+	elog(ERROR, "could not find GROUP clause for GROUP Var attno %d",
+		 var->varattno);
+	return InvalidOid;			/* keep compiler quiet */
 }
 
 /*

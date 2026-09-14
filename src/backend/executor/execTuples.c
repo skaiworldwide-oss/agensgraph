@@ -72,8 +72,8 @@
 
 static TupleDesc ExecTypeFromTLInternal(List *targetList,
 										bool skipjunk);
-static pg_attribute_always_inline void slot_deform_heap_tuple(TupleTableSlot *slot, HeapTuple tuple, uint32 *offp,
-															  int natts);
+static pg_always_inline void slot_deform_heap_tuple(TupleTableSlot *slot, HeapTuple tuple, uint32 *offp,
+													int natts);
 static inline void tts_buffer_heap_store_tuple(TupleTableSlot *slot,
 											   HeapTuple tuple,
 											   Buffer buffer,
@@ -1118,7 +1118,7 @@ slot_deform_heap_tuple_internal(TupleTableSlot *slot, HeapTuple tuple,
  * This is marked as always inline, so the different offp for different types
  * of slots gets optimized away.
  */
-static pg_attribute_always_inline void
+static pg_always_inline void
 slot_deform_heap_tuple(TupleTableSlot *slot, HeapTuple tuple, uint32 *offp,
 					   int natts)
 {

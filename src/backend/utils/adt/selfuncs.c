@@ -1067,7 +1067,8 @@ scalarineqsel(PlannerInfo *root, Oid operator, bool isgt, bool iseq,
 		 * make an estimate based on comparing the constant to the table size.
 		 */
 		if (vardata->var && IsA(vardata->var, Var) &&
-			((Var *) vardata->var)->varattno == SelfItemPointerAttributeNumber)
+			((Var *) vardata->var)->varattno == SelfItemPointerAttributeNumber &&
+			consttype == TIDOID)
 		{
 			ItemPointer itemptr;
 			double		block;
@@ -5434,6 +5435,14 @@ convert_string_datum(Datum value, Oid typid, Oid collid, bool *failure)
 			*failure = true;
 			return NULL;
 	}
+
+	/*
+	 * If we don't have a collation, act as though it's "C".  This would
+	 * normally happen only for the "char" type, but perhaps there are other
+	 * cases.
+	 */
+	if (!OidIsValid(collid))
+		return val;
 
 	mylocale = pg_newlocale_from_collation(collid);
 

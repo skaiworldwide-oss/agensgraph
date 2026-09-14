@@ -49,6 +49,7 @@
 #include "parser/parse_shortestpath.h"
 #include "pgstat.h"
 #include "rewrite/rewriteHandler.h"
+#include "rewrite/rewriteManip.h"
 #include "utils/builtins.h"
 #include "utils/fmgroids.h"
 #include "utils/lsyscache.h"
@@ -187,7 +188,7 @@ static void updateSortOperatorsForJsonb(List *sortClause, List **targetList,
 										bool allowUnbox, bool allowNativeUnbox);
 static void unboxPromotedGroupKeys(List *groupClause, List **targetList);
 static void groupElementsByIdentity(ParseState *pstate, Query *qry);
-static void releaseGroupedSentinels(Query *qry);
+static void releaseGroupedSentinels(ParseState *pstate, Query *qry);
 static void dropElementsNotNamed(List *targetList, List *named);
 static bool sortgrouprefIsUsed(Index ref, List *clauses);
 static void setDefaultCollationOnKeys(List *clause, List *targetList);
@@ -900,37 +901,101 @@ sortgrouprefIsUsed(Index ref, List *clauses)
  *
  *		This runs after the projection has been checked against the grouping, in
  *		the same way and for the same reason groupElementsByIdentity() does.  The
- *		grouping step the check built is left alone: it is read by position, and
- *		what it holds is still what the projection was checked against.
+ *		grouping step the check built has one column per key, in the order of
+ *		the clause, and the planner maps a reference to a column back to the key
+ *		at the same position.  So the column of a key given back leaves the
+ *		step too: what referred to it reads the expression it stood for, and the
+ *		columns after it move up.  The step's columns are re-projected for that,
+ *		one entry per column as it was, and every reference to the step is
+ *		replaced through that projection.
  */
 static void
-releaseGroupedSentinels(Query *qry)
+releaseGroupedSentinels(ParseState *pstate, Query *qry)
 {
+	RangeTblEntry *rte = NULL;
+	Index		rtindex = 0;
 	List	   *keys = NIL;
+	List	   *columns = NIL;
+	List	   *groupexprs = NIL;
+	List	   *colnames = NIL;
+	bool		released = false;
+	int			pos = 0;
 	ListCell   *lc;
 
 	/* a key a grouping set names has to stay in the clause the set reads */
 	if (qry->groupingSets != NIL)
 		return;
 
+	if (qry->hasGroupRTE)
+	{
+		rte = pstate->p_grouping_nsitem->p_rte;
+		rtindex = pstate->p_grouping_nsitem->p_rtindex;
+		Assert(list_length(rte->groupexprs) == list_length(qry->groupClause));
+	}
+
 	foreach(lc, qry->groupClause)
 	{
 		SortGroupClause *grpcl = (SortGroupClause *) lfirst(lc);
 		TargetEntry *tle = get_sortgroupref_tle(grpcl->tleSortGroupRef,
 											   qry->targetList);
+		Expr	   *column = NULL;
 
-		if (tle == NULL || !isPromotedSentinelName(tle->resname))
+		pos++;
+		if (rte != NULL)
+			column = (Expr *) list_nth(rte->groupexprs, pos - 1);
+
+		if (isPromotedSentinelName(tle->resname))
+		{
+			released = true;
+			if (!sortgrouprefIsUsed(grpcl->tleSortGroupRef, qry->sortClause) &&
+				!sortgrouprefIsUsed(grpcl->tleSortGroupRef, qry->distinctClause))
+				tle->ressortgroupref = 0;
+		}
+		else
 		{
 			keys = lappend(keys, grpcl);
-			continue;
+			if (rte != NULL)
+			{
+				groupexprs = lappend(groupexprs, column);
+				colnames = lappend(colnames,
+								   list_nth(rte->eref->colnames, pos - 1));
+				column = (Expr *) makeVar(rtindex, list_length(keys),
+										  exprType((Node *) column),
+										  exprTypmod((Node *) column),
+										  exprCollation((Node *) column),
+										  0);
+			}
 		}
 
-		if (!sortgrouprefIsUsed(grpcl->tleSortGroupRef, qry->sortClause) &&
-			!sortgrouprefIsUsed(grpcl->tleSortGroupRef, qry->distinctClause))
-			tle->ressortgroupref = 0;
+		if (rte != NULL)
+			columns = lappend(columns,
+							  makeTargetEntry(column, pos, NULL, false));
 	}
 
+	if (!released)
+		return;
+
 	qry->groupClause = keys;
+
+	if (rte != NULL)
+	{
+		/* the element a sentinel was read beside is a key, so one remains */
+		Assert(keys != NIL);
+
+		qry->targetList = (List *)
+			ReplaceVarsFromTargetList((Node *) qry->targetList, rtindex, 0,
+									  rte, columns, 0,
+									  REPLACEVARS_REPORT_ERROR, 0,
+									  &qry->hasSubLinks);
+		qry->havingQual =
+			ReplaceVarsFromTargetList(qry->havingQual, rtindex, 0,
+									  rte, columns, 0,
+									  REPLACEVARS_REPORT_ERROR, 0,
+									  &qry->hasSubLinks);
+
+		rte->groupexprs = groupexprs;
+		rte->eref->colnames = colnames;
+	}
 }
 
 /*
@@ -1382,7 +1447,7 @@ transformCypherProjection(ParseState *pstate, CypherClause *clause)
 	groupElementsByIdentity(pstate, qry);
 
 	/* and a key that was only there to be checked can go */
-	releaseGroupedSentinels(qry);
+	releaseGroupedSentinels(pstate, qry);
 
 	qry->hasGraphwriteClause = pstate->p_hasGraphwriteClause;
 

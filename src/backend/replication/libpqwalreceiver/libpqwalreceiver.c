@@ -116,7 +116,7 @@ static WalReceiverFunctionsType PQWalReceiverFunctions = {
 };
 
 /* Prototypes for private functions */
-static char *stringlist_to_identifierstr(PGconn *conn, List *strings);
+static char *stringlist_to_identifierstr(List *strings);
 
 /*
  * Module initialization function
@@ -458,6 +458,20 @@ libpqrcv_identify_system(WalReceiverConn *conn, TimeLineID *primary_tli)
 	}
 	primary_sysid = pstrdup(PQgetvalue(res, 0, 0));
 	*primary_tli = pg_strtoint32(PQgetvalue(res, 0, 1));
+
+	/* Column 2 is the server's current WAL flush position */
+	{
+		uint32		hi,
+					lo;
+
+		if (sscanf(PQgetvalue(res, 0, 2), "%X/%X", &hi, &lo) != 2)
+			ereport(ERROR,
+					(errcode(ERRCODE_PROTOCOL_VIOLATION),
+					 errmsg("could not parse WAL location \"%s\"",
+							PQgetvalue(res, 0, 2))));
+		WalRcvIdentifySystemLsn = ((uint64) hi) << 32 | lo;
+	}
+
 	PQclear(res);
 
 	return primary_sysid;
@@ -529,6 +543,32 @@ libpqrcv_get_option_from_conninfo(const char *connInfo, const char *keyword)
 }
 
 /*
+ * Append a suitably-quoted identifier or string literal to buf.
+ * "quote" should be either a double-quote or single-quote character.
+ *
+ * Caution: this quoting logic is sufficient for identifiers and literals
+ * in the replication grammar, but not always in regular SQL.  Specifically,
+ * it'd fail for a string literal if standard_conforming_strings is off.
+ */
+static void
+appendQuotedString(StringInfo buf, const char *str, char quote)
+{
+	appendStringInfoChar(buf, quote);
+	while (*str)
+	{
+		char		c = *str++;
+
+		if (c == quote)
+			appendStringInfoChar(buf, c);
+		appendStringInfoChar(buf, c);
+	}
+	appendStringInfoChar(buf, quote);
+}
+
+#define appendQuotedIdentifier(b, s)	appendQuotedString(b, s, '"')
+#define appendQuotedLiteral(b, s)		appendQuotedString(b, s, '\'')
+
+/*
  * Start streaming WAL data from given streaming options.
  *
  * Returns true if we switched successfully to copy-both mode. False
@@ -553,8 +593,10 @@ libpqrcv_startstreaming(WalReceiverConn *conn,
 	/* Build the command. */
 	appendStringInfoString(&cmd, "START_REPLICATION");
 	if (options->slotname != NULL)
-		appendStringInfo(&cmd, " SLOT \"%s\"",
-						 options->slotname);
+	{
+		appendStringInfoString(&cmd, " SLOT ");
+		appendQuotedIdentifier(&cmd, options->slotname);
+	}
 
 	if (options->logical)
 		appendStringInfoString(&cmd, " LOGICAL");
@@ -569,7 +611,6 @@ libpqrcv_startstreaming(WalReceiverConn *conn,
 	{
 		char	   *pubnames_str;
 		List	   *pubnames;
-		char	   *pubnames_literal;
 
 		appendStringInfoString(&cmd, " (");
 
@@ -577,8 +618,10 @@ libpqrcv_startstreaming(WalReceiverConn *conn,
 						 options->proto.logical.proto_version);
 
 		if (options->proto.logical.streaming_str)
-			appendStringInfo(&cmd, ", streaming '%s'",
-							 options->proto.logical.streaming_str);
+		{
+			appendStringInfoString(&cmd, ", streaming ");
+			appendQuotedLiteral(&cmd, options->proto.logical.streaming_str);
+		}
 
 		if (options->proto.logical.twophase &&
 			PQserverVersion(conn->streamConn) >= 150000)
@@ -586,25 +629,15 @@ libpqrcv_startstreaming(WalReceiverConn *conn,
 
 		if (options->proto.logical.origin &&
 			PQserverVersion(conn->streamConn) >= 160000)
-			appendStringInfo(&cmd, ", origin '%s'",
-							 options->proto.logical.origin);
+		{
+			appendStringInfoString(&cmd, ", origin ");
+			appendQuotedLiteral(&cmd, options->proto.logical.origin);
+		}
 
 		pubnames = options->proto.logical.publication_names;
-		pubnames_str = stringlist_to_identifierstr(conn->streamConn, pubnames);
-		if (!pubnames_str)
-			ereport(ERROR,
-					(errcode(ERRCODE_OUT_OF_MEMORY),	/* likely guess */
-					 errmsg("could not start WAL streaming: %s",
-							pchomp(PQerrorMessage(conn->streamConn)))));
-		pubnames_literal = PQescapeLiteral(conn->streamConn, pubnames_str,
-										   strlen(pubnames_str));
-		if (!pubnames_literal)
-			ereport(ERROR,
-					(errcode(ERRCODE_OUT_OF_MEMORY),	/* likely guess */
-					 errmsg("could not start WAL streaming: %s",
-							pchomp(PQerrorMessage(conn->streamConn)))));
-		appendStringInfo(&cmd, ", publication_names %s", pubnames_literal);
-		PQfreemem(pubnames_literal);
+		pubnames_str = stringlist_to_identifierstr(pubnames);
+		appendStringInfoString(&cmd, ", publication_names ");
+		appendQuotedLiteral(&cmd, pubnames_str);
 		pfree(pubnames_str);
 
 		if (options->proto.logical.binary &&
@@ -920,7 +953,8 @@ libpqrcv_create_slot(WalReceiverConn *conn, const char *slotname,
 
 	initStringInfo(&cmd);
 
-	appendStringInfo(&cmd, "CREATE_REPLICATION_SLOT \"%s\"", slotname);
+	appendStringInfoString(&cmd, "CREATE_REPLICATION_SLOT ");
+	appendQuotedIdentifier(&cmd, slotname);
 
 	if (temporary)
 		appendStringInfoString(&cmd, " TEMPORARY");
@@ -1004,6 +1038,14 @@ libpqrcv_create_slot(WalReceiverConn *conn, const char *slotname,
 						slotname, pchomp(PQerrorMessage(conn->streamConn)))));
 	}
 
+	/* CREATE_REPLICATION_SLOT returns a single row with four columns */
+	if (PQnfields(res) != 4 || PQntuples(res) != 1)
+		ereport(ERROR,
+				(errcode(ERRCODE_PROTOCOL_VIOLATION),
+				 errmsg("invalid response from primary server"),
+				 errdetail("Could not create replication slot \"%s\": got %d rows and %d fields, expected %d rows and %d fields.",
+						   slotname, PQntuples(res), PQnfields(res), 1, 4)));
+
 	if (lsn)
 		*lsn = DatumGetLSN(DirectFunctionCall1Coll(pg_lsn_in, InvalidOid,
 												   CStringGetDatum(PQgetvalue(res, 0, 1))));
@@ -1029,8 +1071,9 @@ libpqrcv_alter_slot(WalReceiverConn *conn, const char *slotname,
 	PGresult   *res;
 
 	initStringInfo(&cmd);
-	appendStringInfo(&cmd, "ALTER_REPLICATION_SLOT %s ( ",
-					 quote_identifier(slotname));
+	appendStringInfoString(&cmd, "ALTER_REPLICATION_SLOT ");
+	appendQuotedIdentifier(&cmd, slotname);
+	appendStringInfoString(&cmd, " ( ");
 
 	if (failover)
 		appendStringInfo(&cmd, "FAILOVER %s",
@@ -1226,10 +1269,10 @@ libpqrcv_exec(WalReceiverConn *conn, const char *query,
  *
  * This is essentially the reverse of SplitIdentifierString.
  *
- * The caller should free the result.
+ * The caller should pfree the result.
  */
 static char *
-stringlist_to_identifierstr(PGconn *conn, List *strings)
+stringlist_to_identifierstr(List *strings)
 {
 	ListCell   *lc;
 	StringInfoData res;
@@ -1240,21 +1283,12 @@ stringlist_to_identifierstr(PGconn *conn, List *strings)
 	foreach(lc, strings)
 	{
 		char	   *val = strVal(lfirst(lc));
-		char	   *val_escaped;
 
 		if (first)
 			first = false;
 		else
 			appendStringInfoChar(&res, ',');
-
-		val_escaped = PQescapeIdentifier(conn, val, strlen(val));
-		if (!val_escaped)
-		{
-			free(res.data);
-			return NULL;
-		}
-		appendStringInfoString(&res, val_escaped);
-		PQfreemem(val_escaped);
+		appendQuotedIdentifier(&res, val);
 	}
 
 	return res.data;

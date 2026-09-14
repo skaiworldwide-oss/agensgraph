@@ -2813,6 +2813,12 @@ exec_command_restrict(PsqlScanState scan_state, bool active_branch,
 
 		Assert(!restricted);
 
+		/*
+		 * Unlike \unrestrict, this argument may safely undergo backquote and
+		 * variable expansion: HandleSlashCmds() rejects \restrict in
+		 * restricted mode before its argument is scanned, so we only get here
+		 * when the input could execute such things anyway.
+		 */
 		opt = psql_scan_slash_option(scan_state, OT_NORMAL, NULL, true);
 		if (opt == NULL || opt[0] == '\0')
 		{
@@ -3221,7 +3227,7 @@ exec_command_unrestrict(PsqlScanState scan_state, bool active_branch,
 	{
 		char	   *opt;
 
-		opt = psql_scan_slash_option(scan_state, OT_NORMAL, NULL, true);
+		opt = psql_scan_slash_option(scan_state, OT_WHOLE_LINE, NULL, true);
 		if (opt == NULL || opt[0] == '\0')
 		{
 			pg_log_error("\\%s: missing required argument", cmd);
@@ -3245,7 +3251,7 @@ exec_command_unrestrict(PsqlScanState scan_state, bool active_branch,
 		}
 	}
 	else
-		ignore_slash_options(scan_state);
+		ignore_slash_whole_line(scan_state);
 
 	return PSQL_CMD_SKIP_LINE;
 }
@@ -3818,8 +3824,8 @@ is_branching_command(const char *cmd)
  * Prepare to possibly restore query buffer to its current state
  * (cf. discard_query_text).
  *
- * We need to remember the length of the query buffer, and the lexer's
- * notion of the parenthesis nesting depth.
+ * We need to remember the length of the query buffer, and assorted
+ * lexer internal state such as parenthesis nesting depth.
  */
 static void
 save_query_text_state(PsqlScanState scan_state, ConditionalStack cstack,
@@ -3827,8 +3833,8 @@ save_query_text_state(PsqlScanState scan_state, ConditionalStack cstack,
 {
 	if (query_buf)
 		conditional_stack_set_query_len(cstack, query_buf->len);
-	conditional_stack_set_paren_depth(cstack,
-									  psql_scan_get_paren_depth(scan_state));
+	conditional_stack_set_lex_state(cstack,
+									psql_scan_get_lex_state(scan_state));
 }
 
 /*
@@ -3837,9 +3843,7 @@ save_query_text_state(PsqlScanState scan_state, ConditionalStack cstack,
  * We must discard data that was appended to query_buf during an inactive
  * \if branch.  We don't have to do anything there if there's no query_buf.
  *
- * Also, reset the lexer state to the same paren depth there was before.
- * (The rest of its state doesn't need attention, since we could not be
- * inside a comment or literal or partial token.)
+ * Also, reset the lexer's state to what it was before.
  */
 static void
 discard_query_text(PsqlScanState scan_state, ConditionalStack cstack,
@@ -3853,8 +3857,8 @@ discard_query_text(PsqlScanState scan_state, ConditionalStack cstack,
 		query_buf->len = new_len;
 		query_buf->data[new_len] = '\0';
 	}
-	psql_scan_set_paren_depth(scan_state,
-							  conditional_stack_get_paren_depth(cstack));
+	psql_scan_set_lex_state(scan_state,
+							conditional_stack_get_lex_state(cstack));
 }
 
 /*

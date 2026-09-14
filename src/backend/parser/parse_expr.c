@@ -4168,10 +4168,20 @@ transformJsonParseArg(ParseState *pstate, Node *jsexpr, JsonFormat *format,
 
 		if (*exprtype == UNKNOWNOID || typcategory == TYPCATEGORY_STRING)
 		{
+			int			location = exprLocation(expr);
+
 			expr = coerce_to_target_type(pstate, (Node *) expr, *exprtype,
 										 TEXTOID, -1,
 										 COERCION_IMPLICIT,
 										 COERCE_IMPLICIT_CAST, -1);
+			if (expr == NULL)
+				ereport(ERROR,
+						errcode(ERRCODE_CANNOT_COERCE),
+						errmsg("cannot cast type %s to %s",
+							   format_type_be(*exprtype),
+							   format_type_be(TEXTOID)),
+						parser_errposition(pstate, location));
+
 			*exprtype = TEXTOID;
 		}
 
@@ -4889,8 +4899,17 @@ transformJsonBehavior(ParseState *pstate, JsonExpr *jsexpr,
 	 *
 	 * For other non-NULL expressions, try to find a cast and error out if one
 	 * is not found.
+	 *
+	 * The DEFAULT expression's base type may already match the RETURNING type
+	 * yet still need coercion: when the RETURNING type carries a type
+	 * modifier (e.g. numeric(4,1)), the cast below is what enforces it, so
+	 * skipping it here would let the DEFAULT yield a value that violates its
+	 * declared RETURNING type.  A NULL constant needs no such enforcement.
 	 */
-	if (expr && exprType(expr) != returning->typid)
+	if (expr &&
+		(exprType(expr) != returning->typid ||
+		 (returning->typmod >= 0 &&
+		  !(IsA(expr, Const) && ((Const *) expr)->constisnull))))
 	{
 		bool		isnull = (IsA(expr, Const) && ((Const *) expr)->constisnull);
 

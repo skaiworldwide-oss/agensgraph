@@ -1361,15 +1361,36 @@ SELECT * FROM
 WHERE c <= 3;
 
 -- Ensure we get the correct run condition when the window function is both
--- monotonically increasing and decreasing.
+-- monotonically increasing and decreasing in RANGE mode without an ORDER BY
 EXPLAIN (COSTS OFF)
 SELECT * FROM
   (SELECT empno,
           depname,
           salary,
-          count(empno) OVER () c
+          count(empno) OVER (RANGE BETWEEN CURRENT ROW AND CURRENT ROW) c
    FROM empsalary) emp
 WHERE c = 1;
+
+-- As above, but check we detect it's monotonically increasing
+EXPLAIN (COSTS OFF)
+SELECT * FROM
+  (SELECT empno,
+          depname,
+          salary,
+          count(empno) OVER (RANGE BETWEEN CURRENT ROW AND CURRENT ROW) c
+   FROM empsalary) emp
+WHERE c <= 3;
+
+-- Ensure that ROWS mode without an ORDER BY doesn't think it's monotonically
+-- decreasing, i.e. don't push down the run condition.
+EXPLAIN (COSTS OFF)
+SELECT * FROM
+  (SELECT empno,
+          depname,
+          salary,
+          count(empno) OVER (ROWS BETWEEN CURRENT ROW AND CURRENT ROW) c
+   FROM empsalary) emp
+WHERE c > 1;
 
 -- Try another case with a WindowFunc with a byref return type
 SELECT * FROM
@@ -1459,6 +1480,96 @@ SELECT * FROM
           count((SELECT 1)) OVER (ORDER BY empno DESC) c
    FROM empsalary) emp
 WHERE c = 1;
+
+--
+-- Ensure we get the correct behavior for run condition pushdown when the
+-- frame option has an EXCLUDE clause
+--
+
+-- Ensure pushdown occurs for ROWS BETWEEN UNBOUNDED PRECEDING with EXCLUDE
+-- CURRENT ROW with COUNT(*)
+EXPLAIN (COSTS OFF)
+SELECT * FROM
+  (SELECT empno,
+          salary,
+          count(*) OVER (ORDER BY salary ROWS BETWEEN UNBOUNDED PRECEDING AND 0 PRECEDING EXCLUDE CURRENT ROW) c
+   FROM empsalary) emp
+WHERE c <= 3;
+
+-- Ensure pushdown occurs for GROUPS BETWEEN UNBOUNDED PRECEDING with EXCLUDE
+-- CURRENT ROW with COUNT(*)
+EXPLAIN (COSTS OFF)
+SELECT * FROM
+  (SELECT empno,
+          salary,
+          count(*) OVER (ORDER BY salary GROUPS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW EXCLUDE CURRENT ROW) c
+   FROM empsalary) emp
+WHERE c <= 3;
+
+-- Ensure pushdown occurs for RANGE BETWEEN UNBOUNDED PRECEDING with EXCLUDE
+-- CURRENT ROW with COUNT(*)
+EXPLAIN (COSTS OFF)
+SELECT * FROM
+  (SELECT empno,
+          salary,
+          count(*) OVER (ORDER BY salary RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW EXCLUDE CURRENT ROW) c
+   FROM empsalary) emp
+WHERE c <= 3;
+
+-- Ensure we don't get pushdown when a FILTER clause is present
+EXPLAIN (COSTS OFF)
+SELECT * FROM
+  (SELECT empno,
+          salary,
+          count(*) FILTER (WHERE salary > 4000) OVER (ORDER BY salary ROWS BETWEEN UNBOUNDED PRECEDING AND 0 PRECEDING EXCLUDE CURRENT ROW) c
+   FROM empsalary) emp
+WHERE c <= 3;
+
+-- Ensure we don't get pushdown with COUNT(ANY)
+EXPLAIN (COSTS OFF)
+SELECT * FROM
+  (SELECT empno,
+          salary,
+          count(salary) OVER (ORDER BY salary ROWS BETWEEN UNBOUNDED PRECEDING AND 0 PRECEDING EXCLUDE CURRENT ROW) c
+   FROM empsalary) emp
+WHERE c <= 3;
+
+-- Ensure we don't get pushdown with EXCLUDE GROUP
+EXPLAIN (COSTS OFF)
+SELECT * FROM
+  (SELECT empno,
+          salary,
+          count(*) OVER (ORDER BY salary ROWS BETWEEN UNBOUNDED PRECEDING AND 0 PRECEDING EXCLUDE GROUP) c
+   FROM empsalary) emp
+WHERE c <= 3;
+
+-- Ensure we don't get pushdown with EXCLUDE TIES
+EXPLAIN (COSTS OFF)
+SELECT * FROM
+  (SELECT empno,
+          salary,
+          count(*) OVER (ORDER BY salary ROWS BETWEEN UNBOUNDED PRECEDING AND 0 PRECEDING EXCLUDE TIES) c
+   FROM empsalary) emp
+WHERE c <= 3;
+
+-- Ensure we don't get pushdown with GROUPS mode and EXCLUDE GROUP
+EXPLAIN (COSTS OFF)
+SELECT * FROM
+  (SELECT empno,
+          salary,
+          count(*) OVER (ORDER BY salary GROUPS BETWEEN UNBOUNDED PRECEDING AND 0 PRECEDING EXCLUDE GROUP) c
+   FROM empsalary) emp
+WHERE c <= 3;
+
+-- Ensure we don't get pushdown with GROUPS mode and EXCLUDE TIES
+EXPLAIN (COSTS OFF)
+SELECT * FROM
+  (SELECT empno,
+          salary,
+          count(*) OVER (ORDER BY salary GROUPS BETWEEN UNBOUNDED PRECEDING AND 0 PRECEDING EXCLUDE TIES) c
+   FROM empsalary) emp
+WHERE c <= 3;
+
 
 -- Test Sort node collapsing
 EXPLAIN (COSTS OFF)

@@ -564,6 +564,12 @@ CREATE COLLATION case_insensitive (provider = icu, locale = '@colStrength=second
 SELECT 'abc' <= 'ABC' COLLATE case_sensitive, 'abc' >= 'ABC' COLLATE case_sensitive;
 SELECT 'abc' <= 'ABC' COLLATE case_insensitive, 'abc' >= 'ABC' COLLATE case_insensitive;
 
+SELECT 'AB' LIKE 'ab' COLLATE case_insensitive AS t;
+SELECT 'AB' LIKE 'a\b' COLLATE case_insensitive AS t;
+SELECT 'AB' LIKE '\ab' COLLATE case_insensitive AS t;
+SELECT 'AB' LIKE '\a%' COLLATE case_insensitive AS t;
+SELECT 'AB' LIKE '\a\%' COLLATE case_insensitive AS f;
+
 -- tests with array_sort
 SELECT array_sort('{a,B}'::text[] COLLATE case_insensitive);
 SELECT array_sort('{a,B}'::text[] COLLATE "C");
@@ -741,6 +747,16 @@ CREATE UNIQUE INDEX ON test3ci (x);  -- error
 SELECT string_to_array('ABC,DEF,GHI' COLLATE case_insensitive, ',', 'abc');
 SELECT string_to_array('ABCDEFGHI' COLLATE case_insensitive, NULL, 'b');
 
+-- These queries should be able to use the index on test1ci.x:
+SET enable_seqscan = off;
+SET enable_indexonlyscan = off;
+EXPLAIN (COSTS OFF)
+SELECT * FROM test1ci WHERE x ~ '^abc$' COLLATE "C";
+EXPLAIN (COSTS OFF)
+SELECT * FROM test1ci WHERE x LIKE 'abc' COLLATE case_insensitive;
+RESET enable_seqscan;
+RESET enable_indexonlyscan;
+
 -- Test HAVING-to-WHERE pushdown with nondeterministic collations.
 -- When a HAVING clause uses a different collation than the GROUP BY's
 -- nondeterministic collation, it must not be pushed to WHERE, otherwise
@@ -757,31 +773,39 @@ EXPLAIN (COSTS OFF)
 SELECT x, count(*) FROM test3ci GROUP BY x HAVING x = 'abc' COLLATE case_insensitive;
 SELECT x, count(*) FROM test3ci GROUP BY x HAVING x = 'abc' COLLATE case_insensitive;
 
--- Negative: function applied to grouped column with conflicting collation
+-- Negative: function over the grouping column, conflicting collation
 EXPLAIN (COSTS OFF)
 SELECT x, count(*) FROM test3ci GROUP BY x HAVING upper(x) = 'ABC' COLLATE case_sensitive;
 SELECT x, count(*) FROM test3ci GROUP BY x HAVING upper(x) = 'ABC' COLLATE case_sensitive;
 
--- Positive: function with same collation as GROUP BY
+-- Negative: function over the grouping column whose result is compared as an
+-- integer, under no collation
+EXPLAIN (COSTS OFF)
+SELECT x, count(*) FROM test3ci GROUP BY x HAVING ascii(x) = 97;
+SELECT x, count(*) FROM test3ci GROUP BY x HAVING ascii(x) = 97;
+
+-- Negative: a function wrapping the grouping column is not provably safe even
+-- when compared under the matching collation, since the function need not
+-- preserve the collation's equality
 EXPLAIN (COSTS OFF)
 SELECT x, count(*) FROM test3ci GROUP BY x HAVING upper(x) = 'ABC' COLLATE case_insensitive;
 SELECT x, count(*) FROM test3ci GROUP BY x HAVING upper(x) = 'ABC' COLLATE case_insensitive;
 
--- Negative: inner function has conflicting collation, even though outer
--- operator's collation matches GROUP BY due to a COLLATE override
+-- Negative: same, with the grouping column wrapped in a function whose input
+-- collation is overridden; still not a direct operand, so it stays in HAVING
 EXPLAIN (COSTS OFF)
 SELECT x, count(*) FROM test3ci GROUP BY x HAVING upper(x COLLATE case_sensitive) COLLATE case_insensitive = 'ABC';
 SELECT x, count(*) FROM test3ci GROUP BY x HAVING upper(x COLLATE case_sensitive) COLLATE case_insensitive = 'ABC';
 
 -- Mixed AND: conflicting clause stays in HAVING, safe clause pushed to WHERE
 EXPLAIN (COSTS OFF)
-SELECT x, count(*) FROM test3ci GROUP BY x HAVING x = 'abc' COLLATE case_sensitive AND length(x) > 1;
-SELECT x, count(*) FROM test3ci GROUP BY x HAVING x = 'abc' COLLATE case_sensitive AND length(x) > 1;
+SELECT x, count(*) FROM test3ci GROUP BY x HAVING x = 'abc' COLLATE case_sensitive AND x >= 'a' COLLATE case_insensitive;
+SELECT x, count(*) FROM test3ci GROUP BY x HAVING x = 'abc' COLLATE case_sensitive AND x >= 'a' COLLATE case_insensitive;
 
 -- Positive: AND of two safe clauses, both can be pushed
 EXPLAIN (COSTS OFF)
-SELECT x, count(*) FROM test3ci GROUP BY x HAVING x = 'abc' COLLATE case_insensitive AND length(x) > 1;
-SELECT x, count(*) FROM test3ci GROUP BY x HAVING x = 'abc' COLLATE case_insensitive AND length(x) > 1;
+SELECT x, count(*) FROM test3ci GROUP BY x HAVING x = 'abc' COLLATE case_insensitive AND x >= 'a' COLLATE case_insensitive;
+SELECT x, count(*) FROM test3ci GROUP BY x HAVING x = 'abc' COLLATE case_insensitive AND x >= 'a' COLLATE case_insensitive;
 
 -- Negative: OR with a conflicting clause: must stay in HAVING
 EXPLAIN (COSTS OFF)
@@ -821,6 +845,111 @@ SELECT x, count(*) FROM test3cs GROUP BY x HAVING x = 'abc' COLLATE case_sensiti
 EXPLAIN (COSTS OFF)
 SELECT x, count(*) FROM test3cs GROUP BY x HAVING x = 'abc' COLLATE case_insensitive ORDER BY 1;
 SELECT x, count(*) FROM test3cs GROUP BY x HAVING x = 'abc' COLLATE case_insensitive ORDER BY 1;
+
+-- Test WHERE-pushdown past a grouping layer (DISTINCT, DISTINCT ON, window
+-- PARTITION BY) when the qual applies a different collation than the
+-- grouping column's nondeterministic collation.  The qual would distinguish
+-- rows the grouping considers equal, so it must NOT be pushed inside the
+-- subquery.
+CREATE TABLE pushdown_ci (id int, x text COLLATE case_insensitive);
+INSERT INTO pushdown_ci VALUES (1, 'ABC'), (2, 'abc'), (3, 'def');
+
+-- DISTINCT ON: conflict, qual stays in outer query
+EXPLAIN (COSTS OFF)
+SELECT * FROM (SELECT DISTINCT ON (x) id, x FROM pushdown_ci ORDER BY x, id) s
+WHERE x = 'abc' COLLATE case_sensitive;
+
+SELECT * FROM (SELECT DISTINCT ON (x) id, x FROM pushdown_ci ORDER BY x, id) s
+WHERE x = 'abc' COLLATE case_sensitive;
+
+-- Window function PARTITION BY: conflict, qual stays outside the WindowAgg
+EXPLAIN (COSTS OFF)
+SELECT * FROM (
+  SELECT id, x, count(*) OVER (PARTITION BY x) AS cnt FROM pushdown_ci
+) s
+WHERE x = 'abc' COLLATE case_sensitive;
+
+SELECT * FROM (
+  SELECT id, x, count(*) OVER (PARTITION BY x) AS cnt FROM pushdown_ci
+) s
+WHERE x = 'abc' COLLATE case_sensitive;
+
+-- Plain DISTINCT: conflict, qual stays in outer query
+EXPLAIN (COSTS OFF)
+SELECT * FROM (SELECT DISTINCT x FROM pushdown_ci) s
+WHERE x = 'abc' COLLATE case_sensitive;
+
+SELECT * FROM (SELECT DISTINCT x FROM pushdown_ci) s
+WHERE x = 'abc' COLLATE case_sensitive;
+
+-- Positive: matching collation, safe to push past the grouping
+EXPLAIN (COSTS OFF)
+SELECT * FROM (SELECT DISTINCT ON (x) id, x FROM pushdown_ci ORDER BY x, id) s
+WHERE x = 'abc' COLLATE case_insensitive;
+
+SELECT * FROM (SELECT DISTINCT ON (x) id, x FROM pushdown_ci ORDER BY x, id) s
+WHERE x = 'abc' COLLATE case_insensitive;
+
+-- Set operations: any operation other than UNION ALL groups rows by equality,
+-- so the same collation-mismatch rules apply.
+CREATE TABLE pushdown_ci2 (x text COLLATE case_insensitive);
+INSERT INTO pushdown_ci2 VALUES ('abc');
+
+-- UNION: conflict, qual stays in outer query
+EXPLAIN (COSTS OFF)
+SELECT * FROM (SELECT x FROM pushdown_ci UNION SELECT x FROM pushdown_ci2) s
+WHERE x = 'abc' COLLATE case_sensitive;
+
+SELECT * FROM (SELECT x FROM pushdown_ci UNION SELECT x FROM pushdown_ci2) s
+WHERE x = 'abc' COLLATE case_sensitive;
+
+-- INTERSECT: same
+EXPLAIN (COSTS OFF)
+SELECT * FROM (SELECT x FROM pushdown_ci INTERSECT SELECT x FROM pushdown_ci2) s
+WHERE x = 'abc' COLLATE case_sensitive;
+
+SELECT * FROM (SELECT x FROM pushdown_ci INTERSECT SELECT x FROM pushdown_ci2) s
+WHERE x = 'abc' COLLATE case_sensitive;
+
+-- INTERSECT ALL: still groups
+EXPLAIN (COSTS OFF)
+SELECT * FROM (SELECT x FROM pushdown_ci INTERSECT ALL SELECT x FROM pushdown_ci2) s
+WHERE x = 'abc' COLLATE case_sensitive;
+
+SELECT * FROM (SELECT x FROM pushdown_ci INTERSECT ALL SELECT x FROM pushdown_ci2) s
+WHERE x = 'abc' COLLATE case_sensitive;
+
+-- Negative: a function over a grouping column with a nondeterministic
+-- collation, whose result is compared under no collation (an integer
+-- comparison), can distinguish values the grouping considers equal.
+-- PARTITION BY
+EXPLAIN (COSTS OFF)
+SELECT * FROM (
+  SELECT id, x, count(*) OVER (PARTITION BY x) AS cnt FROM pushdown_ci
+) s
+WHERE ascii(x) = 97;
+
+SELECT * FROM (
+  SELECT id, x, count(*) OVER (PARTITION BY x) AS cnt FROM pushdown_ci
+) s
+WHERE ascii(x) = 97;
+
+-- Same with DISTINCT
+EXPLAIN (COSTS OFF)
+SELECT * FROM (SELECT DISTINCT x FROM pushdown_ci) s WHERE ascii(x) = 97;
+
+SELECT * FROM (SELECT DISTINCT x FROM pushdown_ci) s WHERE ascii(x) = 97;
+
+-- Same with Set operations
+EXPLAIN (COSTS OFF)
+SELECT * FROM (SELECT x FROM pushdown_ci UNION SELECT x FROM pushdown_ci2) s
+WHERE ascii(x) = 97;
+
+SELECT * FROM (SELECT x FROM pushdown_ci UNION SELECT x FROM pushdown_ci2) s
+WHERE ascii(x) = 97;
+
+DROP TABLE pushdown_ci2;
+DROP TABLE pushdown_ci;
 
 -- bpchar
 CREATE TABLE test1bpci (x char(3) COLLATE case_insensitive);
@@ -955,6 +1084,13 @@ SELECT U&'\0061\0308bc' LIKE U&'_\0308bc' COLLATE ignore_accents;
 SELECT U&'\0061\0308bc' LIKE U&'_\00e4bc' COLLATE ignore_accents;
 -- escape character at end of pattern
 SELECT 'foox' LIKE 'foo\' COLLATE ignore_accents;
+
+-- literal backslash with nondeterministic collation (bug #19474)
+SELECT 'back\slash' COLLATE ignore_accents LIKE 'back\slash%' ESCAPE '#';
+SELECT 'aäb' COLLATE ignore_accents LIKE 'a#äb' ESCAPE '#' AS multibyte_escape;
+SELECT 'a\äb' COLLATE ignore_accents LIKE 'a\äb%' ESCAPE '#' AS backslash_multibyte;
+SELECT 'a\b%c' COLLATE ignore_accents LIKE 'a#\b#%%c' ESCAPE '#' AS mixed_escapes;
+SELECT 'backslash' COLLATE ignore_accents LIKE 'back\\slash%';
 
 -- foreign keys (mixing different nondeterministic collations not allowed)
 CREATE TABLE test10pk (x text COLLATE case_sensitive PRIMARY KEY);

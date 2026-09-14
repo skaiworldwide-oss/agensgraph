@@ -869,6 +869,9 @@ AddNewAttributeTuples(Oid new_rel_oid,
 	{
 		Form_pg_attribute attr = TupleDescAttr(tupdesc, i);
 
+		if (attr->attisdropped)
+			continue;
+
 		/* Add dependency info */
 		ObjectAddressSubSet(myself, RelationRelationId, new_rel_oid, i + 1);
 		ObjectAddressSet(referenced, TypeRelationId, attr->atttypid);
@@ -2156,6 +2159,9 @@ SetAttrMissing(Oid relid, char *attname, char *value)
  * in the pg_class entry for the relation.
  *
  * The OID of the new constraint is returned.
+ *
+ * NB: Caller is responsible for ensuring the user has USAGE on all types expr
+ * depends on.
  */
 static Oid
 StoreRelCheck(Relation rel, const char *ccname, Node *expr,
@@ -2471,6 +2477,13 @@ AddRelationNewConstraints(Relation rel,
 			 castNode(Const, expr)->constisnull))
 			continue;
 
+		/*
+		 * The below call to StoreAttrDefault() adds the dependencies on
+		 * types.  We are responsible for checking USAGE.
+		 */
+		if (!is_internal)
+			CheckUsageOnTypesInSingleRelExpr(expr, RelationGetRelid(rel), GetUserId());
+
 		defOid = StoreAttrDefault(rel, colDef->attnum, expr, is_internal);
 
 		cooked = (CookedConstraint *) palloc(sizeof(CookedConstraint));
@@ -2511,6 +2524,14 @@ AddRelationNewConstraints(Relation rel,
 				 */
 				expr = cookConstraint(pstate, cdef->raw_expr,
 									  RelationGetRelationName(rel));
+
+				/*
+				 * The below call to StoreRelCheck() calls
+				 * CreateConstraintEntry(), which adds the dependencies on
+				 * types.  We are responsible for checking USAGE.
+				 */
+				if (!is_internal)
+					CheckUsageOnTypesInSingleRelExpr(expr, RelationGetRelid(rel), GetUserId());
 			}
 			else
 			{
@@ -4013,12 +4034,16 @@ StorePartitionKey(Relation rel,
 	 * columns, i.e. they become internally dependent on the whole table.
 	 */
 	if (partexprs)
+	{
+		CheckUsageOnTypesInSingleRelExpr((Node *) partexprs, RelationGetRelid(rel),
+										 GetUserId());
 		recordDependencyOnSingleRelExpr(&myself,
 										(Node *) partexprs,
 										RelationGetRelid(rel),
 										DEPENDENCY_NORMAL,
 										DEPENDENCY_INTERNAL,
 										true /* reverse the self-deps */ );
+	}
 
 	/*
 	 * We must invalidate the relcache so that the next

@@ -336,14 +336,16 @@ bt_index_check_callback(Relation indrel, Relation heaprel, void *state, bool rea
 			if (indrel->rd_opfamily[i] == INTERVAL_BTREE_FAM_OID)
 			{
 				has_interval_ops = true;
-				ereport(ERROR,
-						(errcode(ERRCODE_INDEX_CORRUPTED),
-						 errmsg("index \"%s\" metapage incorrectly indicates that deduplication is safe",
-								RelationGetRelationName(indrel)),
-						 has_interval_ops
-						 ? errhint("This is known of \"interval\" indexes last built on a version predating 2023-11.")
-						 : 0));
+				break;
 			}
+
+		ereport(ERROR,
+				(errcode(ERRCODE_INDEX_CORRUPTED),
+				 errmsg("index \"%s\" metapage incorrectly indicates that deduplication is safe",
+						RelationGetRelationName(indrel)),
+				 has_interval_ops
+				 ? errhint("This is known of \"interval\" indexes last built on a version predating 2023-11.")
+				 : 0));
 	}
 
 	/* Check index, possibly against table it is an index on */
@@ -2891,7 +2893,7 @@ bt_normalize_tuple(BtreeCheckState *state, IndexTuple itup)
 							ItemPointerGetOffsetNumber(&(itup->t_tid)),
 							RelationGetRelationName(state->rel))));
 		else if (!VARATT_IS_COMPRESSED(DatumGetPointer(normalized[i])) &&
-				 VARSIZE(DatumGetPointer(normalized[i])) > TOAST_INDEX_TARGET &&
+				 VARSIZE_ANY(DatumGetPointer(normalized[i])) > TOAST_INDEX_TARGET &&
 				 (att->attstorage == TYPSTORAGE_EXTENDED ||
 				  att->attstorage == TYPSTORAGE_MAIN))
 		{

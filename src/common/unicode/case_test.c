@@ -330,6 +330,8 @@ tfunc_fold(char *dst, size_t dstsize, const char *src,
 static void
 test_convert_case()
 {
+	size_t		needed;
+
 	/* test string with no case changes */
 	test_convert(tfunc_lower, "√∞", "√∞");
 	/* test adjust-to-cased behavior */
@@ -354,6 +356,12 @@ test_convert_case()
 	/* U+FF11 FULLWIDTH ONE is alphanumeric for full case mapping */
 	test_convert(tfunc_title, "\uFF11a", "\uFF11a");
 
+	/* invalid UTF8: truncated multibyte sequence */
+	needed = unicode_strfold(NULL, 0, "abc\xCE", 4, false);
+	Assert(needed == 3);
+	/* invalid UTF8: invalid byte */
+	needed = unicode_strfold(NULL, 0, "abc\xF8xyz", 7, false);
+	Assert(needed == 3);
 
 #ifdef USE_ICU
 	icu_test_full("");

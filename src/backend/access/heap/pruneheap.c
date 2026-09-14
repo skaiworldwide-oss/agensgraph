@@ -1848,14 +1848,14 @@ heap_get_root_tuples(Page page, OffsetNumber *root_offsets)
 		for (;;)
 		{
 			/* Sanity check (pure paranoia) */
-			if (offnum < FirstOffsetNumber)
+			if (nextoffnum < FirstOffsetNumber)
 				break;
 
 			/*
 			 * An offset past the end of page's line pointer array is possible
 			 * when the array was truncated
 			 */
-			if (offnum > maxoff)
+			if (nextoffnum > maxoff)
 				break;
 
 			lp = PageGetItemId(page, nextoffnum);

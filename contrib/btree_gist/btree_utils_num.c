@@ -297,8 +297,19 @@ gbt_num_consistent(const GBT_NUMKEY_R *key,
 			retval = tinfo->f_le(query, key->upper, flinfo);
 			break;
 		case BtreeGistNotEqualStrategyNumber:
-			retval = (!(tinfo->f_eq(query, key->lower, flinfo) &&
-						tinfo->f_eq(query, key->upper, flinfo)));
+			if (is_leaf)
+				retval = !(tinfo->f_eq(query, key->lower, flinfo));
+			else
+			{
+				/*
+				 * If the upper/lower bounds are equal, then all entries below
+				 * this node must have exactly that value.  So we can avoid
+				 * descending if the query equals both bounds.  In all other
+				 * cases, we must descend.
+				 */
+				retval = !(tinfo->f_eq(query, key->lower, flinfo) &&
+						   tinfo->f_eq(query, key->upper, flinfo));
+			}
 			break;
 		default:
 			retval = false;

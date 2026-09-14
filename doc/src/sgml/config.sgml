@@ -1152,6 +1152,19 @@ include_dir 'conf.d'
         time of encryption. In order to make use of a changed value, a new
         password must be set.
        </para>
+       <note>
+        <para>
+         If a role password was created with a different iteration count than
+         the value of <literal>scram_iterations</literal> specified in the
+         <filename>postgresql.conf</filename> file or on the server command
+         line, an unauthenticated user can discern the existence of the role by
+         observing discrepancies in the server's responses to connection
+         attempts.  If you find this concerning, ensure that all role passwords
+         are created with <literal>scram_iterations</literal> set to the value
+         specified in the <filename>postgresql.conf</filename> file or on the
+         server command line.
+        </para>
+       </note>
       </listitem>
      </varlistentry>
 
@@ -1530,17 +1543,17 @@ include_dir 'conf.d'
       </term>
       <listitem>
        <para>
-        Specifies the name of the curve to use in <acronym>ECDH</acronym> key
-        exchange.  It needs to be supported by all clients that connect.
-        Multiple curves can be specified by using a colon-separated list.
-        It does not need to be the same curve used by the server's Elliptic
-        Curve key.  This parameter can only be set in the
+        Specifies the named group to use for <acronym>TLS</acronym> key
+        exchange.  It needs to be supported by all clients that
+        connect.  Multiple groups can be specified by using a colon-separated
+        list.  It does not need to match the key type used by the server
+        certificate.  This parameter can only be set in the
         <filename>postgresql.conf</filename> file or on the server command line.
         The default is <literal>X25519:prime256v1</literal>.
        </para>
 
        <para>
-        <productname>OpenSSL</productname> names for the most common curves
+        <productname>OpenSSL</productname> names for the most common groups
         are:
         <literal>prime256v1</literal> (NIST P-256),
         <literal>secp384r1</literal> (NIST P-384),
@@ -3457,6 +3470,7 @@ include_dir 'conf.d'
         was compiled with <option>--with-lz4</option>) and
         <literal>zstd</literal> (if <productname>PostgreSQL</productname>
         was compiled with <option>--with-zstd</option>).
+        The value <literal>on</literal> is a historical spelling of <literal>pglz</literal>.
         The default value is <literal>off</literal>.
         Only superusers and users with the appropriate <literal>SET</literal>
         privilege can change this setting.
@@ -4595,6 +4609,63 @@ restore_command = 'copy "C:\\server\\archivedir\\%f" "%p"'  # Windows
          to <literal>replica</literal> or higher to allow replication slots to
          be used.
         </para>
+       </listitem>
+      </varlistentry>
+
+      <varlistentry id="guc-output-plugin-libraries" xreflabel="output_plugin_libraries">
+       <term><varname>output_plugin_libraries</varname> (<type>string</type>)
+       <indexterm>
+        <primary><varname>output_plugin_libraries</varname> configuration parameter</primary>
+       </indexterm>
+       </term>
+       <listitem>
+        <para>
+         Lists the libraries installed in <xref linkend="guc-dynamic-library-path"/>
+         that are also trusted for use as logical output plugins by replication
+         clients. Any <link linkend="logicaldecoding-example">logical decoding</link>
+         or <link linkend="protocol-replication">replication</link> requests for
+         other libraries will be refused. All users are subject to this
+         restriction. The default is <literal>'pgoutput, test_decoding'</literal>,
+         which are the two logical output plugins included in the standard
+         <productname>PostgreSQL</productname> distribution.
+        </para>
+        <para>
+         The format is a comma-separated list of library names, where each name
+         is interpreted as for the <link linkend="sql-load"><command>LOAD</command></link>
+         command (but logical decoding clients must specify a plugin name that
+         <emphasis>exactly</emphasis> matches an entry in the list, without
+         variations in case or path structure). Whitespace between entries is
+         ignored; surround a library name with double quotes if you need to
+         include whitespace or commas in the name.
+        </para>
+        <para>
+         It is the responsibility of the server administrator to ensure that
+         libraries added to this list do not unintentionally give additional
+         privileges to non-superusers when they are loaded into the server.
+        </para>
+        <note>
+         <para>
+          When updating the server from a version that does not have the
+          <literal>output_plugin_libraries</literal> parameter, the following
+          query can help construct the list of plugins that are required by all
+          persistent logical replication slots:
+<programlisting>
+SELECT DISTINCT plugin FROM pg_replication_slots WHERE plugin IS NOT NULL;
+</programlisting>
+          Review the list carefully for safety before adjusting
+          <literal>output_plugin_libraries</literal>.
+         </para>
+         <para>
+          The above query can only display plugins which were successfully
+          added to replication slots at some point in the past. Newly refused
+          requests will appear in the logs with a message similar to
+<programlisting>
+ERROR:  library "..." may not be used as an output plugin
+DETAIL:  The configuration parameter "output_plugin_libraries" (currently 'pgoutput, test_decoding') does not name this library as a trusted output plugin.
+HINT:  If it is safe for all REPLICATION users to use this library as an output plugin, add it to "output_plugin_libraries" and reload the server configuration.
+</programlisting>
+         </para>
+        </note>
        </listitem>
       </varlistentry>
 
@@ -8040,9 +8111,10 @@ log_line_prefix = '%m [%p] %q%u@%d/%a '
        <para>
         This setting only affects log messages printed as a result of
         <xref linkend="guc-log-statement"/>,
-        <xref linkend="guc-log-duration"/>, and related settings.  Non-zero
-        values of this setting add some overhead, particularly if parameters
-        are sent in binary form, since then conversion to text is required.
+        <xref linkend="guc-log-min-duration-statement"/>, and related settings.
+        Non-zero values of this setting add some overhead, particularly
+        if parameters are sent in binary form, since then conversion to
+        text is required.
        </para>
       </listitem>
      </varlistentry>
@@ -12657,7 +12729,7 @@ LOG:  CleanUpLock: deleting: lock(0xb7acd844) id(24688,24696,0,0,0,1)
       </term>
       <listitem>
        <para>
-        Only has effect if <xref linkend="app-initdb-data-checksums"/> are enabled.
+        Only has effect if <link linkend="checksums">data checksums</link> are enabled.
        </para>
        <para>
         Detection of a checksum failure during a read normally causes

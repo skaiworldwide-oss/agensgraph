@@ -2913,6 +2913,14 @@ MATCH (n:co_doc) WITH n, count(*) AS c WHERE n.age = '30' RETURN n.nm AS nm;
 -- a key the rows do not carry
 MATCH (n:co_doc) WITH n, count(*) AS c WHERE n.nosuch = 1 RETURN n.nm AS nm;
 MATCH (n:co_doc) WITH n, count(*) AS c WHERE n.age IS NULL RETURN n.nm AS nm;
+-- more than one element carried, and a grouping key after the carried columns
+MATCH (n:co_doc), (m:co_doc) WITH n, m, count(*) AS c WHERE n.age = 30 AND m.age = 41
+  RETURN n.nm AS nm, m.nm AS mm ORDER BY nm;
+MATCH (n:co_doc) WITH n, count(*) AS c ORDER BY n.other WITH n WHERE n.age = 30
+  RETURN n.nm AS nm ORDER BY nm;
+-- sorting on the carried column keeps it as a sort key, not as a grouping key
+MATCH (n:co_doc) WITH n, count(*) AS c ORDER BY n.age DESC, n.nm WITH n WHERE n.age >= 30
+  RETURN n.nm AS nm;
 -- a property this statement writes, read after aggregating over it
 CREATE (n:co_doc {age: 77, nm: 'new'}) WITH n, count(*) AS c WHERE n.age = 77 RETURN n.nm AS nm;
 MATCH (n:co_doc) WHERE n.age = 77 DETACH DELETE n;
@@ -2938,6 +2946,12 @@ MATCH (n:co_doc) WITH n, count(*) AS c WHERE n.age = 30.5 RETURN n.nm AS nm;
 MATCH (n:co_doc) WITH n, count(*) AS c WHERE n.age = '30' RETURN n.nm AS nm;
 MATCH (n:co_doc) WITH n, count(*) AS c WHERE n.nosuch = 1 RETURN n.nm AS nm;
 MATCH (n:co_doc) WITH n, count(*) AS c WHERE n.age IS NULL RETURN n.nm AS nm;
+MATCH (n:co_doc), (m:co_doc) WITH n, m, count(*) AS c WHERE n.age = 30 AND m.age = 41
+  RETURN n.nm AS nm, m.nm AS mm ORDER BY nm;
+MATCH (n:co_doc) WITH n, count(*) AS c ORDER BY n.other WITH n WHERE n.age = 30
+  RETURN n.nm AS nm ORDER BY nm;
+MATCH (n:co_doc) WITH n, count(*) AS c ORDER BY n.age DESC, n.nm WITH n WHERE n.age >= 30
+  RETURN n.nm AS nm;
 CREATE (n:co_doc {age: 77, nm: 'new'}) WITH n, count(*) AS c WHERE n.age = 77 RETURN n.nm AS nm;
 MATCH (n:co_doc) WHERE n.age = 77 DETACH DELETE n;
 MATCH (n:co_doc) WITH n, count(*) AS c WHERE n.age = 41 SET n.seen = 1;

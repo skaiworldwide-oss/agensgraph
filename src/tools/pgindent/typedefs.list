@@ -2344,6 +2344,7 @@ PsqlScanQuoteType
 PsqlScanResult
 PsqlScanState
 PsqlScanStateData
+PsqlScanStateSave
 PsqlSettings
 Publication
 PublicationActions
@@ -3667,7 +3668,9 @@ gistxlogPageDelete
 gistxlogPageReuse
 gistxlogPageSplit
 gistxlogPageUpdate
+grouping_eqop_callback
 grouping_sets_data
+grouping_walker_ctx
 growable_trgm_array
 gseg_picksplit_item
 gss_OID_set
@@ -3680,7 +3683,7 @@ gss_key_value_set_desc
 gss_name_t
 gtrgm_consistent_cache
 gzFile
-having_collation_ctx
+having_grouping_ctx
 hbaPort
 heap_page_items_state
 help_handler
@@ -3972,6 +3975,7 @@ pthread_mutex_t
 pthread_once_t
 pthread_t
 ptrdiff_t
+publication_tables_state
 published_rel
 pull_var_clause_context
 pull_varattnos_context

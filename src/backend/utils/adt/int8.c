@@ -24,7 +24,7 @@
 #include "nodes/supportnodes.h"
 #include "optimizer/optimizer.h"
 #include "utils/builtins.h"
-
+#include "utils/fmgroids.h"
 
 typedef struct
 {
@@ -833,8 +833,38 @@ int8inc_support(PG_FUNCTION_ARGS)
 		MonotonicFunction monotonic = MONOTONICFUNC_NONE;
 		int			frameOptions = req->window_clause->frameOptions;
 
-		/* No ORDER BY clause then all rows are peers */
-		if (req->window_clause->orderClause == NIL)
+		/*
+		 * Because an EXCLUDE clauses in the window definition can exclude
+		 * rows that have previously been included in the aggregate result for
+		 * prior rows, this can break the monotonic properties that might
+		 * otherwise be guaranteed.  There's a narrow set of circumstances
+		 * that can be guaranteed, which we check for below.
+		 */
+		if (frameOptions & FRAMEOPTION_EXCLUSION)
+		{
+			WindowFunc *wfunc = req->window_func;
+
+			/*
+			 * To add handling for all valid monotonic cases with an EXCLUDE
+			 * clause is complex and likely not worth troubling over.  For
+			 * now, just bail unless we see EXCLUDE CURRENT ROW with COUNT(*)
+			 * and no FILTER.  Excluding the current row is fine when using
+			 * COUNT(*) as this always reduces the count by 1.  The same isn't
+			 * true for COUNY(ANY) as a NULL won't be counted, and a
+			 * subsequent non-NULL could make the count decrease.
+			 */
+			if ((frameOptions & FRAMEOPTION_EXCLUDE_CURRENT_ROW) == 0 ||
+				wfunc->winfnoid != F_COUNT_ ||
+				wfunc->aggfilter != NULL)
+			{
+				req->monotonic = MONOTONICFUNC_NONE;
+				PG_RETURN_POINTER(req);
+			}
+		}
+
+		/* No ORDER BY clause and RANGE mode means all rows are peers. */
+		if (req->window_clause->orderClause == NIL &&
+			(frameOptions & FRAMEOPTION_RANGE))
 			monotonic = MONOTONICFUNC_BOTH;
 		else
 		{

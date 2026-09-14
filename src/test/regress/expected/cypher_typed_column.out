@@ -7137,6 +7137,35 @@ MATCH (n:co_doc) WITH n, count(*) AS c WHERE n.age IS NULL RETURN n.nm AS nm;
 ----
 (0 rows)
 
+-- more than one element carried, and a grouping key after the carried columns
+MATCH (n:co_doc), (m:co_doc) WITH n, m, count(*) AS c WHERE n.age = 30 AND m.age = 41
+  RETURN n.nm AS nm, m.nm AS mm ORDER BY nm;
+ nm  | mm  
+-----+-----
+ bob | amy
+ cid | amy
+(2 rows)
+
+MATCH (n:co_doc) WITH n, count(*) AS c ORDER BY n.other WITH n WHERE n.age = 30
+  RETURN n.nm AS nm ORDER BY nm;
+ nm  
+-----
+ bob
+ cid
+(2 rows)
+
+-- sorting on the carried column keeps it as a sort key, not as a grouping key
+MATCH (n:co_doc) WITH n, count(*) AS c ORDER BY n.age DESC, n.nm WITH n WHERE n.age >= 30
+  RETURN n.nm AS nm;
+ nm  
+-----
+ eve
+ dot
+ amy
+ bob
+ cid
+(5 rows)
+
 -- a property this statement writes, read after aggregating over it
 CREATE (n:co_doc {age: 77, nm: 'new'}) WITH n, count(*) AS c WHERE n.age = 77 RETURN n.nm AS nm;
   nm   
@@ -7250,6 +7279,33 @@ MATCH (n:co_doc) WITH n, count(*) AS c WHERE n.age IS NULL RETURN n.nm AS nm;
  nm 
 ----
 (0 rows)
+
+MATCH (n:co_doc), (m:co_doc) WITH n, m, count(*) AS c WHERE n.age = 30 AND m.age = 41
+  RETURN n.nm AS nm, m.nm AS mm ORDER BY nm;
+  nm   |  mm   
+-------+-------
+ "bob" | "amy"
+ "cid" | "amy"
+(2 rows)
+
+MATCH (n:co_doc) WITH n, count(*) AS c ORDER BY n.other WITH n WHERE n.age = 30
+  RETURN n.nm AS nm ORDER BY nm;
+  nm   
+-------
+ "bob"
+ "cid"
+(2 rows)
+
+MATCH (n:co_doc) WITH n, count(*) AS c ORDER BY n.age DESC, n.nm WITH n WHERE n.age >= 30
+  RETURN n.nm AS nm;
+  nm   
+-------
+ "eve"
+ "dot"
+ "amy"
+ "bob"
+ "cid"
+(5 rows)
 
 CREATE (n:co_doc {age: 77, nm: 'new'}) WITH n, count(*) AS c WHERE n.age = 77 RETURN n.nm AS nm;
   nm   

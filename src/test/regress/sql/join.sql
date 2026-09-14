@@ -1376,6 +1376,16 @@ select * from
   (select 1 as x) ss1 left join (select 2 as y) ss2 on (true),
   lateral (select ss2.y as z limit 1) ss3;
 
+-- Also, we mustn't remove an RTE_RESULT that is the only baserel where a PHV
+-- can be evaluated, even when the PHV's phrels also mention an outer join.
+explain (verbose, costs off)
+select * from (values (1),(2)) v(x)
+  left join (select q from (select 7 as q from (select where false) ss1) ss2
+             left join (select 8 as z) ss3 on true) ss4 on true;
+select * from (values (1),(2)) v(x)
+  left join (select q from (select 7 as q from (select where false) ss1) ss2
+             left join (select 8 as z) ss3 on true) ss4 on true;
+
 -- This example demonstrates the folly of our old "have_dangerous_phv" logic
 begin;
 set local from_collapse_limit to 2;
@@ -2341,6 +2351,25 @@ CREATE TEMP TABLE parted_b1 partition of parted_b for values from (0) to (10);
 -- test join removals on a partitioned table
 explain (costs off)
 select a.* from a left join parted_b pb on a.b_id = pb.id;
+
+-- test that clauses that still embed PHVs are not referencing the removed
+-- relation when rebuilt for a partition of the kept relation
+explain (costs off)
+select 1 from (select t1.id from parted_b t1 left join parted_b t2 on t1.id = t2.id) s
+where s.id = 1 group by ();
+
+explain (costs off)
+select 1 from parted_b t1
+  join (select t2.id from parted_b t2 left join parted_b t3 on t2.id = t3.id) s
+  on t1.id = s.id
+group by ();
+
+-- likewise for a PHV embedded in an OR join clause
+explain (costs off)
+select 1 from parted_b t1
+  join (select t2.id from parted_b t2 left join parted_b t3 on t2.id = t3.id) s
+  on (t1.id = 1 and s.id = 2) or (t1.id = 3 and s.id = 4)
+group by ();
 
 rollback;
 

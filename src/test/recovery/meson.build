@@ -56,7 +56,10 @@ tests += {
       't/045_archive_restartpoint.pl',
       't/046_checkpoint_logical_slot.pl',
       't/047_checkpoint_physical_slot.pl',
-      't/048_vacuum_horizon_floor.pl'
+      't/048_vacuum_horizon_floor.pl',
+      't/053_standby_login_event_trigger.pl',
+      't/054_unlogged_sequence_promotion.pl',
+      't/055_cascade_reconnect.pl',
     ],
   },
 }

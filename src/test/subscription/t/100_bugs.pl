@@ -477,13 +477,13 @@ $result =
 is( $result, qq(2|f
 3|t), 'check replicated update on subscriber');
 
-# Test create and immediate drop of replication slot via replication commands
-# (this exposed a memory-management bug in v18)
 my $publisher_host = $node_publisher->host;
 my $publisher_port = $node_publisher->port;
 my $connstr_db =
   "host=$publisher_host port=$publisher_port replication=database dbname=postgres";
 
+# Test create and immediate drop of replication slot via replication commands
+# (this exposed a memory-management bug in v18)
 is( $node_publisher->psql(
 		'postgres',
 		qq[
@@ -494,6 +494,27 @@ is( $node_publisher->psql(
 		extra_params => [ '-d', $connstr_db ]),
 	0,
 	'create and immediate drop of replication slot');
+
+# REPLICATION users should not be able to bypass LOAD restrictions.
+$node_publisher->safe_psql(
+	'postgres', qq(
+	CREATE USER repluser REPLICATION;
+));
+
+my ($ret, $stdout, $stderr) = $node_publisher->psql(
+	'postgres',
+	qq[
+		SET ROLE repluser;
+		CREATE_REPLICATION_SLOT fail_slot LOGICAL regress;',
+	],
+	timeout => $PostgreSQL::Test::Utils::timeout_default,
+	extra_params => [ '-d', $connstr_db ]);
+
+is($ret, 3, 'loading unblessed output plugin fails');
+like(
+	$stderr,
+	qr/ERROR:  library "regress" may not be used as an output plugin/,
+	'loading unblessed output plugin fails: stderr');
 
 $node_publisher->stop('fast');
 $node_subscriber->stop('fast');
@@ -592,7 +613,7 @@ $node_publisher->safe_psql(
 	CREATE SUBSCRIPTION regress_sub1 CONNECTION '$publisher_connstr' PUBLICATION regress_pub WITH (connect=false);
 ));
 
-my ($ret, $stdout, $stderr) =
+($ret, $stdout, $stderr) =
   $node_publisher->psql('postgres', q{DROP SUBSCRIPTION regress_sub1});
 
 isnt($ret, 0, "replication slot does not exist: exit code not 0");
@@ -602,6 +623,51 @@ like(
 	"could not drop replication slot: error message");
 
 $node_publisher->safe_psql('postgres', "DROP DATABASE regress_db");
+
+$node_publisher->stop('fast');
+
+# https://postgr.es/m/19c7623e882.4080fd5426212.311756747309556767%40zohocorp.com
+
+# The bug was that when an ERROR was raised while processing an INSERT ... ON
+# CONFLICT statement, the decoded change misses to be free'd. This can cause an
+# assertion failure if enabled.
+
+$node_publisher->rotate_logfile();
+$node_publisher->start();
+
+# Create a publication with the zero-division row filter. It always throws an
+# ERROR before publishing changes, when the filter is evaluated.
+$node_publisher->safe_psql(
+	'postgres', qq(
+	CREATE TABLE tab_upsert (a INT PRIMARY KEY, b INT);
+	CREATE PUBLICATION pub_rowfilter_error FOR TABLE tab_upsert WHERE ((a / 0) > 0);
+	SELECT * FROM pg_create_logical_replication_slot('upsert_slot', 'pgoutput');
+	INSERT INTO tab_upsert (a, b) VALUES (1, 1)
+		ON CONFLICT(a) DO UPDATE SET b = excluded.b;
+));
+
+# Decode the changes with a publication whose row filter causes a
+# division by zero error, and verify that the logical decoder doesn't crash.
+($ret, $stdout, $stderr) = $node_publisher->psql(
+	'postgres', qq(
+	SELECT *
+	FROM pg_logical_slot_peek_binary_changes(
+		'upsert_slot',
+		NULL,
+		NULL,
+		'proto_version', '1',
+		'publication_names', 'pub_rowfilter_error'
+	);
+));
+
+ok( $stderr =~ qr/division by zero/,
+	'peek logical changes with row filter causing division by zero throws error'
+);
+
+# Clean up
+$node_publisher->safe_psql('postgres', "SELECT pg_drop_replication_slot('upsert_slot')");
+$node_publisher->safe_psql('postgres', "DROP PUBLICATION pub_rowfilter_error");
+$node_publisher->safe_psql('postgres', "DROP TABLE tab_upsert");
 
 $node_publisher->stop('fast');
 

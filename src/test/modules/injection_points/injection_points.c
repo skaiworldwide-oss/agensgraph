@@ -18,6 +18,7 @@
 #include "postgres.h"
 
 #include "fmgr.h"
+#include "injection_points.h"
 #include "injection_stats.h"
 #include "miscadmin.h"
 #include "nodes/pg_list.h"
@@ -38,30 +39,6 @@ PG_MODULE_MAGIC;
 /* Maximum number of waits usable in injection points at once */
 #define INJ_MAX_WAIT	8
 #define INJ_NAME_MAXLEN	64
-
-/*
- * Conditions related to injection points.  This tracks in shared memory the
- * runtime conditions under which an injection point is allowed to run,
- * stored as private_data when an injection point is attached, and passed as
- * argument to the callback.
- *
- * If more types of runtime conditions need to be tracked, this structure
- * should be expanded.
- */
-typedef enum InjectionPointConditionType
-{
-	INJ_CONDITION_ALWAYS = 0,	/* always run */
-	INJ_CONDITION_PID,			/* PID restriction */
-} InjectionPointConditionType;
-
-typedef struct InjectionPointCondition
-{
-	/* Type of the condition */
-	InjectionPointConditionType type;
-
-	/* ID of the process where the injection point is allowed to run */
-	int			pid;
-} InjectionPointCondition;
 
 /*
  * List of injection points stored in TopMemoryContext attached
@@ -277,6 +254,19 @@ injection_notice(const char *name, const void *private_data, void *arg)
 		elog(NOTICE, "notice triggered for injection point %s", name);
 }
 
+/*
+ * Error cleanup callback for injection point waits.
+ */
+static void
+injection_wait_cleanup(int code, Datum arg)
+{
+	int			index = DatumGetInt32(arg);
+
+	SpinLockAcquire(&inj_state->lock);
+	inj_state->name[index][0] = '\0';
+	SpinLockRelease(&inj_state->lock);
+}
+
 /* Wait on a condition variable, awaken by injection_points_wakeup() */
 void
 injection_wait(const char *name, const void *private_data, void *arg)
@@ -323,24 +313,26 @@ injection_wait(const char *name, const void *private_data, void *arg)
 
 	/* And sleep.. */
 	ConditionVariablePrepareToSleep(&inj_state->wait_point);
-	for (;;)
+	PG_ENSURE_ERROR_CLEANUP(injection_wait_cleanup, Int32GetDatum(index));
 	{
-		uint32		new_wait_counts;
+		for (;;)
+		{
+			uint32		new_wait_counts;
 
-		SpinLockAcquire(&inj_state->lock);
-		new_wait_counts = inj_state->wait_counts[index];
-		SpinLockRelease(&inj_state->lock);
+			SpinLockAcquire(&inj_state->lock);
+			new_wait_counts = inj_state->wait_counts[index];
+			SpinLockRelease(&inj_state->lock);
 
-		if (old_wait_counts != new_wait_counts)
-			break;
-		ConditionVariableSleep(&inj_state->wait_point, injection_wait_event);
+			if (old_wait_counts != new_wait_counts)
+				break;
+			ConditionVariableSleep(&inj_state->wait_point, injection_wait_event);
+		}
+		ConditionVariableCancelSleep();
 	}
-	ConditionVariableCancelSleep();
+	PG_END_ENSURE_ERROR_CLEANUP(injection_wait_cleanup, Int32GetDatum(index));
 
 	/* Remove this injection point from the waiters. */
-	SpinLockAcquire(&inj_state->lock);
-	inj_state->name[index][0] = '\0';
-	SpinLockRelease(&inj_state->lock);
+	injection_wait_cleanup(0, Int32GetDatum(index));
 }
 
 /*

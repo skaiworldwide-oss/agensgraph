@@ -159,13 +159,15 @@ static void reduce_outer_joins_pass2(Node *jtnode,
 static void report_reduced_full_join(reduce_outer_joins_pass2_state *state2,
 									 int rtindex, Relids relids);
 static Node *remove_useless_results_recurse(PlannerInfo *root, Node *jtnode,
+											Relids baserels,
 											Node **parent_quals,
 											Relids *dropped_outer_joins);
 static int	get_result_relid(PlannerInfo *root, Node *jtnode);
 static void remove_result_refs(PlannerInfo *root, int varno, Node *newjtloc);
-static bool find_dependent_phvs(PlannerInfo *root, int varno);
+static bool find_dependent_phvs(PlannerInfo *root, int varno, Relids baserels);
 static bool find_dependent_phvs_in_jointree(PlannerInfo *root,
-											Node *node, int varno);
+											Node *node, int varno,
+											Relids baserels);
 static void substitute_phv_relids(Node *node,
 								  int varno, Relids subrelids);
 static void fix_append_rel_relids(PlannerInfo *root, int varno,
@@ -3661,8 +3663,18 @@ report_reduced_full_join(reduce_outer_joins_pass2_state *state2,
 void
 remove_useless_result_rtes(PlannerInfo *root)
 {
+	Relids		baserels = NULL;
 	Relids		dropped_outer_joins = NULL;
 	ListCell   *cell;
+
+	/*
+	 * We'll need the set of baserels in the jointree to perform
+	 * find_dependent_phvs() checks.  But if there are no PHVs anywhere in the
+	 * query, those checks are no-ops, so we can skip the work.
+	 */
+	if (root->glob->lastPHId != 0)
+		baserels = get_relids_in_jointree((Node *) root->parse->jointree,
+										  false, false);
 
 	/* Top level of jointree must always be a FromExpr */
 	Assert(IsA(root->parse->jointree, FromExpr));
@@ -3670,6 +3682,7 @@ remove_useless_result_rtes(PlannerInfo *root)
 	root->parse->jointree = (FromExpr *)
 		remove_useless_results_recurse(root,
 									   (Node *) root->parse->jointree,
+									   baserels,
 									   NULL,
 									   &dropped_outer_joins);
 	/* We should still have a FromExpr */
@@ -3730,9 +3743,13 @@ remove_useless_result_rtes(PlannerInfo *root)
  * the parent's quals list; otherwise, pass NULL for parent_quals.
  * (Note that in some cases, parent_quals points to the quals of a parent
  * more than one level up in the tree.)
+ *
+ * baserels is the set of base (non-join) RT indexes in the whole jointree;
+ * it can be NULL if the query contains no PHVs.
  */
 static Node *
 remove_useless_results_recurse(PlannerInfo *root, Node *jtnode,
+							   Relids baserels,
 							   Node **parent_quals,
 							   Relids *dropped_outer_joins)
 {
@@ -3763,6 +3780,7 @@ remove_useless_results_recurse(PlannerInfo *root, Node *jtnode,
 
 			/* Recursively transform child, allowing it to push up quals ... */
 			child = remove_useless_results_recurse(root, child,
+												   baserels,
 												   &f->quals,
 												   dropped_outer_joins);
 			/* ... and stick it back into the tree */
@@ -3776,7 +3794,8 @@ remove_useless_results_recurse(PlannerInfo *root, Node *jtnode,
 			 */
 			if (list_length(f->fromlist) > 1 &&
 				(varno = get_result_relid(root, child)) != 0 &&
-				!find_dependent_phvs_in_jointree(root, (Node *) f, varno))
+				!find_dependent_phvs_in_jointree(root, (Node *) f, varno,
+												 baserels))
 			{
 				f->fromlist = foreach_delete_current(f->fromlist, cell);
 				result_relids = bms_add_member(result_relids, varno);
@@ -3845,12 +3864,14 @@ remove_useless_results_recurse(PlannerInfo *root, Node *jtnode,
 		 * quals up, or at least there's no particular reason to.
 		 */
 		j->larg = remove_useless_results_recurse(root, j->larg,
+												 baserels,
 												 (j->jointype == JOIN_INNER) ?
 												 &j->quals :
 												 (j->jointype == JOIN_LEFT) ?
 												 parent_quals : NULL,
 												 dropped_outer_joins);
 		j->rarg = remove_useless_results_recurse(root, j->rarg,
+												 baserels,
 												 (j->jointype == JOIN_INNER ||
 												  j->jointype == JOIN_LEFT) ?
 												 &j->quals : NULL,
@@ -3878,7 +3899,8 @@ remove_useless_results_recurse(PlannerInfo *root, Node *jtnode,
 				 * allowed to have such refs.
 				 */
 				if ((varno = get_result_relid(root, j->larg)) != 0 &&
-					!find_dependent_phvs_in_jointree(root, j->rarg, varno))
+					!find_dependent_phvs_in_jointree(root, j->rarg, varno,
+													 baserels))
 				{
 					remove_result_refs(root, varno, j->rarg);
 					if (j->quals != NULL && parent_quals == NULL)
@@ -3933,7 +3955,7 @@ remove_useless_results_recurse(PlannerInfo *root, Node *jtnode,
 				 */
 				if ((varno = get_result_relid(root, j->rarg)) != 0 &&
 					(j->quals == NULL ||
-					 !find_dependent_phvs(root, varno)))
+					 !find_dependent_phvs(root, varno, baserels)))
 				{
 					remove_result_refs(root, varno, j->larg);
 					*dropped_outer_joins = bms_add_member(*dropped_outer_joins,
@@ -4057,8 +4079,18 @@ remove_result_refs(PlannerInfo *root, int varno, Node *newjtloc)
 
 
 /*
- * find_dependent_phvs - are there any PlaceHolderVars whose relids are
+ * find_dependent_phvs - are there any PlaceHolderVars whose base relids are
  * exactly the given varno?
+ *
+ * We ignore outer-join relids present in a PHV's phrels, by intersecting
+ * with the caller-supplied "baserels" set.  This is necessary in part
+ * because some of the OJ relids may be stale, that is we may have
+ * already decided to remove those joins in remove_useless_result_rtes
+ * and not yet have cleaned their relid bits out of upper PHVs.
+ * But in general, it's the set of baserels that identify possible places
+ * to evaluate a PHV, and we mustn't let that go to empty.  (The caller is
+ * allowed to pass baserels as NULL if the query contains no PHVs at all,
+ * since then there is no work to do anyway.)
  *
  * find_dependent_phvs should be used when we want to see if there are
  * any such PHVs anywhere in the Query.  Another use-case is to see if
@@ -4069,8 +4101,9 @@ remove_result_refs(PlannerInfo *root, int varno, Node *newjtloc)
 
 typedef struct
 {
-	Relids		relids;
-	int			sublevels_up;
+	Relids		relids;			/* target relid, represented as a relid set */
+	Relids		baserels;		/* base RT indexes in query, NULL if no PHVs */
+	int			sublevels_up;	/* current nesting level */
 } find_dependent_phvs_context;
 
 static bool
@@ -4083,9 +4116,16 @@ find_dependent_phvs_walker(Node *node,
 	{
 		PlaceHolderVar *phv = (PlaceHolderVar *) node;
 
-		if (phv->phlevelsup == context->sublevels_up &&
-			bms_equal(context->relids, phv->phrels))
-			return true;
+		if (phv->phlevelsup == context->sublevels_up)
+		{
+			Relids		phbaserels = bms_intersect(phv->phrels,
+												   context->baserels);
+			bool		match = bms_equal(context->relids, phbaserels);
+
+			bms_free(phbaserels);
+			if (match)
+				return true;
+		}
 		/* fall through to examine children */
 	}
 	if (IsA(node, Query))
@@ -4109,7 +4149,7 @@ find_dependent_phvs_walker(Node *node,
 }
 
 static bool
-find_dependent_phvs(PlannerInfo *root, int varno)
+find_dependent_phvs(PlannerInfo *root, int varno, Relids baserels)
 {
 	find_dependent_phvs_context context;
 
@@ -4118,6 +4158,7 @@ find_dependent_phvs(PlannerInfo *root, int varno)
 		return false;
 
 	context.relids = bms_make_singleton(varno);
+	context.baserels = baserels;
 	context.sublevels_up = 0;
 
 	if (query_tree_walker(root->parse, find_dependent_phvs_walker, &context, 0))
@@ -4131,7 +4172,8 @@ find_dependent_phvs(PlannerInfo *root, int varno)
 }
 
 static bool
-find_dependent_phvs_in_jointree(PlannerInfo *root, Node *node, int varno)
+find_dependent_phvs_in_jointree(PlannerInfo *root, Node *node, int varno,
+								Relids baserels)
 {
 	find_dependent_phvs_context context;
 	Relids		subrelids;
@@ -4142,6 +4184,7 @@ find_dependent_phvs_in_jointree(PlannerInfo *root, Node *node, int varno)
 		return false;
 
 	context.relids = bms_make_singleton(varno);
+	context.baserels = baserels;
 	context.sublevels_up = 0;
 
 	/*

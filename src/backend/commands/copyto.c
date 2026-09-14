@@ -257,10 +257,10 @@ CopyToCSVOneRow(CopyToState cstate, TupleTableSlot *slot)
 /*
  * Workhorse for CopyToTextOneRow() and CopyToCSVOneRow().
  *
- * We use pg_attribute_always_inline to reduce function call overhead
+ * We use pg_always_inline to reduce function call overhead
  * and to help compilers to optimize away the 'is_csv' condition.
  */
-static pg_attribute_always_inline void
+static pg_always_inline void
 CopyToTextLikeOneRow(CopyToState cstate,
 					 TupleTableSlot *slot,
 					 bool is_csv)

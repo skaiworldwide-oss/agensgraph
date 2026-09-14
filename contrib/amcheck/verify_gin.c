@@ -638,6 +638,9 @@ gin_check_parent_keys_consistency(Relation rel,
 				pfree(ipd);
 			}
 
+			if (prev_tuple)
+				pfree(prev_tuple);
+
 			prev_tuple = CopyIndexTuple(idxtuple);
 			prev_attnum = current_attnum;
 		}

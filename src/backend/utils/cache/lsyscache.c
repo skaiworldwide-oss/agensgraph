@@ -478,6 +478,12 @@ get_mergejoin_opfamilies(Oid opno)
  *
  * Returns true if able to find the requested operator(s), false if not.
  * (This indicates that the operator should not have been marked oprcanhash.)
+ *
+ * Callers must beware that for container types (arrays, records, ranges)
+ * this function will succeed for array_eq etc, but the hash function could
+ * fail at runtime if the contained type(s) are not hashable.  If it is
+ * possible that the operator is one of these, precheck with op_hashjoinable
+ * or get_op_hash_functions_ext.
  */
 bool
 get_compatible_hash_operators(Oid opno,
@@ -578,6 +584,12 @@ get_compatible_hash_operators(Oid opno,
  *
  * Returns true if able to find the requested function(s), false if not.
  * (This indicates that the operator should not have been marked oprcanhash.)
+ *
+ * Callers must beware that for container types (arrays, records, ranges)
+ * this function will succeed for array_eq etc, but the hash function could
+ * fail at runtime if the contained type(s) are not hashable.  If it is
+ * possible that the operator is one of these, use get_op_hash_functions_ext
+ * or precheck with op_hashjoinable.
  */
 bool
 get_op_hash_functions(Oid opno,
@@ -658,6 +670,55 @@ get_op_hash_functions(Oid opno,
 	ReleaseSysCacheList(catlist);
 
 	return result;
+}
+
+/*
+ * get_op_hash_functions_ext
+ *		As above, but verify hashability in container-type cases.
+ *
+ * As with op_hashjoinable, assume the left input type is sufficient
+ * to disambiguate container-type cases.
+ */
+bool
+get_op_hash_functions_ext(Oid opno, Oid inputtype,
+						  RegProcedure *lhs_procno, RegProcedure *rhs_procno)
+{
+	TypeCacheEntry *typentry;
+
+	/* Ensure output args are initialized on failure */
+	if (lhs_procno)
+		*lhs_procno = InvalidOid;
+	if (rhs_procno)
+		*rhs_procno = InvalidOid;
+
+	/* As in op_hashjoinable, let the typcache handle the hard cases */
+	if (opno == ARRAY_EQ_OP)
+	{
+		typentry = lookup_type_cache(inputtype, TYPECACHE_HASH_PROC);
+		if (typentry->hash_proc != F_HASH_ARRAY)
+			return false;
+	}
+	else if (opno == RECORD_EQ_OP)
+	{
+		typentry = lookup_type_cache(inputtype, TYPECACHE_HASH_PROC);
+		if (typentry->hash_proc != F_HASH_RECORD)
+			return false;
+	}
+	else if (opno == RANGE_EQ_OP)
+	{
+		typentry = lookup_type_cache(inputtype, TYPECACHE_HASH_PROC);
+		if (typentry->hash_proc != F_HASH_RANGE)
+			return false;
+	}
+	else if (opno == MULTIRANGE_EQ_OP)
+	{
+		typentry = lookup_type_cache(inputtype, TYPECACHE_HASH_PROC);
+		if (typentry->hash_proc != F_HASH_MULTIRANGE)
+			return false;
+	}
+
+	/* OK, do the normal lookup */
+	return get_op_hash_functions(opno, lhs_procno, rhs_procno);
 }
 
 /*
@@ -767,15 +828,22 @@ get_op_index_interpretation(Oid opno)
 
 /*
  * equality_ops_are_compatible
- *		Return true if the two given equality operators have compatible
+ *		Return true if the two given operators have compatible equality
  *		semantics.
  *
  * This is trivially true if they are the same operator.  Otherwise,
- * Otherwise, we look to see if they both belong to an opfamily that
- * guarantees compatible semantics for equality.  Either finding allows us to
- * assume that they have compatible notions of equality.  (The reason we need
- * to do these pushups is that one might be a cross-type operator; for
- * instance int24eq vs int4eq.)
+ * we look to see if they both belong to an opfamily that guarantees
+ * compatible semantics for equality.  Either finding allows us to assume
+ * that they have compatible notions of equality.
+ *
+ * The typical use is to compare two equality operators (for instance the
+ * cross-type operators int24eq vs int4eq), but the test is meaningful for
+ * any pair of operators in a btree/hash opfamily.  Btree marks its
+ * opfamilies as amconsistentequality, which guarantees that every member
+ * of the family (=, <, <=, >, >=) agrees on the equivalence relation
+ * defined by the family's "=".  So a non-equality operator and an
+ * equality operator from the same opfamily are also "compatible" in this
+ * sense.
  */
 bool
 equality_ops_are_compatible(Oid opno1, Oid opno2)
@@ -912,6 +980,48 @@ collations_agree_on_equality(Oid coll1, Oid coll2)
 		return false;
 
 	return true;
+}
+
+/*
+ * op_is_safe_index_member
+ *		Check if the operator is a member of a B-tree or Hash operator family.
+ *
+ * Membership in such an opfamily has several useful implications: the operator
+ * returns non-null for non-null inputs (i.e. "null-safety", required so that
+ * the operator doesn't break index integrity), and it agrees with other
+ * members of the same opfamily on equality semantics.  Callers use this check
+ * as a proxy for any of those properties.
+ */
+bool
+op_is_safe_index_member(Oid opno)
+{
+	bool		result = false;
+	CatCList   *catlist;
+	int			i;
+
+	/*
+	 * Search pg_amop to see if the target operator is registered for any
+	 * btree or hash opfamily.
+	 */
+	catlist = SearchSysCacheList1(AMOPOPID, ObjectIdGetDatum(opno));
+
+	for (i = 0; i < catlist->n_members; i++)
+	{
+		HeapTuple	tuple = &catlist->members[i]->tuple;
+		Form_pg_amop aform = (Form_pg_amop) GETSTRUCT(tuple);
+
+		/* Check if the AM is B-tree or Hash */
+		if (aform->amopmethod == BTREE_AM_OID ||
+			aform->amopmethod == HASH_AM_OID)
+		{
+			result = true;
+			break;
+		}
+	}
+
+	ReleaseSysCacheList(catlist);
+
+	return result;
 }
 
 
@@ -1573,7 +1683,8 @@ op_mergejoinable(Oid opno, Oid inputtype)
 	 * For array_eq or record_eq, we can sort if the element or field types
 	 * are all sortable.  We could implement all the checks for that here, but
 	 * the typcache already does that and caches the results too, so let's
-	 * rely on the typcache.
+	 * rely on the typcache.  We do not need similar special cases for ranges
+	 * or multiranges, because their subtypes are required to be sortable.
 	 */
 	if (opno == ARRAY_EQ_OP)
 	{
@@ -1608,10 +1719,11 @@ op_mergejoinable(Oid opno, Oid inputtype)
  * Returns true if the operator is hashjoinable.  (There must be a suitable
  * hash opfamily entry for this operator if it is so marked.)
  *
- * In some cases (currently only array_eq), hashjoinability depends on the
- * specific input data type the operator is invoked for, so that must be
- * passed as well.  We currently assume that only one input's type is needed
- * to check this --- by convention, pass the left input's data type.
+ * In some cases (currently array_eq, record_eq, range_eq, multirange_eq),
+ * hashjoinability depends on the specific input data type the operator is
+ * invoked for, so that must be passed as well.  We currently assume that only
+ * one input's type is needed to check this --- by convention, pass the left
+ * input's data type.
  */
 bool
 op_hashjoinable(Oid opno, Oid inputtype)
@@ -1631,6 +1743,18 @@ op_hashjoinable(Oid opno, Oid inputtype)
 	{
 		typentry = lookup_type_cache(inputtype, TYPECACHE_HASH_PROC);
 		if (typentry->hash_proc == F_HASH_RECORD)
+			result = true;
+	}
+	else if (opno == RANGE_EQ_OP)
+	{
+		typentry = lookup_type_cache(inputtype, TYPECACHE_HASH_PROC);
+		if (typentry->hash_proc == F_HASH_RANGE)
+			result = true;
+	}
+	else if (opno == MULTIRANGE_EQ_OP)
+	{
+		typentry = lookup_type_cache(inputtype, TYPECACHE_HASH_PROC);
+		if (typentry->hash_proc == F_HASH_MULTIRANGE)
 			result = true;
 	}
 	else

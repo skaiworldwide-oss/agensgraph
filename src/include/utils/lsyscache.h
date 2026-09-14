@@ -86,10 +86,13 @@ extern bool get_compatible_hash_operators(Oid opno,
 										  Oid *lhs_opno, Oid *rhs_opno);
 extern bool get_op_hash_functions(Oid opno,
 								  RegProcedure *lhs_procno, RegProcedure *rhs_procno);
+extern bool get_op_hash_functions_ext(Oid opno, Oid inputtype,
+									  RegProcedure *lhs_procno, RegProcedure *rhs_procno);
 extern List *get_op_index_interpretation(Oid opno);
 extern bool equality_ops_are_compatible(Oid opno1, Oid opno2);
 extern bool comparison_ops_are_compatible(Oid opno1, Oid opno2);
 extern bool collations_agree_on_equality(Oid coll1, Oid coll2);
+extern bool op_is_safe_index_member(Oid opno);
 extern Oid	get_opfamily_proc(Oid opfamily, Oid lefttype, Oid righttype,
 							  int16 procnum);
 extern char *get_attname(Oid relid, AttrNumber attnum, bool missing_ok);

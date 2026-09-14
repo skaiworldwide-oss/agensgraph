@@ -4868,6 +4868,12 @@ satisfies_hash_partition(PG_FUNCTION_ARGS)
 							   fcinfo->flinfo->fn_mcxt);
 			}
 		}
+		else if (PG_ARGISNULL(3))
+		{
+			/* Special case for VARIADIC NULL::sometype[] */
+			relation_close(parent, NoLock);
+			PG_RETURN_BOOL(false);
+		}
 		else
 		{
 			ArrayType  *variadic_array = PG_GETARG_ARRAYTYPE_P(3);
@@ -4938,11 +4944,17 @@ satisfies_hash_partition(PG_FUNCTION_ARGS)
 	}
 	else
 	{
-		ArrayType  *variadic_array = PG_GETARG_ARRAYTYPE_P(3);
+		ArrayType  *variadic_array;
 		int			i;
 		int			nelems;
 		Datum	   *datum;
 		bool	   *isnull;
+
+		/* Special case for VARIADIC NULL::sometype[] */
+		if (PG_ARGISNULL(3))
+			PG_RETURN_BOOL(false);
+
+		variadic_array = PG_GETARG_ARRAYTYPE_P(3);
 
 		deconstruct_array(variadic_array,
 						  my_extra->variadic_type,

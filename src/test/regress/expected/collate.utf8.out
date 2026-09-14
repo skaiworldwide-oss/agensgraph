@@ -263,6 +263,12 @@ SELECT lower('ᾼΣͅΑ' COLLATE PG_UNICODE_FAST); -- 0391 0345 03A3 0345 0391
  ᾳσͅα
 (1 row)
 
+SELECT lower(U&'\0300\03A3' COLLATE PG_UNICODE_FAST);
+ lower 
+-------
+ ̀σ
+(1 row)
+
 -- properties
 SELECT 'xyz' ~ '[[:alnum:]]' COLLATE PG_UNICODE_FAST;
  ?column? 

@@ -5438,7 +5438,7 @@ match_previous_words(int pattern_id,
 	else if (TailMatchesCS("\\dew*"))
 		COMPLETE_WITH_QUERY(Query_for_list_of_fdws);
 	else if (TailMatchesCS("\\df*"))
-		COMPLETE_WITH_VERSIONED_SCHEMA_QUERY(Query_for_list_of_functions);
+		COMPLETE_WITH_SCHEMA_QUERY(Query_for_list_of_routines);
 	else if (HeadMatchesCS("\\df*"))
 		COMPLETE_WITH_SCHEMA_QUERY(Query_for_list_of_datatypes);
 

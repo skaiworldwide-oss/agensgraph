@@ -433,6 +433,27 @@ SELECT JSON_VALUE(jsonb '["1"]', '$[*]' RETURNING int FORMAT JSON); -- RETURNING
 ERROR:  cannot specify FORMAT JSON in RETURNING clause of JSON_VALUE()
 LINE 1: ...CT JSON_VALUE(jsonb '["1"]', '$[*]' RETURNING int FORMAT JSO...
                                                              ^
+-- A DEFAULT expression must be coerced to the RETURNING type's typmod even
+-- when its base type already matches, but a matching NULL needs no coercion.
+SELECT JSON_VALUE(jsonb '{}', '$.a' RETURNING numeric(4,1) DEFAULT 99999.999 ON EMPTY);
+ERROR:  numeric field overflow
+DETAIL:  A field with precision 4, scale 1 must round to an absolute value less than 10^3.
+SELECT JSON_VALUE(jsonb '{}', '$.a' RETURNING varchar(3) DEFAULT 'toolong'::varchar(10) ON EMPTY);
+ERROR:  value too long for type character varying(3)
+SELECT JSON_VALUE(jsonb '{}', '$.a' RETURNING numeric(4,1) DEFAULT NULL::numeric ON EMPTY);
+ json_value 
+------------
+           
+(1 row)
+
+SELECT JSON_VALUE(jsonb '{}', '$.a' RETURNING bit(3) DEFAULT b'10101' ON EMPTY);
+ERROR:  bit string length 5 does not match type bit(3)
+SELECT JSON_VALUE(jsonb '{}', '$.a' RETURNING numeric(4,1) DEFAULT abs(NULL::numeric) ON EMPTY);
+ json_value 
+------------
+           
+(1 row)
+
 -- RETUGNING pseudo-types not allowed
 SELECT JSON_VALUE(jsonb '["1"]', '$[*]' RETURNING record);
 ERROR:  returning pseudo-types is not supported in SQL/JSON functions

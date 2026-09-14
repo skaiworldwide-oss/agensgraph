@@ -403,7 +403,7 @@ RelationAddBlocks(Relation relation, BulkInsertState bistate,
 	{
 		BlockNumber first_fsm_block = first_block + not_in_fsm_pages;
 
-		FreeSpaceMapVacuumRange(relation, first_fsm_block, last_block);
+		FreeSpaceMapVacuumRange(relation, first_fsm_block, last_block + 1);
 	}
 
 	if (bistate)

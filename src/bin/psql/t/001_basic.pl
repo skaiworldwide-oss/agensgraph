@@ -451,6 +451,8 @@ psql_fails_like(
 	'\set WATCH_INTERVAL 1e500',
 	qr/is out of range/,
 	'WATCH_INTERVAL variable is out of range');
+psql_like($node, '\echo :WATCH_INTERVAL',
+	qr/^2$/m, 'WATCH_INTERVAL variable was not altered');
 
 # Test \g output piped into a program.
 # The program is perl -pe '' to simply copy the input to the output.
@@ -536,5 +538,12 @@ psql_fails_like(
 \\! should_fail},
 	qr/backslash commands are restricted; only \\unrestrict is allowed/,
 	'meta-command in restrict mode fails');
+
+psql_fails_like(
+	$node,
+	qq{\\restrict test
+\\unrestrict `echo test`},
+	qr/wrong key/,
+	'\unrestrict does not do backquote expansion');
 
 done_testing();
