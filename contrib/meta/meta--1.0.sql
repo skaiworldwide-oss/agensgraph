@@ -788,3 +788,77 @@ $$;
 
 COMMENT ON FUNCTION meta.estimated_edge_density(NAME)
 IS 'Estimates edge density using Postgresql statistics (pg_class.reltuples). Uses graph_path if graph name is not provided.';
+
+CREATE FUNCTION meta.vertex_stats(v vertex DEFAULT NULL, graph name DEFAULT NULL)
+RETURNS TABLE(id graphid, label name, in_degree BIGINT, out_degree BIGINT,
+              self_loops BIGINT)
+LANGUAGE plpgsql
+STABLE
+AS $$
+DECLARE
+    schema_name name;
+BEGIN
+    IF graph IS NULL THEN
+        BEGIN
+            schema_name := current_setting('graph_path');
+            IF schema_name IS NULL OR schema_name = '' THEN
+                RAISE NOTICE 'graph_path is not set. Provide graph name or set graph_path';
+                RETURN;
+            END IF;
+            graph := schema_name;
+        EXCEPTION WHEN OTHERS THEN
+            RAISE NOTICE 'graph_path is not set. Provide graph name or set graph_path';
+            RETURN;
+        END;
+    END IF;
+
+    IF v IS NULL THEN
+        -- Every vertex, counted in one pass over the edges.  Asking per vertex
+        -- instead costs one query each, which a graph of any size cannot pay.
+        RETURN QUERY EXECUTE format(
+            'SELECT v.id, a.labname,'
+            '       coalesce(i.c, 0) + coalesce(s.c, 0),'
+            '       coalesce(o.c, 0) + coalesce(s.c, 0),'
+            '       coalesce(s.c, 0)'
+            '  FROM %I.ag_vertex v'
+            '  JOIN ag_graph g ON g.graphname = %L'
+            '  JOIN ag_label a ON a.graphid = g.oid'
+            '                 AND a.labid = graphid_labid(v.id)'
+            '  LEFT JOIN (SELECT "end" AS id, count(*) AS c FROM %I.ag_edge'
+            '              WHERE start <> "end" GROUP BY 1) i ON i.id = v.id'
+            '  LEFT JOIN (SELECT start AS id, count(*) AS c FROM %I.ag_edge'
+            '              WHERE start <> "end" GROUP BY 1) o ON o.id = v.id'
+            '  LEFT JOIN (SELECT start AS id, count(*) AS c FROM %I.ag_edge'
+            '              WHERE start =  "end" GROUP BY 1) s ON s.id = v.id',
+            graph, graph, graph, graph, graph);
+    ELSE
+        -- One vertex, read through the indexes the edge label carries on
+        -- start and on end.  The vertex is looked up as well, so a vertex
+        -- the graph does not hold gives no row rather than a row of zeros.
+        RETURN QUERY EXECUTE format(
+            'SELECT n.id, a.labname,'
+            '       e.in_edges + e.self_edges,'
+            '       e.out_edges + e.self_edges,'
+            '       e.self_edges'
+            '  FROM (SELECT count(*) FILTER (WHERE t."end" = $1 AND t.start <> $1)'
+            '               AS in_edges,'
+            '               count(*) FILTER (WHERE t.start = $1 AND t."end" <> $1)'
+            '               AS out_edges,'
+            '               count(*) FILTER (WHERE t.start = $1 AND t."end" = $1)'
+            '               AS self_edges'
+            '          FROM (SELECT start, "end" FROM %I.ag_edge WHERE start = $1'
+            '                UNION ALL'
+            '                SELECT start, "end" FROM %I.ag_edge'
+            '                 WHERE "end" = $1 AND start <> $1) t) e'
+            '  JOIN %I.ag_vertex n ON n.id = $1'
+            '  JOIN ag_graph g ON g.graphname = %L'
+            '  JOIN ag_label a ON a.graphid = g.oid'
+            '                 AND a.labid = graphid_labid(n.id)',
+            graph, graph, graph, graph)
+        USING (v).id;
+    END IF;
+END;
+$$;
+
+COMMENT ON FUNCTION meta.vertex_stats(vertex, name)
+IS 'Returns the id, label and degrees of a vertex, or of every vertex where none is given. A self-loop is counted in the in-degree and in the out-degree as well as on its own. Uses graph_path if graph name is not provided. An id only names one vertex within its own graph, so naming a graph other than the one the vertex was read from answers about whatever that graph holds under the same id.';
