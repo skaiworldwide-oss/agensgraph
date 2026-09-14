@@ -1,0 +1,72 @@
+name: Release pointer
+
+# prod is the newest release of the newest line: the highest release tag in
+# version order. A release tag is v2.<PG major>.<PG minor>.<minor>; lines
+# before 2.18 used three components. Only this workflow moves prod. Nothing is
+# committed to it and nothing is built from it.
+
+on:
+  create:
+  delete:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 3 * * *'
+
+permissions:
+  contents: write
+
+jobs:
+  point:
+    if: github.event.ref_type == 'tag' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    runs-on: ubuntu-22.04
+    concurrency:
+      group: release-pointer
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+    steps:
+      - name: Point prod at the highest release tag
+        run: |
+          set -euo pipefail
+          url="https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git"
+          tags=$(git ls-remote --tags "$url")
+
+          # four components, or three for a line before 2.18
+          target_tag=$( (printf '%s\n' "$tags" | sed 's|.*refs/tags/||' \
+              | grep -v '\^{}$' \
+              | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$|^v[0-9]+\.([0-9]|1[0-7])\.[0-9]+$' || true) \
+              | sort -V | tail -1)
+          if [ -z "$target_tag" ]; then
+            echo "no release tag" | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          # the commit behind the tag: the peeled line of an annotated tag, else the tag itself
+          target=$(printf '%s\n' "$tags" | awk -v t="refs/tags/${target_tag}^{}" '$2 == t { print $1 }')
+          if [ -z "$target" ]; then
+            target=$(printf '%s\n' "$tags" | awk -v t="refs/tags/${target_tag}" '$2 == t { print $1 }')
+          fi
+
+          # the tag must sit on its line branch: v2.18.6.0 on v2.18
+          line=$(printf '%s' "$target_tag" | cut -d. -f1,2)
+          status=$(gh api "repos/${REPO}/compare/${line}...${target}" --jq .status 2>/dev/null || echo "no branch ${line}")
+          case "$status" in
+            identical|behind) ;;
+            *)
+              echo "::error::${target_tag} (${target}) is not on branch ${line}: ${status}. prod not moved."
+              exit 1
+              ;;
+          esac
+
+          current=$(git ls-remote --heads "$url" prod | cut -f1)
+          if [ "$current" = "$target" ]; then
+            echo "prod is at ${target_tag} (${target})" | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          if [ -z "$current" ]; then
+            gh api -X POST "repos/${REPO}/git/refs" -f ref=refs/heads/prod -f sha="$target" > /dev/null
+          else
+            gh api -X PATCH "repos/${REPO}/git/refs/heads/prod" -f sha="$target" -F force=true > /dev/null
+          fi
+          echo "prod -> ${target_tag} (${target}), was ${current:-absent}" | tee -a "$GITHUB_STEP_SUMMARY"
