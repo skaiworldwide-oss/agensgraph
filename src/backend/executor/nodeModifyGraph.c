@@ -755,26 +755,26 @@ ExecReScanModifyGraph(ModifyGraphState *mgstate)
 static void
 initGraphWRStats(ModifyGraphState *mgstate, GraphWriteOp op)
 {
-	if (mgstate->pattern != NIL)
-	{
-		Assert(op == GWROP_CREATE || op == GWROP_MERGE);
+	Assert(mgstate->pattern == NIL ||
+		   op == GWROP_CREATE || op == GWROP_MERGE);
+	Assert(mgstate->exprs == NIL || op == GWROP_DELETE);
+	Assert(mgstate->sets == NIL || op == GWROP_SET || op == GWROP_MERGE);
 
-		graphWriteStats.insertVertex = 0;
-		graphWriteStats.insertEdge = 0;
-	}
-	if (mgstate->exprs != NIL)
-	{
-		Assert(op == GWROP_DELETE);
+	/*
+	 * The counters describe the statement about to run, whatever it writes
+	 * and however many write clauses it has: every write node is initialized
+	 * before any of them runs, so zeroing all five here at each of them
+	 * leaves the statement's own counts intact.  An EXPLAIN that will not run
+	 * the plan leaves the last write's counters alone.
+	 */
+	if (mgstate->ps.state->es_top_eflags & EXEC_FLAG_EXPLAIN_ONLY)
+		return;
 
-		graphWriteStats.deleteVertex = 0;
-		graphWriteStats.deleteEdge = 0;
-	}
-	if (mgstate->sets != NIL)
-	{
-		Assert(op == GWROP_SET || op == GWROP_MERGE);
-
-		graphWriteStats.updateProperty = 0;
-	}
+	graphWriteStats.insertVertex = 0;
+	graphWriteStats.insertEdge = 0;
+	graphWriteStats.deleteVertex = 0;
+	graphWriteStats.deleteEdge = 0;
+	graphWriteStats.updateProperty = 0;
 }
 
 static List *

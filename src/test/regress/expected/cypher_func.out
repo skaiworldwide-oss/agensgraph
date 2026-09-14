@@ -296,6 +296,111 @@ SELECT * FROM get_last_graph_write_stats();
                 0 |             0 |               2 |            0 |                 0
 (1 row)
 
+-- a write with RETURN describes itself alone, whatever the write before it
+-- left in the other counters
+create (:vertices {name: 'a'}), (:vertices {name: 'b'}), (:vertices {name: 'c'});
+match (u:vertices {name: 'a'}) set u.p = 1 return u.name;
+ name 
+------
+ "a"
+(1 row)
+
+SELECT * FROM get_last_graph_write_stats();
+ insertedvertices | insertededges | deletedvertices | deletededges | updatedproperties 
+------------------+---------------+-----------------+--------------+-------------------
+                0 |             0 |               0 |            0 |                 1
+(1 row)
+
+match (u:vertices {name: 'b'}) delete u return 1;
+ ?column? 
+----------
+ 1
+(1 row)
+
+SELECT * FROM get_last_graph_write_stats();
+ insertedvertices | insertededges | deletedvertices | deletededges | updatedproperties 
+------------------+---------------+-----------------+--------------+-------------------
+                0 |             0 |               1 |            0 |                 0
+(1 row)
+
+create (u:vertices {name: 'd'}) return u.name;
+ name 
+------
+ "d"
+(1 row)
+
+SELECT * FROM get_last_graph_write_stats();
+ insertedvertices | insertededges | deletedvertices | deletededges | updatedproperties 
+------------------+---------------+-----------------+--------------+-------------------
+                1 |             0 |               0 |            0 |                 0
+(1 row)
+
+match (a:vertices {name: 'a'}), (d:vertices {name: 'd'})
+create (a)-[e:edges]->(d) return count(e);
+ count 
+-------
+ 1
+(1 row)
+
+SELECT * FROM get_last_graph_write_stats();
+ insertedvertices | insertededges | deletedvertices | deletededges | updatedproperties 
+------------------+---------------+-----------------+--------------+-------------------
+                0 |             1 |               0 |            0 |                 0
+(1 row)
+
+-- two write clauses in one statement add up
+match (u:vertices {name: 'c'}) delete u with 1 as x
+create (:vertices {name: 'e'}), (:vertices {name: 'f'}) return x;
+ x 
+---
+ 1
+(1 row)
+
+SELECT * FROM get_last_graph_write_stats();
+ insertedvertices | insertededges | deletedvertices | deletededges | updatedproperties 
+------------------+---------------+-----------------+--------------+-------------------
+                2 |             0 |               1 |            0 |                 0
+(1 row)
+
+-- a MERGE that finds its row, and a write that touches no row, report zeros
+merge (u:vertices {name: 'a'}) return u.name;
+ name 
+------
+ "a"
+(1 row)
+
+SELECT * FROM get_last_graph_write_stats();
+ insertedvertices | insertededges | deletedvertices | deletededges | updatedproperties 
+------------------+---------------+-----------------+--------------+-------------------
+                0 |             0 |               0 |            0 |                 0
+(1 row)
+
+match (u:vertices {name: 'nobody'}) set u.p = 1 return u.name;
+ name 
+------
+(0 rows)
+
+SELECT * FROM get_last_graph_write_stats();
+ insertedvertices | insertededges | deletedvertices | deletededges | updatedproperties 
+------------------+---------------+-----------------+--------------+-------------------
+                0 |             0 |               0 |            0 |                 0
+(1 row)
+
+-- an EXPLAIN that does not run the write leaves the last write's counters
+match (u:vertices {name: 'a'}) set u.p = 2;
+EXPLAIN (COSTS OFF) create (:vertices {name: 'g'});
+  QUERY PLAN  
+--------------
+ Graph Create
+   ->  Result
+(2 rows)
+
+SELECT * FROM get_last_graph_write_stats();
+ insertedvertices | insertededges | deletedvertices | deletededges | updatedproperties 
+------------------+---------------+-----------------+--------------+-------------------
+                0 |             0 |               0 |            0 |                 1
+(1 row)
+
 -- cleanup
 DROP GRAPH ag222 CASCADE;
 NOTICE:  drop cascades to 5 other objects

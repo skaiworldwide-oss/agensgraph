@@ -242,20 +242,6 @@ standard_ExecutorStart(QueryDesc *queryDesc, int eflags)
 	}
 
 	/*
-	 * Initialize the global variable graphWriteStats iff this is a Cypher
-	 * graph write (insert, delete, or update property). Currently only the
-	 * above query types will reset these values.
-	 */
-	if (queryDesc->operation == CMD_GRAPHWRITE)
-	{
-		graphWriteStats.insertVertex = 0;
-		graphWriteStats.insertEdge = 0;
-		graphWriteStats.deleteVertex = 0;
-		graphWriteStats.deleteEdge = 0;
-		graphWriteStats.updateProperty = 0;
-	}
-
-	/*
 	 * Copy other important information into the EState
 	 */
 	estate->es_snapshot = RegisterSnapshot(queryDesc->snapshot);
