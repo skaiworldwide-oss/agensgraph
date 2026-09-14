@@ -624,3 +624,33 @@ FROM (VALUES ('42'::jsonb), ('1.2'), ('"42"'), ('"abc"'), ('true'), ('null'),
 	('[1,2]'), ('{"a":1}')) v(j);
 
 DROP GRAPH tointeger_graph CASCADE;
+
+--
+-- AGV2-361
+--
+-- toFloat() reads a graph property the same way, so a property and the same
+-- value inside a list give the same number.
+CREATE GRAPH tofloat_graph;
+SET graph_path = tofloat_graph;
+
+CREATE (:p {i: 42, f: 1.5, s: '1.5', words: 'abc', b: true, l: [1, 2], m: {a: 1}});
+
+-- a property naming a number reads as that number, fraction and all
+MATCH (v:p) RETURN toFloat(v.f), toFloat(v.i);
+-- one naming a number as text reads as that number
+MATCH (v:p) RETURN toFloat(v.s);
+-- a boolean reads the way it reads everywhere else
+MATCH (v:p) RETURN toFloat(v.b);
+-- text naming no number is null, and so are a list, a map, and a property
+-- that is not there
+MATCH (v:p)
+	RETURN toFloat(v.words) IS NULL, toFloat(v.l) IS NULL,
+		toFloat(v.m) IS NULL, toFloat(v.missing) IS NULL;
+
+-- the same values given as jsonb, so the scalar and the list of one element
+-- can be read against each other form by form
+SELECT j, toFloat(j), toFloatList(('[' || j::text || ']')::jsonb)
+FROM (VALUES ('1.5'::jsonb), ('42'), ('"1.5"'), ('"abc"'), ('true'), ('null'),
+	('[1,2]'), ('{"a":1}')) v(j);
+
+DROP GRAPH tofloat_graph CASCADE;

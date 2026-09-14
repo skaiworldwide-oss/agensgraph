@@ -2744,6 +2744,24 @@ datum_to_float8(Datum d, Oid typeid, float8 *result)
 				return string_to_float8(s, result);
 			}
 
+		case JSONBOID:
+			{
+				Datum		sd;
+				Oid			stypeid;
+
+				/*
+				 * Every graph property is a jsonb, so the scalar one names is
+				 * read as a value of the type it names.  Reading it here is
+				 * what makes toFloat(v.prop) agree with
+				 * toFloatList([v.prop]): the list walk reads the same scalar
+				 * the same way.
+				 */
+				if (!jsonb_to_scalar_datum(DatumGetJsonbP(d), &sd, &stypeid))
+					return false;
+
+				return datum_to_float8(sd, stypeid, result);
+			}
+
 		default:
 			return false;
 	}
