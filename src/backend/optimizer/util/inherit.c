@@ -35,7 +35,10 @@
 #include "parser/parse_relation.h"
 #include "partitioning/partdesc.h"
 #include "partitioning/partprune.h"
+#include "rewrite/rewriteHandler.h"
+#include "rewrite/rowsecurity.h"
 #include "utils/rel.h"
+#include "utils/rls.h"
 
 /* Agensgraph */
 #include "storage/lmgr.h"
@@ -74,6 +77,11 @@ static void expand_single_inheritance_child(PlannerInfo *root,
 											PlanRowMark *top_parentrc, Relation childrel,
 											RangeTblEntry **childrte_p,
 											Index *childRTindex_p);
+static void add_label_child_security(PlannerInfo *root,
+									 RangeTblEntry *parentrte,
+									 RangeTblEntry *childrte,
+									 Index childRTindex,
+									 AppendRelInfo *appinfo);
 static Bitmapset *translate_col_privs(const Bitmapset *parent_privs,
 									  List *translated_vars);
 static Bitmapset *translate_col_privs_multilevel(PlannerInfo *root,
@@ -1762,8 +1770,7 @@ expand_single_inheritance_child(PlannerInfo *root, RangeTblEntry *parentrte,
 								Index *childRTindex_p)
 {
 	Query	   *parse = root->parse;
-	Oid			parentOID PG_USED_FOR_ASSERTS_ONLY =
-		RelationGetRelid(parentrel);
+	Oid			parentOID = RelationGetRelid(parentrel);
 	Oid			childOID = RelationGetRelid(childrel);
 	RangeTblEntry *childrte;
 	Index		childRTindex;
@@ -1783,7 +1790,8 @@ expand_single_inheritance_child(PlannerInfo *root, RangeTblEntry *parentrte,
 	 * children along with other base restriction clauses, so we don't need to
 	 * do it here.  Other infrastructure of the parent RTE has to be
 	 * translated to match the child table's column ordering, which we do
-	 * below, so a "flat" copy is sufficient to start with.
+	 * below, so a "flat" copy is sufficient to start with.  A graph label is
+	 * the exception; see add_label_child_security at the end of this function.
 	 */
 	childrte = makeNode(RangeTblEntry);
 	memcpy(childrte, parentrte, sizeof(RangeTblEntry));
@@ -1942,6 +1950,121 @@ expand_single_inheritance_child(PlannerInfo *root, RangeTblEntry *parentrte,
 									 childrte, childrel);
 		}
 	}
+
+	/* A graph label carries its own grant and policies; see the header. */
+	if (childOID != parentOID && gm_relid_labid(childOID) != 0)
+		add_label_child_security(root, parentrte, childrte, childRTindex,
+								 appinfo);
+}
+
+/*
+ * label_child_security_levels
+ *		How many security levels the labels under rte will need for their own
+ *		policies once the inheritance set is expanded.  add_label_child_security
+ *		attaches those policies to child RTEs that do not exist yet, so
+ *		subquery_planner reserves the levels here first.  Zero unless rte is a
+ *		graph label -- ag_vertex and ag_edge included -- with a row-secured
+ *		descendant.
+ *
+ * check_enable_rls with noError = false raises the row_security = off refusal
+ * that a label named directly would raise.
+ */
+int
+label_child_security_levels(PlannerInfo *root, RangeTblEntry *rte)
+{
+	RTEPermissionInfo *perminfo;
+	Oid			user_id;
+	List	   *descendants;
+	ListCell   *lc;
+	int			levels = 0;
+
+	Assert(rte->rtekind == RTE_RELATION && rte->inh);
+
+	if (gm_relid_labid(rte->relid) == 0)
+		return 0;
+
+	perminfo = getRTEPermissionInfo(root->parse->rteperminfos, rte);
+	user_id = OidIsValid(perminfo->checkAsUser) ?
+		perminfo->checkAsUser : GetUserId();
+
+	descendants = find_all_inheritors(rte->relid, NoLock, NULL);
+	foreach(lc, descendants)
+	{
+		Oid			childOID = lfirst_oid(lc);
+		Relation	childrel;
+
+		if (childOID == rte->relid ||
+			check_enable_rls(childOID, perminfo->checkAsUser,
+							 false) != RLS_ENABLED)
+			continue;
+
+		/* Lock to synchronize against concurrent drop, then re-check. */
+		LockRelationOid(childOID, rte->rellockmode);
+		if (!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(childOID)))
+		{
+			UnlockRelationOid(childOID, rte->rellockmode);
+			continue;
+		}
+
+		childrel = table_open(childOID, NoLock);
+		levels = Max(levels,
+					 count_scan_security_quals(childrel, user_id,
+											   perminfo->requiredPerms));
+		table_close(childrel, NoLock);
+	}
+	list_free(descendants);
+
+	return levels;
+}
+
+/*
+ * add_label_child_security
+ *		Give a graph label its own permission check and its own policies when
+ *		a parent's expansion reaches it.
+ *
+ * Ordinary inheritance checks a child against the parent alone.  A label's
+ * parent (ag_vertex, ag_edge, or a parent label) is not a hierarchy the user
+ * built: MATCH (n) reads every label through ag_vertex, and MATCH (n:parent)
+ * reads a sub-label through the parent, so a label's grant and its policies
+ * have to apply to its rows however a pattern reaches them.  A graph write
+ * already does this (addRangeTableAllModifiedLabels); this is the read half.
+ *
+ * The child's RTEPermissionInfo asks the parent's privileges of the child,
+ * columns translated, so ExecCheckPermissions checks the label directly.  The
+ * policies are attached by the rewriter's own routine and preprocessed as
+ * subquery_planner would have; label_child_security_levels reserved their
+ * levels, and apply_child_basequals makes them the child's restrictions.
+ */
+static void
+add_label_child_security(PlannerInfo *root, RangeTblEntry *parentrte,
+						 RangeTblEntry *childrte, Index childRTindex,
+						 AppendRelInfo *appinfo)
+{
+	Query	   *parse = root->parse;
+	RTEPermissionInfo *parent_perminfo;
+	RTEPermissionInfo *child_perminfo;
+
+	parent_perminfo = getRTEPermissionInfo(parse->rteperminfos, parentrte);
+	child_perminfo = addRTEPermissionInfo(&parse->rteperminfos, childrte);
+	child_perminfo->requiredPerms = parent_perminfo->requiredPerms;
+	child_perminfo->checkAsUser = parent_perminfo->checkAsUser;
+	child_perminfo->selectedCols =
+		translate_col_privs(parent_perminfo->selectedCols,
+							appinfo->translated_vars);
+	child_perminfo->insertedCols =
+		translate_col_privs(parent_perminfo->insertedCols,
+							appinfo->translated_vars);
+	child_perminfo->updatedCols =
+		translate_col_privs(parent_perminfo->updatedCols,
+							appinfo->translated_vars);
+
+	apply_row_security_policies(parse, childrte, childRTindex, NIL);
+	if (childrte->securityQuals != NIL)
+		preprocess_security_quals(root, childrte->securityQuals);
+
+	/* the policies are baked into the plan, so it is specific to the role */
+	if (parse->hasRowSecurity)
+		root->glob->dependsOnRole = true;
 }
 
 /*
@@ -2556,9 +2679,10 @@ apply_child_basequals(PlannerInfo *root, RelOptInfo *parentrel,
 
 	/*
 	 * In addition to the quals inherited from the parent, we might have
-	 * securityQuals associated with this particular child node.  (Currently
-	 * this can only happen in appendrels originating from UNION ALL;
-	 * inheritance child tables don't have their own securityQuals, see
+	 * securityQuals associated with this particular child node.  (This
+	 * happens in appendrels originating from UNION ALL, and for a graph label
+	 * expanded under ag_vertex, ag_edge or a parent label; other inheritance
+	 * child tables don't have their own securityQuals, see
 	 * expand_single_inheritance_child().)  Pull any such securityQuals up
 	 * into the baserestrictinfo for the child.  This is similar to
 	 * process_security_barrier_quals() for the parent rel, except that we

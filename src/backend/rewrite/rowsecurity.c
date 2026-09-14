@@ -634,6 +634,40 @@ get_row_security_policies(Query *root, RangeTblEntry *rte, int rt_index,
 }
 
 /*
+ * count_scan_security_quals
+ *
+ * How many securityQuals get_row_security_policies would attach to a scan of
+ * rel by user_id requiring requiredPerms, counted the same way it adds them:
+ * the UPDATE policies when the scan asks for UPDATE privilege, then the
+ * SELECT policies.  The planner needs the count for a graph label before the
+ * label's RTE exists; see label_child_security_levels.
+ */
+int
+count_scan_security_quals(Relation rel, Oid user_id, AclMode requiredPerms)
+{
+	List	   *securityQuals = NIL;
+	bool		hasSubLinks = false;
+	List	   *permissive_policies;
+	List	   *restrictive_policies;
+
+	if (requiredPerms & ACL_UPDATE)
+	{
+		get_policies_for_relation(rel, CMD_UPDATE, user_id,
+								  &permissive_policies,
+								  &restrictive_policies);
+		add_security_quals(1, permissive_policies, restrictive_policies,
+						   &securityQuals, &hasSubLinks);
+	}
+
+	get_policies_for_relation(rel, CMD_SELECT, user_id,
+							  &permissive_policies, &restrictive_policies);
+	add_security_quals(1, permissive_policies, restrictive_policies,
+					   &securityQuals, &hasSubLinks);
+
+	return list_length(securityQuals);
+}
+
+/*
  * get_policies_for_relation
  *
  * Returns lists of permissive and restrictive policies to be applied to the

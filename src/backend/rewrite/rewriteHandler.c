@@ -2231,110 +2231,130 @@ fireRIRrules(Query *parsetree, List *activeRIRs)
 	foreach(lc, parsetree->rtable)
 	{
 		RangeTblEntry *rte = (RangeTblEntry *) lfirst(lc);
-		Relation	rel;
-		List	   *securityQuals;
-		List	   *withCheckOptions;
-		bool		hasRowSecurity;
-		bool		hasSubLinks;
 
 		++rt_index;
-
-		/* Only normal relations can have RLS policies */
-		if (rte->rtekind != RTE_RELATION ||
-			(rte->relkind != RELKIND_RELATION &&
-			 rte->relkind != RELKIND_PARTITIONED_TABLE))
-			continue;
-
-		rel = table_open(rte->relid, NoLock);
-
-		/*
-		 * Fetch any new security quals that must be applied to this RTE.
-		 */
-		get_row_security_policies(parsetree, rte, rt_index,
-								  &securityQuals, &withCheckOptions,
-								  &hasRowSecurity, &hasSubLinks);
-
-		if (securityQuals != NIL || withCheckOptions != NIL)
-		{
-			if (hasSubLinks)
-			{
-				acquireLocksOnSubLinks_context context;
-				fireRIRonSubLink_context fire_context;
-
-				/*
-				 * Recursively process the new quals, checking for infinite
-				 * recursion.
-				 */
-				if (list_member_oid(activeRIRs, RelationGetRelid(rel)))
-					ereport(ERROR,
-							(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-							 errmsg("infinite recursion detected in policy for relation \"%s\"",
-									RelationGetRelationName(rel))));
-
-				activeRIRs = lappend_oid(activeRIRs, RelationGetRelid(rel));
-
-				/*
-				 * get_row_security_policies just passed back securityQuals
-				 * and/or withCheckOptions, and there were SubLinks, make sure
-				 * we lock any relations which are referenced.
-				 *
-				 * These locks would normally be acquired by the parser, but
-				 * securityQuals and withCheckOptions are added post-parsing.
-				 */
-				context.for_execute = true;
-				(void) acquireLocksOnSubLinks((Node *) securityQuals, &context);
-				(void) acquireLocksOnSubLinks((Node *) withCheckOptions,
-											  &context);
-
-				/*
-				 * Now that we have the locks on anything added by
-				 * get_row_security_policies, fire any RIR rules for them.
-				 */
-				fire_context.activeRIRs = activeRIRs;
-				fire_context.hasRowSecurity = false;
-
-				expression_tree_walker((Node *) securityQuals,
-									   fireRIRonSubLink, &fire_context);
-
-				expression_tree_walker((Node *) withCheckOptions,
-									   fireRIRonSubLink, &fire_context);
-
-				/*
-				 * We can ignore the value of fire_context.hasRowSecurity
-				 * since we only reach this code in cases where hasRowSecurity
-				 * is already true.
-				 */
-				Assert(hasRowSecurity);
-
-				activeRIRs = list_delete_last(activeRIRs);
-			}
-
-			/*
-			 * Add the new security barrier quals to the start of the RTE's
-			 * list so that they get applied before any existing barrier quals
-			 * (which would have come from a security-barrier view, and should
-			 * get lower priority than RLS conditions on the table itself).
-			 */
-			rte->securityQuals = list_concat(securityQuals,
-											 rte->securityQuals);
-
-			parsetree->withCheckOptions = list_concat(withCheckOptions,
-													  parsetree->withCheckOptions);
-		}
-
-		/*
-		 * Make sure the query is marked correctly if row-level security
-		 * applies, or if the new quals had sublinks.
-		 */
-		if (hasRowSecurity)
-			parsetree->hasRowSecurity = true;
-		if (hasSubLinks)
-			parsetree->hasSubLinks = true;
-
-		table_close(rel, NoLock);
+		apply_row_security_policies(parsetree, rte, rt_index, activeRIRs);
 	}
 
 	return parsetree;
+}
+
+
+/*
+ * apply_row_security_policies -
+ *	Attach one RTE's row-security policies: the USING clauses become its
+ *	securityQuals, the WITH CHECK clauses the query's withCheckOptions, and a
+ *	policy that carries a sublink has its locks taken and its RIR rules fired.
+ *
+ * fireRIRrules calls this for every range-table relation.  The planner calls
+ * it too, for a graph label it reaches by expanding ag_vertex, ag_edge or a
+ * parent label, whose RTE does not exist while the rewriter runs (see
+ * expand_single_inheritance_child).  activeRIRs is the recursion guard; the
+ * planner passes NIL, and it is left as it was found.
+ */
+void
+apply_row_security_policies(Query *parsetree, RangeTblEntry *rte,
+							int rt_index, List *activeRIRs)
+{
+	Relation	rel;
+	List	   *securityQuals;
+	List	   *withCheckOptions;
+	bool		hasRowSecurity;
+	bool		hasSubLinks;
+
+	/* Only normal relations can have RLS policies */
+	if (rte->rtekind != RTE_RELATION ||
+		(rte->relkind != RELKIND_RELATION &&
+		 rte->relkind != RELKIND_PARTITIONED_TABLE))
+		return;
+
+	rel = table_open(rte->relid, NoLock);
+
+	/*
+	 * Fetch any new security quals that must be applied to this RTE.
+	 */
+	get_row_security_policies(parsetree, rte, rt_index,
+							  &securityQuals, &withCheckOptions,
+							  &hasRowSecurity, &hasSubLinks);
+
+	if (securityQuals != NIL || withCheckOptions != NIL)
+	{
+		if (hasSubLinks)
+		{
+			acquireLocksOnSubLinks_context context;
+			fireRIRonSubLink_context fire_context;
+
+			/*
+			 * Recursively process the new quals, checking for infinite
+			 * recursion.
+			 */
+			if (list_member_oid(activeRIRs, RelationGetRelid(rel)))
+				ereport(ERROR,
+						(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
+						 errmsg("infinite recursion detected in policy for relation \"%s\"",
+								RelationGetRelationName(rel))));
+
+			activeRIRs = lappend_oid(activeRIRs, RelationGetRelid(rel));
+
+			/*
+			 * get_row_security_policies just passed back securityQuals and/or
+			 * withCheckOptions, and there were SubLinks, make sure we lock any
+			 * relations which are referenced.
+			 *
+			 * These locks would normally be acquired by the parser, but
+			 * securityQuals and withCheckOptions are added post-parsing.
+			 */
+			context.for_execute = true;
+			(void) acquireLocksOnSubLinks((Node *) securityQuals, &context);
+			(void) acquireLocksOnSubLinks((Node *) withCheckOptions,
+										  &context);
+
+			/*
+			 * Now that we have the locks on anything added by
+			 * get_row_security_policies, fire any RIR rules for them.
+			 */
+			fire_context.activeRIRs = activeRIRs;
+			fire_context.hasRowSecurity = false;
+
+			expression_tree_walker((Node *) securityQuals,
+								   fireRIRonSubLink, &fire_context);
+
+			expression_tree_walker((Node *) withCheckOptions,
+								   fireRIRonSubLink, &fire_context);
+
+			/*
+			 * We can ignore the value of fire_context.hasRowSecurity since we
+			 * only reach this code in cases where hasRowSecurity is already
+			 * true.
+			 */
+			Assert(hasRowSecurity);
+
+			activeRIRs = list_delete_last(activeRIRs);
+		}
+
+		/*
+		 * Add the new security barrier quals to the start of the RTE's list
+		 * so that they get applied before any existing barrier quals (which
+		 * would have come from a security-barrier view, and should get lower
+		 * priority than RLS conditions on the table itself).
+		 */
+		rte->securityQuals = list_concat(securityQuals,
+										 rte->securityQuals);
+
+		parsetree->withCheckOptions = list_concat(withCheckOptions,
+												  parsetree->withCheckOptions);
+	}
+
+	/*
+	 * Make sure the query is marked correctly if row-level security applies,
+	 * or if the new quals had sublinks.
+	 */
+	if (hasRowSecurity)
+		parsetree->hasRowSecurity = true;
+	if (hasSubLinks)
+		parsetree->hasSubLinks = true;
+
+	table_close(rel, NoLock);
 }
 
 

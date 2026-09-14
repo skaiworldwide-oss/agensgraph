@@ -1809,9 +1809,14 @@ DROP TABLE rating;
     </listitem>
     <listitem>
      <para>
-      <emphasis>Row level security is enforced on graph writes.</emphasis> Re-test every policy
-      on a label. Writes that used to slip past an <literal>INSERT</literal> policy, a
-      <literal>USING</literal> clause, or an inherited label policy are now refused.
+      <emphasis>Row level security is enforced on graph writes, and on reads that do not name
+      a label.</emphasis> Re-test every policy on a label. Writes that used to slip past an
+      <literal>INSERT</literal> policy, a <literal>USING</literal> clause, or an inherited label
+      policy are now refused. <literal>MATCH (n)</literal>, an unlabelled edge, a match on a
+      parent label, or SQL on the graph's <structname>ag_vertex</structname> used to return the
+      rows a label's policy hid, and needed no grant on the label; a label's policies now apply
+      to its rows however a pattern reaches them, and such a read needs
+      <literal>SELECT</literal> on every label it scans.
      </para>
     </listitem>
     <listitem>

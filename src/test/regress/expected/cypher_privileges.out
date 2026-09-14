@@ -10,9 +10,12 @@ CREATE GRAPH graph_priv_test;
 SET graph_path = graph_priv_test;
 -- Create user
 CREATE USER readonly_user LOGIN PASSWORD 'ru';
+ERROR:  role "readonly_user" already exists
 CREATE USER new_user LOGIN PASSWORD 'nu';
+ERROR:  role "new_user" already exists
 -- Create role
 CREATE ROLE readonly LOGIN;
+ERROR:  role "readonly" already exists
 GRANT SELECT ON ALL SEQUENCES IN SCHEMA graph_priv_test TO readonly;
 GRANT SELECT ON ALL TABLES IN SCHEMA graph_priv_test TO readonly;
 GRANT USAGE ON SCHEMA graph_priv_test TO readonly;
@@ -66,8 +69,11 @@ RESET SESSION AUTHORIZATION;
 -- Test ROW LEVEL SECURITY
 --
 CREATE ROLE group1;
+ERROR:  role "group1" already exists
 CREATE ROLE role2 IN ROLE group1;
+ERROR:  role "role2" already exists
 CREATE ROLE role3 IN ROLE group1;
+ERROR:  role "role3" already exists
 MATCH (a:v1) RETURN a;
             a             
 --------------------------
@@ -174,9 +180,11 @@ MATCH (a:v1 {name: 'A'}) SET a.age=40 RETURN a;
 (1 row)
 
 MATCH (a:v1 {name: 'A'}) DELETE a;
+ERROR:  permission denied for table e1
 -- Should fail as role3 can only update where name is 'A'
 MATCH (a:v1 {name: 'B'}) SET a.age=40;
 MATCH (a:v1 {name: 'B'}) DELETE a;
+ERROR:  permission denied for table e1
 RESET ROLE;
 --
 -- RLS: the USING clauses of UPDATE and DELETE policies decide which rows a
@@ -344,7 +352,222 @@ MATCH (n:rls_parent) RETURN n.name, n.age ORDER BY n.name;
  "emp1"  | 103
 (2 rows)
 
+--
+-- A label reached through the graph's ag_vertex or ag_edge, or through a
+-- parent label, keeps its own grant and its own policies: an unlabelled
+-- pattern reads every label, and every label answers for its rows
+--
+CREATE GRAPH graph_priv_read;
+SET graph_path = graph_priv_read;
+CREATE VLABEL rd_open;
+CREATE VLABEL rd_movie;
+CREATE VLABEL rd_secret;
+CREATE VLABEL rd_par;
+CREATE VLABEL rd_child INHERITS (rd_par);
+CREATE ELABEL rd_e;
+CREATE (:rd_open {name: 'open'});
+CREATE (:rd_movie {name: 'scifi', genre: 'Sci-Fi'});
+CREATE (:rd_movie {name: 'drama', genre: 'Drama'});
+CREATE (:rd_secret {name: 'secret'});
+CREATE (:rd_par {name: 'par'});
+CREATE (:rd_child {name: 'child'});
+CREATE (:rd_child {name: 'hidden child'});
+MATCH (a:rd_open), (b:rd_movie {name: 'drama'}) CREATE (a)-[:rd_e {w: 1}]->(b);
+MATCH (a:rd_open), (b:rd_movie {name: 'scifi'}) CREATE (a)-[:rd_e {w: 2}]->(b);
+-- role4 may read the two parents and no label
+CREATE ROLE role4;
+ERROR:  role "role4" already exists
+GRANT USAGE ON SCHEMA graph_priv_read TO group1, role4;
+GRANT SELECT ON ALL TABLES IN SCHEMA graph_priv_read TO group1;
+GRANT INSERT ON graph_priv_read."ag_vertex" TO group1;
+GRANT USAGE ON graph_priv_read."ag_vertex_id_seq" TO group1;
+GRANT SELECT ON graph_priv_read."ag_vertex", graph_priv_read."ag_edge" TO role4;
+-- rd_movie shows Sci-Fi only, rd_secret has row security and no policy,
+-- rd_e shows the heavier edge only, and rd_child hides one of its rows
+ALTER TABLE graph_priv_read."rd_movie" ENABLE ROW LEVEL SECURITY;
+CREATE POLICY rd_movie_sel ON graph_priv_read.rd_movie FOR SELECT
+	USING (properties->>'genre' = 'Sci-Fi');
+ALTER TABLE graph_priv_read."rd_secret" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE graph_priv_read."rd_e" ENABLE ROW LEVEL SECURITY;
+CREATE POLICY rd_e_sel ON graph_priv_read.rd_e FOR SELECT
+	USING ((properties->>'w')::int > 1);
+ALTER TABLE graph_priv_read."rd_child" ENABLE ROW LEVEL SECURITY;
+CREATE POLICY rd_child_sel ON graph_priv_read.rd_child FOR SELECT
+	USING (properties->>'name' <> 'hidden child');
+SET role role2;
+-- the label named, then the same rows through every path that does not
+-- name it
+MATCH (m:rd_movie) RETURN m.name ORDER BY m.name;
+  name   
+---------
+ "scifi"
+(1 row)
+
+MATCH (n) RETURN label(n), n.name ORDER BY label(n), n.name;
+   label    |  name   
+------------+---------
+ "rd_child" | "child"
+ "rd_movie" | "scifi"
+ "rd_open"  | "open"
+ "rd_par"   | "par"
+(4 rows)
+
+MATCH (n:ag_vertex) RETURN count(*);
+ count 
+-------
+ 4
+(1 row)
+
+SELECT count(*) FROM graph_priv_read.ag_vertex;
+ count 
+-------
+     4
+(1 row)
+
+OPTIONAL MATCH (n) RETURN count(n);
+ count 
+-------
+ 4
+(1 row)
+
+RETURN COUNT { MATCH (n) } AS visible,
+	   EXISTS { MATCH (n) WHERE n.name = 'drama' } AS drama,
+	   COLLECT { MATCH (n) RETURN n.name ORDER BY n.name } AS names;
+ visible | drama |               names               
+---------+-------+-----------------------------------
+ 4       | f     | ["child", "open", "par", "scifi"]
+(1 row)
+
+-- an unlabelled edge: the edge label's own policy, and no hidden endpoint
+MATCH (a)-[r]->(b) RETURN a.name, r.w, b.name ORDER BY r.w;
+  name  | w |  name   
+--------+---+---------
+ "open" | 2 | "scifi"
+(1 row)
+
+SELECT count(*) FROM graph_priv_read.ag_edge;
+ count 
+-------
+     1
+(1 row)
+
+MATCH (a:rd_open)-[*1..2]->(b) RETURN b.name ORDER BY b.name;
+  name   
+---------
+ "scifi"
+(1 row)
+
+-- a sub-label's rows read through the parent label
+MATCH (n:rd_par) RETURN n.name ORDER BY n.name;
+  name   
+---------
+ "child"
+ "par"
+(2 rows)
+
+-- MERGE cannot match the hidden row either, so it creates
+MERGE (n {name: 'drama'}) RETURN label(n);
+    label    
+-------------
+ "ag_vertex"
+(1 row)
+
+-- each label carries its own filter, and the one with nothing to admit is
+-- not scanned at all
+EXPLAIN (COSTS OFF) MATCH (n) RETURN n;
+                                  QUERY PLAN                                   
+-------------------------------------------------------------------------------
+ Result
+   ->  Append
+         ->  Seq Scan on ag_vertex n_1
+         ->  Seq Scan on rd_open n_2
+         ->  Seq Scan on rd_movie n_3
+               Filter: ((properties ->> 'genre'::text) = 'Sci-Fi'::text)
+         ->  Seq Scan on rd_par n_4
+         ->  Seq Scan on rd_child n_5
+               Filter: ((properties ->> 'name'::text) <> 'hidden child'::text)
+(9 rows)
+
+-- row_security = off refuses the unlabelled read as it does the label
+SET row_security = off;
+MATCH (m:rd_movie) RETURN count(*);
+ERROR:  query would be affected by row-level security policy for table "rd_movie"
+MATCH (n) RETURN count(*);
+ERROR:  query would be affected by row-level security policy for table "rd_movie"
+RESET row_security;
+RESET role;
+-- both drama rows exist: the one the policy hides and the one MERGE made
+MATCH (n {name: 'drama'}) RETURN label(n) ORDER BY label(n);
+    label    
+-------------
+ "ag_vertex"
+ "rd_movie"
+(2 rows)
+
+-- a cached plan follows the role and the row_security setting
+SET plan_cache_mode = force_generic_plan;
+PREPARE rd_count AS SELECT count(*) FROM graph_priv_read.ag_vertex;
+EXECUTE rd_count;
+ count 
+-------
+     8
+(1 row)
+
+SET role role2;
+EXECUTE rd_count;
+ count 
+-------
+     5
+(1 row)
+
+SET row_security = off;
+EXECUTE rd_count;
+ERROR:  query would be affected by row-level security policy for table "rd_movie"
+RESET row_security;
+RESET role;
+EXECUTE rd_count;
+ count 
+-------
+     8
+(1 row)
+
+DEALLOCATE rd_count;
+RESET plan_cache_mode;
+-- SQL on the parent with enable_graph_dml: the write needs the privilege on
+-- every label, and reaches only the rows the labels' policies let it
+SET enable_graph_dml = on;
+GRANT UPDATE ON graph_priv_read."ag_vertex" TO group1;
+SET role role2;
+UPDATE graph_priv_read.ag_vertex SET properties = properties || '{"seen": true}'
+	RETURNING properties->>'name';
+ERROR:  permission denied for table rd_open
+RESET role;
+GRANT UPDATE ON ALL TABLES IN SCHEMA graph_priv_read TO group1;
+SET role role2;
+UPDATE graph_priv_read.ag_vertex SET properties = properties || '{"seen": true}'
+	RETURNING properties->>'name';
+ ?column? 
+----------
+ drama
+ open
+ par
+(3 rows)
+
+RESET role;
+RESET enable_graph_dml;
+-- a grant on the parents alone reads no label
+SET role role4;
+MATCH (n:rd_open) RETURN count(*);
+ERROR:  permission denied for table rd_open
+MATCH (n) RETURN count(*);
+ERROR:  permission denied for table rd_open
+SELECT count(*) FROM graph_priv_read.ag_vertex;
+ERROR:  permission denied for table rd_open
+MATCH ()-[r]->() RETURN count(*);
+ERROR:  permission denied for table rd_open
+RESET role;
 -- Clean up
+DROP GRAPH IF EXISTS graph_priv_read CASCADE;
 DROP GRAPH IF EXISTS graph_priv_test CASCADE;
 -- Dropping the graph removes the schema-scoped default privileges, but the
 -- "FOR USER new_user" grant near the top is global (not schema-scoped), so it

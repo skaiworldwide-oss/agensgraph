@@ -879,11 +879,16 @@ subquery_planner(PlannerGlobal *glob, Query *parse, PlannerInfo *parent_root,
 		 * We can also determine the maximum security level required for any
 		 * securityQuals now.  Addition of inheritance-child RTEs won't affect
 		 * this, because child tables don't have their own securityQuals; see
-		 * expand_single_inheritance_child().
+		 * expand_single_inheritance_child().  A graph label is the exception:
+		 * it brings its own policies when the inheritance set is expanded, so
+		 * the levels those take are reserved here.
 		 */
 		if (rte->securityQuals)
 			root->qual_security_level = Max(root->qual_security_level,
 											list_length(rte->securityQuals));
+		if (rte->rtekind == RTE_RELATION && rte->inh)
+			root->qual_security_level = Max(root->qual_security_level,
+											label_child_security_levels(root, rte));
 	}
 
 	/*
@@ -1038,7 +1043,6 @@ subquery_planner(PlannerGlobal *glob, Query *parse, PlannerInfo *parent_root,
 	{
 		RangeTblEntry *rte = lfirst_node(RangeTblEntry, l);
 		int			kind;
-		ListCell   *lcsq;
 
 		if (rte->rtekind == RTE_RELATION)
 		{
@@ -1091,18 +1095,7 @@ subquery_planner(PlannerGlobal *glob, Query *parse, PlannerInfo *parent_root,
 									  EXPRKIND_GROUPEXPR);
 		}
 
-		/*
-		 * Process each element of the securityQuals list as if it were a
-		 * separate qual expression (as indeed it is).  We need to do it this
-		 * way to get proper canonicalization of AND/OR structure.  Note that
-		 * this converts each element into an implicit-AND sublist.
-		 */
-		foreach(lcsq, rte->securityQuals)
-		{
-			lfirst(lcsq) = preprocess_expression(root,
-												 (Node *) lfirst(lcsq),
-												 EXPRKIND_QUAL);
-		}
+		preprocess_security_quals(root, rte->securityQuals);
 	}
 
 	/* expressions for graph */
@@ -1787,6 +1780,32 @@ Expr *
 preprocess_phv_expression(PlannerInfo *root, Expr *expr)
 {
 	return (Expr *) preprocess_expression(root, (Node *) expr, EXPRKIND_PHV);
+}
+
+/*
+ * preprocess_security_quals
+ *	  Do preprocessing on an RTE's securityQuals list, in place.
+ *
+ * Each element is processed as if it were a separate qual expression (as
+ * indeed it is).  We need to do it this way to get proper canonicalization
+ * of AND/OR structure.  Note that this converts each element into an
+ * implicit-AND sublist.
+ *
+ * Besides subquery_planner's own range-table pass, add_label_child_security
+ * calls this for a graph label's policies, whose RTE is created too late for
+ * that pass.
+ */
+void
+preprocess_security_quals(PlannerInfo *root, List *securityQuals)
+{
+	ListCell   *lc;
+
+	foreach(lc, securityQuals)
+	{
+		lfirst(lc) = preprocess_expression(root,
+										   (Node *) lfirst(lc),
+										   EXPRKIND_QUAL);
+	}
 }
 
 /*--------------------

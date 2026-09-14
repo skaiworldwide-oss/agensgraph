@@ -45,5 +45,7 @@ extern void get_row_security_policies(Query *root,
 									  RangeTblEntry *rte, int rt_index,
 									  List **securityQuals, List **withCheckOptions,
 									  bool *hasRowSecurity, bool *hasSubLinks);
+extern int	count_scan_security_quals(Relation rel, Oid user_id,
+									  AclMode requiredPerms);
 
 #endif							/* ROWSECURITY_H */
