@@ -26,6 +26,9 @@ extern void propagate_graphmeta_constraints(PlannerInfo *root);
 /* agensgraph: prune vertex/edge scans by a constant id() filter */
 extern void prune_scans_by_id_const(PlannerInfo *root);
 
+/* agensgraph: security levels the labels under an inherited RTE will need */
+extern int	label_child_security_levels(PlannerInfo *root, RangeTblEntry *rte);
+
 extern Bitmapset *get_rel_all_updated_cols(PlannerInfo *root, RelOptInfo *rel);
 
 extern bool apply_child_basequals(PlannerInfo *root, RelOptInfo *parentrel,

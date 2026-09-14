@@ -304,7 +304,128 @@ RESET role;
 
 MATCH (n:rls_parent) RETURN n.name, n.age ORDER BY n.name;
 
+--
+-- A label reached through the graph's ag_vertex or ag_edge, or through a
+-- parent label, keeps its own grant and its own policies: an unlabelled
+-- pattern reads every label, and every label answers for its rows
+--
+CREATE GRAPH graph_priv_read;
+SET graph_path = graph_priv_read;
+CREATE VLABEL rd_open;
+CREATE VLABEL rd_movie;
+CREATE VLABEL rd_secret;
+CREATE VLABEL rd_par;
+CREATE VLABEL rd_child INHERITS (rd_par);
+CREATE ELABEL rd_e;
+CREATE (:rd_open {name: 'open'});
+CREATE (:rd_movie {name: 'scifi', genre: 'Sci-Fi'});
+CREATE (:rd_movie {name: 'drama', genre: 'Drama'});
+CREATE (:rd_secret {name: 'secret'});
+CREATE (:rd_par {name: 'par'});
+CREATE (:rd_child {name: 'child'});
+CREATE (:rd_child {name: 'hidden child'});
+MATCH (a:rd_open), (b:rd_movie {name: 'drama'}) CREATE (a)-[:rd_e {w: 1}]->(b);
+MATCH (a:rd_open), (b:rd_movie {name: 'scifi'}) CREATE (a)-[:rd_e {w: 2}]->(b);
+
+-- role4 may read the two parents and no label
+CREATE ROLE role4;
+GRANT USAGE ON SCHEMA graph_priv_read TO group1, role4;
+GRANT SELECT ON ALL TABLES IN SCHEMA graph_priv_read TO group1;
+GRANT INSERT ON graph_priv_read."ag_vertex" TO group1;
+GRANT USAGE ON graph_priv_read."ag_vertex_id_seq" TO group1;
+GRANT SELECT ON graph_priv_read."ag_vertex", graph_priv_read."ag_edge" TO role4;
+
+-- rd_movie shows Sci-Fi only, rd_secret has row security and no policy,
+-- rd_e shows the heavier edge only, and rd_child hides one of its rows
+ALTER TABLE graph_priv_read."rd_movie" ENABLE ROW LEVEL SECURITY;
+CREATE POLICY rd_movie_sel ON graph_priv_read.rd_movie FOR SELECT
+	USING (properties->>'genre' = 'Sci-Fi');
+ALTER TABLE graph_priv_read."rd_secret" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE graph_priv_read."rd_e" ENABLE ROW LEVEL SECURITY;
+CREATE POLICY rd_e_sel ON graph_priv_read.rd_e FOR SELECT
+	USING ((properties->>'w')::int > 1);
+ALTER TABLE graph_priv_read."rd_child" ENABLE ROW LEVEL SECURITY;
+CREATE POLICY rd_child_sel ON graph_priv_read.rd_child FOR SELECT
+	USING (properties->>'name' <> 'hidden child');
+
+SET role role2;
+
+-- the label named, then the same rows through every path that does not
+-- name it
+MATCH (m:rd_movie) RETURN m.name ORDER BY m.name;
+MATCH (n) RETURN label(n), n.name ORDER BY label(n), n.name;
+MATCH (n:ag_vertex) RETURN count(*);
+SELECT count(*) FROM graph_priv_read.ag_vertex;
+OPTIONAL MATCH (n) RETURN count(n);
+RETURN COUNT { MATCH (n) } AS visible,
+	   EXISTS { MATCH (n) WHERE n.name = 'drama' } AS drama,
+	   COLLECT { MATCH (n) RETURN n.name ORDER BY n.name } AS names;
+
+-- an unlabelled edge: the edge label's own policy, and no hidden endpoint
+MATCH (a)-[r]->(b) RETURN a.name, r.w, b.name ORDER BY r.w;
+SELECT count(*) FROM graph_priv_read.ag_edge;
+MATCH (a:rd_open)-[*1..2]->(b) RETURN b.name ORDER BY b.name;
+
+-- a sub-label's rows read through the parent label
+MATCH (n:rd_par) RETURN n.name ORDER BY n.name;
+
+-- MERGE cannot match the hidden row either, so it creates
+MERGE (n {name: 'drama'}) RETURN label(n);
+
+-- each label carries its own filter, and the one with nothing to admit is
+-- not scanned at all
+EXPLAIN (COSTS OFF) MATCH (n) RETURN n;
+
+-- row_security = off refuses the unlabelled read as it does the label
+SET row_security = off;
+MATCH (m:rd_movie) RETURN count(*);
+MATCH (n) RETURN count(*);
+RESET row_security;
+
+RESET role;
+
+-- both drama rows exist: the one the policy hides and the one MERGE made
+MATCH (n {name: 'drama'}) RETURN label(n) ORDER BY label(n);
+
+-- a cached plan follows the role and the row_security setting
+SET plan_cache_mode = force_generic_plan;
+PREPARE rd_count AS SELECT count(*) FROM graph_priv_read.ag_vertex;
+EXECUTE rd_count;
+SET role role2;
+EXECUTE rd_count;
+SET row_security = off;
+EXECUTE rd_count;
+RESET row_security;
+RESET role;
+EXECUTE rd_count;
+DEALLOCATE rd_count;
+RESET plan_cache_mode;
+
+-- SQL on the parent with enable_graph_dml: the write needs the privilege on
+-- every label, and reaches only the rows the labels' policies let it
+SET enable_graph_dml = on;
+GRANT UPDATE ON graph_priv_read."ag_vertex" TO group1;
+SET role role2;
+UPDATE graph_priv_read.ag_vertex SET properties = properties || '{"seen": true}'
+	RETURNING properties->>'name';
+RESET role;
+GRANT UPDATE ON ALL TABLES IN SCHEMA graph_priv_read TO group1;
+SET role role2;
+UPDATE graph_priv_read.ag_vertex SET properties = properties || '{"seen": true}'
+	RETURNING properties->>'name';
+RESET role;
+RESET enable_graph_dml;
+
+-- a grant on the parents alone reads no label
+SET role role4;
+MATCH (n:rd_open) RETURN count(*);
+MATCH (n) RETURN count(*);
+SELECT count(*) FROM graph_priv_read.ag_vertex;
+MATCH ()-[r]->() RETURN count(*);
+RESET role;
+
 -- Clean up
+DROP GRAPH IF EXISTS graph_priv_read CASCADE;
 DROP GRAPH IF EXISTS graph_priv_test CASCADE;
 
 -- Dropping the graph removes the schema-scoped default privileges, but the

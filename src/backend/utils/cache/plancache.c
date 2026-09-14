@@ -948,10 +948,14 @@ CheckCachedPlan(CachedPlanSource *plansource)
 	Assert(!plan->is_oneshot);
 
 	/*
-	 * If plan isn't valid for current role, we can't use it.
+	 * If plan isn't valid for current role, or for the current row_security
+	 * setting, we can't use it.  The setting matters because a graph label's
+	 * policies are applied during planning rather than the rewrite (see
+	 * add_label_child_security), so a rewrite-time recheck never sees them.
 	 */
 	if (plan->is_valid && plan->dependsOnRole &&
-		plan->planRoleId != GetUserId())
+		(plan->planRoleId != GetUserId() ||
+		 plan->planRowSecurity != row_security))
 		plan->is_valid = false;
 
 	/*
@@ -1114,6 +1118,7 @@ BuildCachedPlan(CachedPlanSource *plansource, List *qlist,
 	 * transient if any plan is marked so.
 	 */
 	plan->planRoleId = GetUserId();
+	plan->planRowSecurity = row_security;
 	plan->dependsOnRole = plansource->dependsOnRLS;
 	is_transient = false;
 	foreach(lc, plist)

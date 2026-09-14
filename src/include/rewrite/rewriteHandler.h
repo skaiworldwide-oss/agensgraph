@@ -21,6 +21,8 @@ extern List *QueryRewrite(Query *parsetree);
 extern void AcquireRewriteLocks(Query *parsetree,
 								bool forExecute,
 								bool forUpdatePushedDown);
+extern void apply_row_security_policies(Query *parsetree, RangeTblEntry *rte,
+										int rt_index, List *activeRIRs);
 
 extern Node *build_column_default(Relation rel, int attrno);
 
