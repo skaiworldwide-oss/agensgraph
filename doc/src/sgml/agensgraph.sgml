@@ -1646,6 +1646,11 @@ DROP TABLE rating;
        <entry>Returns the boolean a value names, or null when it names none.</entry>
       </row>
       <row>
+       <entry><function>toBooleanList</function></entry>
+       <entry><simplelist type="vert" columns="1"><member><literal>toBooleanList ( list jsonb ) -&gt; jsonb</literal></member><member><literal>toBooleanList ( list anyarray ) -&gt; boolean[]</literal></member></simplelist></entry>
+       <entry>Converts every element of a list to a truth value, giving null for an element that names none. A number written with a fractional part names none. New in 2.18.</entry>
+      </row>
+      <row>
        <entry><function>toBooleanOrNull</function></entry>
        <entry><simplelist type="vert" columns="1"><member><literal>toBooleanOrNull ( value text ) -&gt; boolean</literal></member><member><literal>toBooleanOrNull ( value "any" ) -&gt; boolean</literal></member></simplelist></entry>
        <entry>Returns the boolean a value names, or null.</entry>
