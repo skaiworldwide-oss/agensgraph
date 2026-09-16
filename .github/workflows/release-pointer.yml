@@ -1,8 +1,9 @@
 name: Release pointer
 
 # prod is the newest release of the newest line: the highest release tag in
-# version order. A release tag is v2.<PG major>.<PG minor>.<minor>; lines
-# before 2.18 used three components. Only this workflow moves prod. Nothing is
+# version order. A release tag is v2.<PG major>.<PG minor>.<minor> and sits on
+# the line branch v2.<PG major>.<PG minor>; lines before 2.18 used three
+# components and no such branch. Only this workflow moves prod. Nothing is
 # committed to it and nothing is built from it.
 
 on:
@@ -47,14 +48,19 @@ jobs:
             target=$(printf '%s\n' "$tags" | awk -v t="refs/tags/${target_tag}" '$2 == t { print $1 }')
           fi
 
-          # the tag must sit on its line branch: v2.18.6.0 on v2.18
-          line=$(printf '%s' "$target_tag" | cut -d. -f1,2)
-          status=$(gh api "repos/${REPO}/compare/${line}...${target}" --jq .status 2>/dev/null || echo "no branch ${line}")
-          case "$status" in
-            identical|behind) ;;
-            *)
-              echo "::error::${target_tag} (${target}) is not on branch ${line}: ${status}. prod not moved."
-              exit 1
+          # the tag must sit on its line branch: v2.18.4.0 on v2.18.4. A three
+          # component tag predates that scheme and is checked no further.
+          case "$target_tag" in
+            v*.*.*.*)
+              line=$(printf '%s' "$target_tag" | cut -d. -f1-3)
+              status=$(gh api "repos/${REPO}/compare/${line}...${target}" --jq .status 2>/dev/null || echo "no branch ${line}")
+              case "$status" in
+                identical|behind) ;;
+                *)
+                  echo "::error::${target_tag} (${target}) is not on branch ${line}: ${status}. prod not moved."
+                  exit 1
+                  ;;
+              esac
               ;;
           esac
 
