@@ -193,6 +193,49 @@ RETURN label_name ORDER BY label_name;
 MATCH (a:person {name: 'Alice'}) CALL meta.labels() YIELD label_name
 FILTER label_name = 'person' RETURN label_name;
 
+--
+-- meta.graph_stats()
+--
+-- The vertices and the edges are counted under one snapshot, so the pair
+-- always describes one state of the graph.
+--
+CREATE GRAPH gs_graph;
+SET graph_path = gs_graph;
+
+CREATE (:node {n: 'a'}), (:node {n: 'b'}), (:node {n: 'c'});
+MATCH (a:node {n: 'a'}), (b:node {n: 'b'}) CREATE (a)-[:link]->(b);
+MATCH (b:node {n: 'b'}), (c:node {n: 'c'}) CREATE (b)-[:link]->(c);
+
+-- graph_path names the graph when the caller does not
+SELECT * FROM meta.graph_stats();
+SELECT * FROM meta.graph_stats('gs_graph');
+
+-- a label that inherits another is counted as well, since every label
+-- inherits ag_vertex or ag_edge
+CREATE VLABEL employee INHERITS (node);
+CREATE ELABEL reports INHERITS (link);
+CREATE (:employee {n: 'e'});
+MATCH (a:node {n: 'a'}), (e:employee {n: 'e'}) CREATE (a)-[:reports]->(e);
+SELECT * FROM meta.graph_stats();
+
+-- the same two numbers meta.count() gives for the base labels
+SELECT meta.count('ag_vertex') AS vertices, meta.count('ag_edge') AS edges;
+
+-- an empty graph answers with zeros rather than with no row
+CREATE GRAPH gs_empty;
+SELECT * FROM meta.graph_stats('gs_empty');
+
+-- as a Cypher routine
+MATCH (a:node {n: 'a'}) CALL meta.graph_stats() YIELD graph, vertices, edges
+RETURN graph, vertices, edges;
+
+-- a graph the server does not hold
+SELECT * FROM meta.graph_stats('unknown');
+
+DROP GRAPH gs_graph CASCADE;
+DROP GRAPH gs_empty CASCADE;
+SET graph_path = graph1;
+
 -- clean up
 DROP GRAPH graph1 CASCADE;
 

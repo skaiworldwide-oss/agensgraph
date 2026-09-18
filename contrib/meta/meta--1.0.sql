@@ -788,3 +788,39 @@ $$;
 
 COMMENT ON FUNCTION meta.estimated_edge_density(NAME)
 IS 'Estimates edge density using Postgresql statistics (pg_class.reltuples). Uses graph_path if graph name is not provided.';
+
+CREATE FUNCTION meta.graph_stats(graph_name name DEFAULT NULL)
+RETURNS TABLE(graph name, vertices BIGINT, edges BIGINT)
+LANGUAGE plpgsql
+STABLE
+AS $$
+DECLARE
+    schema_name name;
+BEGIN
+    IF graph_name IS NULL THEN
+        BEGIN
+            schema_name := current_setting('graph_path');
+            IF schema_name IS NULL OR schema_name = '' THEN
+                RAISE NOTICE 'graph_path is not set. Provide graph name or set graph_path';
+                RETURN;
+            END IF;
+            graph_name := schema_name;
+        EXCEPTION WHEN OTHERS THEN
+            RAISE NOTICE 'graph_path is not set. Provide graph name or set graph_path';
+            RETURN;
+        END;
+    END IF;
+
+    -- Both counts come from one statement so that they are read under one
+    -- snapshot.  Counting the vertices and the edges in turn would let a write
+    -- land between the two and answer with a graph that never existed.
+    RETURN QUERY EXECUTE format(
+        'SELECT %L::name,'
+        '       (SELECT count(*) FROM %I.ag_vertex),'
+        '       (SELECT count(*) FROM %I.ag_edge)',
+        graph_name, graph_name, graph_name);
+END;
+$$;
+
+COMMENT ON FUNCTION meta.graph_stats(name)
+IS 'Returns the name of a graph and the number of vertices and edges it holds, both read under one snapshot. Every label is counted, since each inherits ag_vertex or ag_edge. Uses graph_path if graph name is not provided.';

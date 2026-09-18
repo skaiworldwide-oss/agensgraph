@@ -621,6 +621,87 @@ FILTER label_name = 'person' RETURN label_name;
  "person"
 (1 row)
 
+--
+-- meta.graph_stats()
+--
+-- The vertices and the edges are counted under one snapshot, so the pair
+-- always describes one state of the graph.
+--
+CREATE GRAPH gs_graph;
+SET graph_path = gs_graph;
+CREATE (:node {n: 'a'}), (:node {n: 'b'}), (:node {n: 'c'});
+MATCH (a:node {n: 'a'}), (b:node {n: 'b'}) CREATE (a)-[:link]->(b);
+MATCH (b:node {n: 'b'}), (c:node {n: 'c'}) CREATE (b)-[:link]->(c);
+-- graph_path names the graph when the caller does not
+SELECT * FROM meta.graph_stats();
+  graph   | vertices | edges 
+----------+----------+-------
+ gs_graph |        3 |     2
+(1 row)
+
+SELECT * FROM meta.graph_stats('gs_graph');
+  graph   | vertices | edges 
+----------+----------+-------
+ gs_graph |        3 |     2
+(1 row)
+
+-- a label that inherits another is counted as well, since every label
+-- inherits ag_vertex or ag_edge
+CREATE VLABEL employee INHERITS (node);
+CREATE ELABEL reports INHERITS (link);
+CREATE (:employee {n: 'e'});
+MATCH (a:node {n: 'a'}), (e:employee {n: 'e'}) CREATE (a)-[:reports]->(e);
+SELECT * FROM meta.graph_stats();
+  graph   | vertices | edges 
+----------+----------+-------
+ gs_graph |        4 |     3
+(1 row)
+
+-- the same two numbers meta.count() gives for the base labels
+SELECT meta.count('ag_vertex') AS vertices, meta.count('ag_edge') AS edges;
+ vertices | edges 
+----------+-------
+        4 |     3
+(1 row)
+
+-- an empty graph answers with zeros rather than with no row
+CREATE GRAPH gs_empty;
+SELECT * FROM meta.graph_stats('gs_empty');
+  graph   | vertices | edges 
+----------+----------+-------
+ gs_empty |        0 |     0
+(1 row)
+
+-- as a Cypher routine
+MATCH (a:node {n: 'a'}) CALL meta.graph_stats() YIELD graph, vertices, edges
+RETURN graph, vertices, edges;
+   graph    | vertices | edges 
+------------+----------+-------
+ "gs_graph" | 4        | 3
+(1 row)
+
+-- a graph the server does not hold
+SELECT * FROM meta.graph_stats('unknown');
+ERROR:  relation "unknown.ag_vertex" does not exist
+LINE 1: ...LECT 'unknown'::name,       (SELECT count(*) FROM unknown.ag...
+                                                             ^
+QUERY:  SELECT 'unknown'::name,       (SELECT count(*) FROM unknown.ag_vertex),       (SELECT count(*) FROM unknown.ag_edge)
+CONTEXT:  PL/pgSQL function meta.graph_stats(name) line 22 at RETURN QUERY
+DROP GRAPH gs_graph CASCADE;
+NOTICE:  drop cascades to 7 other objects
+DETAIL:  drop cascades to sequence gs_graph.ag_label_seq
+drop cascades to vlabel ag_vertex
+drop cascades to elabel ag_edge
+drop cascades to vlabel node
+drop cascades to elabel link
+drop cascades to vlabel employee
+drop cascades to elabel reports
+DROP GRAPH gs_empty CASCADE;
+NOTICE:  drop cascades to 3 other objects
+DETAIL:  drop cascades to sequence gs_empty.ag_label_seq
+drop cascades to vlabel ag_vertex
+drop cascades to elabel ag_edge
+SET graph_path = graph1;
 -- clean up
 DROP GRAPH graph1 CASCADE;
 NOTICE:  drop cascades to 8 other objects
