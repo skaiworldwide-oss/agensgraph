@@ -374,7 +374,7 @@ get_exec_path(const char *argv0, const char *progname)
 	char	   *exec_path;
 	int			ret;
 
-	versionstr = psprintf("%s (PostgreSQL) %s\n", progname, PG_VERSION);
+	versionstr = psprintf("%s (PostgreSQL) %s%s\n", progname, PG_VERSION, AG_VERSION_SUFFIX);
 	exec_path = pg_malloc(MAXPGPATH);
 	ret = find_other_exec(argv0, progname, versionstr, exec_path);
 
@@ -2073,7 +2073,7 @@ main(int argc, char **argv)
 		else if (strcmp(argv[1], "-V") == 0
 				 || strcmp(argv[1], "--version") == 0)
 		{
-			puts("pg_createsubscriber (PostgreSQL) " PG_VERSION);
+			puts("pg_createsubscriber (PostgreSQL) " PG_VERSION AG_VERSION_SUFFIX);
 			exit(0);
 		}
 	}

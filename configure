@@ -2921,6 +2921,40 @@ cat >>confdefs.h <<_ACEOF
 _ACEOF
 
 
+#
+# Edition and its own release version, shown after the product name in
+# human-readable version strings.  Both are empty here; an edition build sets
+# them on these two lines.  AG_VERSION stays numeric: libpq parses the
+# agversion GUC as %d.%d.%d.
+#
+AG_EDITION=
+AG_EDITION_VERSION=
+if test -n "$AG_EDITION"; then
+  AG_DISPLAY_NAME="AgensGraph $AG_EDITION"
+else
+  AG_DISPLAY_NAME="AgensGraph"
+fi
+if test -n "$AG_EDITION_VERSION"; then
+  AG_DISPLAY_VERSION="$AG_EDITION_VERSION"
+else
+  AG_DISPLAY_VERSION="$AG_VERSION"
+fi
+
+cat >>confdefs.h <<_ACEOF
+#define AG_DISPLAY_NAME "$AG_DISPLAY_NAME"
+_ACEOF
+
+
+cat >>confdefs.h <<_ACEOF
+#define AG_DISPLAY_VERSION "$AG_DISPLAY_VERSION"
+_ACEOF
+
+
+cat >>confdefs.h <<_ACEOF
+#define AG_VERSION_SUFFIX " ($AG_DISPLAY_NAME $AG_DISPLAY_VERSION)"
+_ACEOF
+
+
 AG_COMP_VERSION=2.18
 
 cat >>confdefs.h <<_ACEOF
@@ -19489,7 +19523,7 @@ fi
 
 
 cat >>confdefs.h <<_ACEOF
-#define PG_VERSION_STR "PostgreSQL $PG_VERSION (AgensGraph $AG_VERSION) on $host, compiled by $cc_string, `expr $ac_cv_sizeof_void_p \* 8`-bit"
+#define PG_VERSION_STR "PostgreSQL $PG_VERSION ($AG_DISPLAY_NAME $AG_DISPLAY_VERSION) on $host, compiled by $cc_string, `expr $ac_cv_sizeof_void_p \* 8`-bit"
 _ACEOF
 
 

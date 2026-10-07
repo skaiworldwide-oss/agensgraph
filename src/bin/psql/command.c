@@ -4380,6 +4380,12 @@ connection_warnings(bool in_startup)
 		int			client_ver = PG_VERSION_NUM;
 		char		cverbuf[32];
 		char		sverbuf[32];
+		const char *agversion;
+
+		/* NULL when connected to a server that is not AgensGraph */
+		agversion = PQparameterStatus(pset.db, "agversion");
+		if (agversion && agversion[0] == '\0')
+			agversion = NULL;
 
 		if (pset.sversion != client_ver)
 		{
@@ -4395,12 +4401,23 @@ connection_warnings(bool in_startup)
 				server_version = sverbuf;
 			}
 
-			printf(_("%s (%s, server %s)\n"),
-				   pset.progname, PG_VERSION, server_version);
+			if (agversion)
+				printf(_("%s (%s, server %s, %s %s)\n"),
+					   pset.progname, PG_VERSION, server_version,
+					   AG_DISPLAY_NAME, agversion);
+			else
+				printf(_("%s (%s, server %s)\n"),
+					   pset.progname, PG_VERSION, server_version);
 		}
 		/* For version match, only print psql banner on startup. */
 		else if (in_startup)
-			printf("%s (%s)\n", pset.progname, PG_VERSION);
+		{
+			if (agversion)
+				printf("%s (%s, %s %s)\n", pset.progname, PG_VERSION,
+					   AG_DISPLAY_NAME, agversion);
+			else
+				printf("%s (%s)\n", pset.progname, PG_VERSION);
+		}
 
 		/*
 		 * Warn if server's major version is newer than ours, or if server

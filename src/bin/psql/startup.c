@@ -845,11 +845,11 @@ showVersion(void)
 {
 	if (is_ag_prefix_binary())
 	{
-		puts("agens (AgensGraph) " AG_VERSION);
+		puts("agens (PostgreSQL) " PG_VERSION AG_VERSION_SUFFIX);
 	}
 	else
 	{
-		puts("psql (PostgreSQL) " PG_VERSION);
+		puts("psql (PostgreSQL) " PG_VERSION AG_VERSION_SUFFIX);
 	}
 }
 
