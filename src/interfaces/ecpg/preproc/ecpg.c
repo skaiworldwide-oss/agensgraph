@@ -162,7 +162,7 @@ main(int argc, char *const argv[])
 		}
 		if (strcmp(argv[1], "--version") == 0 || strcmp(argv[1], "-V") == 0)
 		{
-			printf("ecpg (PostgreSQL) %s\n", PG_VERSION);
+			printf("ecpg (PostgreSQL) %s%s\n", PG_VERSION, AG_VERSION_SUFFIX);
 			exit(0);
 		}
 	}

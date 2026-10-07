@@ -121,7 +121,7 @@ main(int argc, char *argv[])
 		}
 		if (strcmp(argv[1], "--version") == 0 || strcmp(argv[1], "-V") == 0)
 		{
-			puts("pg_controldata (PostgreSQL) " PG_VERSION);
+			puts("pg_controldata (PostgreSQL) " PG_VERSION AG_VERSION_SUFFIX);
 			exit(0);
 		}
 	}

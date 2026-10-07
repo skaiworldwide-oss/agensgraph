@@ -907,7 +907,7 @@ do_init(void)
 	char	   *cmd;
 
 	if (exec_path == NULL)
-		exec_path = find_other_exec_or_die(argv0, "initdb", "initdb (PostgreSQL) " PG_VERSION "\n");
+		exec_path = find_other_exec_or_die(argv0, "initdb", "initdb (PostgreSQL) " PG_VERSION AG_VERSION_SUFFIX "\n");
 
 	if (pgdata_opt == NULL)
 		pgdata_opt = "";
@@ -1976,7 +1976,7 @@ static void
 do_help(void)
 {
 #if AGS_REBRANDED == 1
-	printf(_("%s is a utility to initialize, start, stop, or control a AgensGraph server.\n\n"), progname);
+	printf(_("%s is a utility to initialize, start, stop, or control an AgensGraph server.\n\n"), progname);
 #else
 	printf(_("%s is a utility to initialize, start, stop, or control a PostgreSQL server.\n\n"), progname);
 #endif
@@ -2258,9 +2258,9 @@ main(int argc, char **argv)
 		else if (strcmp(argv[1], "--version") == 0 || strcmp(argv[1], "-V") == 0)
 		{
 #if AGS_REBRANDED == 1
-			puts("ag_ctl (AgensGraph) " AG_VERSION);
+			puts("ag_ctl (PostgreSQL) " PG_VERSION AG_VERSION_SUFFIX);
 #else
-			puts("pg_ctl (PostgreSQL) " PG_VERSION);
+			puts("pg_ctl (PostgreSQL) " PG_VERSION AG_VERSION_SUFFIX);
 #endif
 			exit(0);
 		}

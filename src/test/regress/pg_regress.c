@@ -2145,7 +2145,7 @@ regression_main(int argc, char *argv[],
 				help();
 				exit(0);
 			case 'V':
-				puts("pg_regress (PostgreSQL) " PG_VERSION);
+				puts("pg_regress (PostgreSQL) " PG_VERSION AG_VERSION_SUFFIX);
 				exit(0);
 			case 1:
 

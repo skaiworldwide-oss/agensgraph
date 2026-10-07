@@ -19,7 +19,7 @@ static char saved_argv0[MAXPGPATH];
 static char isolation_exec[MAXPGPATH];
 static bool looked_up_isolation_exec = false;
 
-#define PG_ISOLATION_VERSIONSTR "isolationtester (PostgreSQL) " PG_VERSION "\n"
+#define PG_ISOLATION_VERSIONSTR "isolationtester (PostgreSQL) " PG_VERSION AG_VERSION_SUFFIX "\n"
 
 /*
  * start an isolation tester process for specified file (including

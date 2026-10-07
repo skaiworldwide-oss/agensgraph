@@ -45,6 +45,28 @@ AC_DEFINE_UNQUOTED(PG_VERSION, "$PG_VERSION", [PostgreSQL version as a string])
 [AG_VERSION=2.18.6.0-rc1]
 AC_DEFINE_UNQUOTED(AG_VERSION, "$AG_VERSION", [AgensGraph version as a string])
 
+#
+# Edition and its own release version, shown after the product name in
+# human-readable version strings.  Both are empty here; an edition build sets
+# them on these two lines.  AG_VERSION stays numeric: libpq parses the
+# agversion GUC as %d.%d.%d.
+#
+[AG_EDITION=]
+[AG_EDITION_VERSION=]
+if test -n "$AG_EDITION"; then
+  AG_DISPLAY_NAME="AgensGraph $AG_EDITION"
+else
+  AG_DISPLAY_NAME="AgensGraph"
+fi
+if test -n "$AG_EDITION_VERSION"; then
+  AG_DISPLAY_VERSION="$AG_EDITION_VERSION"
+else
+  AG_DISPLAY_VERSION="$AG_VERSION"
+fi
+AC_DEFINE_UNQUOTED(AG_DISPLAY_NAME, "$AG_DISPLAY_NAME", [AgensGraph product name with edition])
+AC_DEFINE_UNQUOTED(AG_DISPLAY_VERSION, "$AG_DISPLAY_VERSION", [AgensGraph release version shown with the product name])
+AC_DEFINE_UNQUOTED(AG_VERSION_SUFFIX, " ($AG_DISPLAY_NAME $AG_DISPLAY_VERSION)", [Appended to the --version output of every program])
+
 [AG_COMP_VERSION=2.18]
 AC_DEFINE_UNQUOTED(AG_COMP_VERSION, "$AG_COMP_VERSION", [AgensGraph compatible version as a string])
 
@@ -2476,7 +2498,7 @@ else
 fi
 
 AC_DEFINE_UNQUOTED(PG_VERSION_STR,
-                   ["PostgreSQL $PG_VERSION (AgensGraph $AG_VERSION) on $host, compiled by $cc_string, `expr $ac_cv_sizeof_void_p \* 8`-bit"],
+                   ["PostgreSQL $PG_VERSION ($AG_DISPLAY_NAME $AG_DISPLAY_VERSION) on $host, compiled by $cc_string, `expr $ac_cv_sizeof_void_p \* 8`-bit"],
                    [A string containing the version number, platform, and C compiler])
 
 # Supply a numeric version string for use by 3rd party add-ons

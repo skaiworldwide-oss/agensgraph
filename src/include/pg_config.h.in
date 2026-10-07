@@ -6,11 +6,20 @@
 /* AgensGraph compatible version as a string */
 #undef AG_COMP_VERSION
 
+/* AgensGraph product name with edition */
+#undef AG_DISPLAY_NAME
+
+/* AgensGraph release version shown with the product name */
+#undef AG_DISPLAY_VERSION
+
 /* AgensGraph Git revisionas a string */
 #undef AG_GIT_REVISION
 
 /* AgensGraph version as a string */
 #undef AG_VERSION
+
+/* Appended to the --version output of every program */
+#undef AG_VERSION_SUFFIX
 
 /* The normal alignment of `double', in bytes. */
 #undef ALIGNOF_DOUBLE
