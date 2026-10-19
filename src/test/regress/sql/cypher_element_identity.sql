@@ -188,3 +188,35 @@ MATCH (a:p)-[x:k*1..2]->(b:p) WITH x[0] AS e, count(*) AS c RETURN max(c);
 MATCH (a:p)-[x:k*1..2]->(b:p) WITH x[0] AS e, count(*) AS c RETURN max(c);
 
 DROP GRAPH ei CASCADE;
+
+--
+-- Ordering a DISTINCT projection by a node or a relationship
+--
+-- A DISTINCT projection may sort only on items it returns, so an element is
+-- sorted as itself there; its comparison reads the graphid, so the order is the
+-- same one.
+--
+CREATE GRAPH eid;
+SET graph_path = eid;
+
+CREATE VLABEL p;
+CREATE ELABEL k;
+
+CREATE (:p {n: 'a'}), (:p {n: 'b'}), (:p {n: 'c'});
+MATCH (x:p), (y:p) WHERE x.n < y.n CREATE (x)-[:k {w: 1}]->(y);
+MATCH (x:p), (y:p) WHERE x.n < y.n CREATE (x)-[:k {w: 2}]->(y);
+
+-- each start node appears once per outgoing relationship
+MATCH (x:p)-[:k]->() RETURN DISTINCT x.n ORDER BY x.n;
+MATCH (x:p)-[:k]->() RETURN DISTINCT x ORDER BY x;
+MATCH (x:p)-[:k]->() RETURN DISTINCT x ORDER BY x DESC;
+MATCH (x:p)-[:k]->() RETURN DISTINCT x AS m ORDER BY x;
+MATCH (x:p)-[:k]->() WITH DISTINCT x ORDER BY x LIMIT 1 RETURN x.n;
+
+-- each relationship appears once per end node it is reached from
+MATCH ()-[r:k]->(y:p) WITH r, y MATCH (y)<-[:k]-() RETURN DISTINCT r ORDER BY r;
+
+-- the sort key must still be an item the projection returns
+MATCH (x:p)-[:k]->() RETURN DISTINCT x.n ORDER BY x;
+
+DROP GRAPH eid CASCADE;

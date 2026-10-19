@@ -36,7 +36,7 @@ extern Node *transformCypherLimit(ParseState *pstate, Node *clause,
 								  ParseExprKind exprKind,
 								  const char *constructName);
 extern List *transformCypherOrderBy(ParseState *pstate, List *orderlist,
-									List **targetlist);
+									List **targetlist, bool distinct);
 
 /* item list functions */
 extern List *transformItemList(ParseState *pstate, List *items,
