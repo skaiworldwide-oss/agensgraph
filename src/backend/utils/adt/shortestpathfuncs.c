@@ -2,7 +2,7 @@
  * shortestpathfuncs.c
  *	  Dummy functions for shortestpath
  *
- * Copyright (c) 2017 by Bitnine Global, Inc.
+ * Copyright (c) 2017-2026 SKAI Worldwide Co., Ltd.
  *
  * IDENTIFICATION
  *	  src/backend/utils/adt/shortestpathfuncs.c

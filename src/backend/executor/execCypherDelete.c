@@ -2,7 +2,7 @@
  * execCypherDelete.c
  *	  routines to handle ModifyGraph delete nodes.
  *
- * Copyright (c) 2022 by Bitnine Global, Inc.
+ * Copyright (c) 2022-2026 SKAI Worldwide Co., Ltd.
  *
  * IDENTIFICATION
  *	  src/backend/executor/execCypherDelete.c
