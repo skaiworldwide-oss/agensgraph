@@ -140,5 +140,6 @@ AGViewer is a web-based user interface that provides visualization of graph data
 For more information and to get started with AGViewer, visit the [AGViewer GitHub repository](https://github.com/skaiworldwide-oss/AGViewer).
 
 ## License
-- [Apache License 2.0](http://www.apache.org/licenses/LICENSE-2.0)
+- AgensGraph is licensed under the [Apache License 2.0](LICENSE).
+- Portions derived from PostgreSQL are licensed under the PostgreSQL License. See [COPYRIGHT](COPYRIGHT).
 

@@ -5,7 +5,7 @@
  *	  along with the relation's initial contents.
  *
  *
- * Copyright (c) 2016 by Bitnine Global, Inc.
+ * Copyright (c) 2016-2026 SKAI Worldwide Co., Ltd.
  *
  * src/include/catalog/ag_label.h
  *
