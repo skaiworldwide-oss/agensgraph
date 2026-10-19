@@ -1,7 +1,7 @@
 /*
  * nodeModifyGraph.h
  *
- * Copyright (c) 2022 by Bitnine Global, Inc.
+ * Copyright (c) 2022-2026 SKAI Worldwide Co., Ltd.
  *
  * src/include/executor/execCypherDelete.h
  */

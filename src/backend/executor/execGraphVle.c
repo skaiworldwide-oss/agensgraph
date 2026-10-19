@@ -2,7 +2,7 @@
  * execGraphVle.c
  *	  AgensGraph VLE Executor.
  *
- * Copyright (c) 2022 by Bitnine Global, Inc.
+ * Copyright (c) 2022-2026 SKAI Worldwide Co., Ltd.
  *
  * IDENTIFICATION
  *	  src/backend/executor/execGraphVle.c

@@ -2,7 +2,7 @@
  * execGraphMeta.h
  *	  ag_graphmeta connectivity maintenance for non-Cypher edge writes.
  *
- * Copyright (c) 2016 by Bitnine Global, Inc.
+ * Copyright (c) 2016-2026 SKAI Worldwide Co., Ltd.
  *
  * IDENTIFICATION
  *	  src/include/executor/execGraphMeta.h
