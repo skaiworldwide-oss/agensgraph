@@ -555,6 +555,160 @@ DROP TABLE rating;
   </variablelist>
  </sect1>
 
+ <sect1 id="agensgraph-tuning">
+  <title>Tuning Graph Workloads</title>
+
+  <indexterm zone="agensgraph-tuning">
+   <primary>tuning</primary>
+   <secondary>graph workloads</secondary>
+  </indexterm>
+
+  <sect2 id="agensgraph-tuning-settings">
+   <title>Server Settings</title>
+
+   <para>
+    PostgreSQL's defaults suit small relational queries. Graph analytics, such as neighbourhood
+    aggregation, top degree and multi-hop traversals, run large hash and sort operations that
+    spill to disk at the default <varname>work_mem</varname>, and gain from parallelism. A
+    starting point for an analytic or mixed graph workload on a multi-core server:
+   </para>
+
+<programlisting>
+# Memory: avoid disk spills in graph aggregation and sort
+work_mem = 256MB                # per sort or hash node; raise for heavy GROUP BY / DISTINCT
+maintenance_work_mem = 1GB      # faster index builds and VACUUM on large edge labels
+
+# Planner: trust indexes and account for the cache
+effective_cache_size = &lt;about 70% of RAM&gt;
+random_page_cost = 1.1          # SSDs, where an index scan costs nearly as little as a sequential one
+
+# Parallelism: full edge-scan analytics
+max_parallel_workers_per_gather = 4
+max_parallel_workers = &lt;number of CPU cores&gt;
+max_worker_processes = &lt;number of CPU cores&gt;
+</programlisting>
+
+   <para>
+    Apply them with <command>ALTER SYSTEM</command> and <function>pg_reload_conf()</function>, in
+    <filename>postgresql.conf</filename>, or with <command>SET</command> in a session.
+   </para>
+
+   <itemizedlist>
+    <listitem>
+     <para>
+      <varname>work_mem</varname> is allocated per sort or hash node, per connection. A large value
+      with many clients can over-commit memory. Size it near RAM divided by expected concurrency, or
+      raise it only in the sessions that run heavy analytic queries.
+     </para>
+    </listitem>
+    <listitem>
+     <para>
+      Parallelism helps large full scans and adds worker start-up cost to short point and one-hop
+      reads. Lower <varname>max_parallel_workers_per_gather</varname> for a mostly short,
+      transactional workload.
+     </para>
+    </listitem>
+    <listitem>
+     <para>
+      Run <command>ANALYZE</command> after a bulk load, so the planner has statistics for traversal
+      joins.
+     </para>
+    </listitem>
+   </itemizedlist>
+  </sect2>
+
+  <sect2 id="agensgraph-tuning-pruning">
+   <title>Label Pruning with <structname>ag_graphmeta</structname></title>
+
+   <para>
+    An unlabelled node such as <literal>(b)</literal> in
+    <literal>MATCH (a)-[:knows]-&gt;(b)</literal> scans every vertex label of the graph, and an
+    unlabelled edge scans every edge label. <structname>ag_graphmeta</structname> records which
+    start label, edge label and end label combinations occur. With
+    <xref linkend="guc-auto-gather-graphmeta"/> on, the planner uses it to scan only the labels each
+    element of a pattern can be:
+   </para>
+
+<programlisting>
+SET auto_gather_graphmeta = on;
+</programlisting>
+
+   <itemizedlist>
+    <listitem>
+     <para>
+      A labelled element narrows every unlabelled element it reaches, hop by hop. A labelled edge
+      narrows its endpoints; a labelled node narrows its edges and the nodes beyond them.
+     </para>
+    </listitem>
+    <listitem>
+     <para>
+      Pruning changes the plan, never the result. A pattern no recorded combination can satisfy is
+      proved empty and not scanned.
+     </para>
+    </listitem>
+    <listitem>
+     <para>
+      Undirected and variable-length edges are not pruned themselves, but they narrow the nodes
+      beside them. An <literal>ONLY</literal> element is not pruned but still narrows its
+      neighbours. A pattern with no labelled element is not pruned.
+     </para>
+    </listitem>
+    <listitem>
+     <para>
+      A graph is pruned only while its <structfield>graphmeta_valid</structfield> in
+      <xref linkend="catalog-ag-graph"/> is true. Cached and prepared plans are planned again
+      when new connectivity appears.
+     </para>
+    </listitem>
+   </itemizedlist>
+
+   <para>
+    Keeping the catalog complete:
+   </para>
+
+   <itemizedlist>
+    <listitem>
+     <para>
+      While the setting is on, every edge write updates the catalog: Cypher
+      <command>CREATE</command>, <command>MERGE</command> and <command>DELETE</command>, SQL
+      <command>INSERT</command> and <command>UPDATE</command> under
+      <xref linkend="guc-enable-graph-dml"/>, <command>COPY</command> into an edge label, and
+      logical replication apply.
+     </para>
+    </listitem>
+    <listitem>
+     <para>
+      <command>SET auto_gather_graphmeta = on</command> in a session gathers a baseline from the
+      existing edges. A value from <filename>postgresql.conf</filename>, <command>ALTER
+      DATABASE</command> or <command>ALTER ROLE</command> does not; run
+      <function>regather_graphmeta()</function> once instead.
+     </para>
+    </listitem>
+    <listitem>
+     <para>
+      The cost during a bulk load is an in-memory counter per edge, merged into a few catalog
+      rows at commit. Loading with the setting on is fine. To avoid B-tree maintenance during a
+      bulk edge load, create the label with <literal>CREATE ELABEL ... DISABLE INDEX</literal>
+      and rebuild its indexes afterwards with <xref linkend="cypher-reindex"/>.
+     </para>
+    </listitem>
+    <listitem>
+     <para>
+      SQL <command>DELETE</command> and an <command>UPDATE</command> that moves an edge's endpoints
+      do not remove a combination. A stale combination costs an extra empty scan, never a wrong or
+      missing row. <function>regather_graphmeta()</function> removes it.
+     </para>
+    </listitem>
+    <listitem>
+     <para>
+      Connectivity written in an open transaction reaches the catalog at commit. Until then, a
+      read in that transaction scans in full instead of pruning.
+     </para>
+    </listitem>
+   </itemizedlist>
+  </sect2>
+ </sect1>
+
  <sect1 id="agensgraph-catalogs">
   <title>System Catalogs and Views</title>
 
