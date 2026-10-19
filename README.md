@@ -1,145 +1,211 @@
-# AgensGraph: Powerful Multi-Model Graph Database
-![Build Status](https://github.com/skaiworldwide-oss/agensgraph/actions/workflows/regression.yml/badge.svg)
-&nbsp;
-<a href="https://github.com/skaiworldwide-oss/agensgraph/releases">
-<img src="https://img.shields.io/badge/Release-v2.16.0-FFA500?labelColor=gray&style=flat&link=https://github.com/skaiworldwide-oss/agensgraph/releases"/>
-</a>
-&nbsp;
-<a href="https://github.com/skaiworldwide-oss/agensgraph/issues">
-  <img src="https://img.shields.io/github/issues/skaiworldwide-oss/agensgraph"/>
-</a>
-&nbsp;
-<a href="https://github.com/skaiworldwide-oss/agensgraph/network/members">
- <img src="https://img.shields.io/github/forks/skaiworldwide-oss/agensgraph"/>
-</a>
-&nbsp;
-<a href="https://github.com/skaiworldwide-oss/agensgraph/stargazers">
- <img src="https://img.shields.io/github/stars/skaiworldwide-oss/agensgraph"/>
-</a>
-<br>
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="images/agensgraph-logo-dark.svg">
+    <img alt="SKAIWorldwide AgensGraph" src="images/agensgraph-logo-light.svg" width="236">
+  </picture>
+</p>
 
-AgensGraph is a cutting-edge multi-model graph database designed for modern complex data environments. By supporting both relational and graph data models simultaneously, AgensGraph allows developers to seamlessly integrate legacy relational data with the flexible graph data model within a single database. AgensGraph is built on the robust PostgreSQL RDBMS, providing a highly reliable, fully-featured platform ready for enterprise use.
+<p align="center">
+  <b>A high-performance graph database built on PostgreSQL.</b><br>
+  Graphs and tables in one database. SQL, openCypher and ISO GQL in one query.
+</p>
 
-## Key Features
-- **Multi-Model Support**: Combines relational and graph data models.
-- **Query Languages**: Supports ANSI-SQL and openCypher ([openCypher](http://www.opencypher.org)) and partially ISO/GQL.
-- **Seamless Integration**: Integrate SQL and Cypher queries within a single query.
-- **Enterprise-Ready**: ACID transactions, multi-version concurrency control, stored procedures, triggers, constraints, sophisticated monitoring, and flexible data models (JSON).
-- **Extensible**: Leverages PostgreSQL's rich ecosystem, including modules like PostGIS.
-## Quick Start with Docker
+<p align="center">
+  <a href="https://tech.skaiworldwide.com/docs/en/agensgraph/18/">Documentation</a> ·
+  <a href="#quick-start">Quick start</a> ·
+  <a href="#ai-and-agents">AI and agents</a> ·
+  <a href="https://github.com/skaiworldwide-oss/agensgraph/discussions">Discussions</a> ·
+  <a href="https://github.com/skaiworldwide-oss/agensgraph/releases">Releases</a>
+</p>
 
-1. **Pull the AgensGraph Docker image**
+<p align="center">
+  <a href="https://github.com/skaiworldwide-oss/agensgraph/actions/workflows/regression.yml"><img alt="Regression" src="https://github.com/skaiworldwide-oss/agensgraph/actions/workflows/regression.yml/badge.svg"></a>
+  <a href="https://github.com/skaiworldwide-oss/agensgraph/releases/latest"><img alt="Release" src="https://img.shields.io/github/v/release/skaiworldwide-oss/agensgraph"></a>
+  <a href="https://hub.docker.com/r/skaiworldwide/agensgraph"><img alt="Docker pulls" src="https://img.shields.io/docker/pulls/skaiworldwide/agensgraph"></a>
+  <a href="LICENSE"><img alt="License" src="https://img.shields.io/github/license/skaiworldwide-oss/agensgraph"></a>
+</p>
 
-    ```bash
-    docker pull skaiworldwide/agensgraph
-    ```
-    **Note**: By default, this pulls the `latest` tag
+## What AgensGraph is
 
-2. **Create and run the AgensGraph container**
+- PostgreSQL with the property graph model built in. A fork of PostgreSQL, not an extension.
+- A graph is a schema, a label is a table, a vertex or an edge is a row.
+- Graph data and relational tables live in one database and commit in one transaction.
+- Query with SQL, openCypher and ISO GQL (ISO/IEC 39075). Mix them in one statement.
+- Everything PostgreSQL has works on graph data: transactions, roles, row-level security, replication, `pg_dump`, `EXPLAIN`, extensions such as `pgvector`.
+- Apache License 2.0.
 
-    ```bash
-    docker run \
-        --name agensgraph \
-        -p 5455:5432 \
-        -e POSTGRES_USER=postgres \
-        -e POSTGRES_PASSWORD=agens \
-        -e POSTGRES_DB=agens \
-        -d \
-        skaiworldwide/agensgraph
-    ```
+## Quick start
 
-3. **Connect to AgensGraph client**
-    ```bash
-    docker exec -it agensgraph agens -d agens -U postgres
-    ```
+**1. Start a server**
 
-**More Information**
-
-See more information on the [Docker Hub](https://hub.docker.com/r/skaiworldwide/agensgraph) page.
-
-## Source Code Compilation
-
-To build, install and setup AgensGraph for source, follow instructions in [Installation Guide](INSTALL.md)
-
-## Branches and Releases
-
-- `main` is the development branch.
-- `v2.<N>` is the release line on PostgreSQL `<N>`, for example `v2.18`.
-- A release is a tag on its line, `v2.<PG major>.<PG minor>.<minor>`, for example `v2.18.4.0`. Release candidates end in `-rcN`.
-- `prod` is the newest release of the newest line. A workflow moves it when a release tag is created. Build from a tag, not from `prod`.
-
-## Performance Tuning for Graph Workloads
-
-PostgreSQL's defaults are tuned for small relational queries. Graph analytics — neighbourhood aggregation, top-degree, multi-hop traversals — run large hash/sort operations that spill to disk at the default `work_mem`, and benefit from parallelism. The settings below are a good starting point for an analytics or mixed graph workload on a multi-core server.
-
-Apply them with `ALTER SYSTEM SET ...;` followed by `SELECT pg_reload_conf();` (or by editing `postgresql.conf`), or `SET` them per session.
-
-```conf
-# Memory: avoid disk spills in graph aggregation/sort
-work_mem = 256MB                # per sort/hash node; raise for heavy GROUP BY / DISTINCT
-maintenance_work_mem = 1GB      # faster index builds and VACUUM on large edge labels
-
-# Planner: trust indexes and account for the cache
-effective_cache_size = <~70% of RAM>
-random_page_cost = 1.1          # for SSDs, where index scans are nearly as cheap as sequential
-
-# Parallelism: speeds up full-edge-scan analytics
-max_parallel_workers_per_gather = 4
-max_parallel_workers = <number of CPU cores>
-max_worker_processes = <number of CPU cores>
+```shell
+docker run --name agensgraph -e POSTGRES_PASSWORD=agensgraph -d skaiworldwide/agensgraph:v2.18.6.0-bookworm
+docker exec -it agensgraph agens -U agens -d postgres
 ```
 
-Notes:
-- `work_mem` is allocated **per sort/hash node, per connection**, so a large value combined with many concurrent clients can over-commit memory. Size it to roughly `RAM / expected_concurrency`, or raise it only per session for heavy analytic queries.
-- Parallelism helps large full-scan analytics but adds worker-startup overhead to small point or single-hop reads; lower `max_parallel_workers_per_gather` if your workload is mostly short, OLTP-style queries.
-- After bulk-loading a graph, run `ANALYZE` so the planner has accurate statistics for traversal joins.
-## Connectivity-Aware Scan Pruning (`auto_gather_graphmeta`)
-
-An unlabelled Cypher element such as `(b)` in `MATCH (a)-[:KNOWS]->(b)` is, by default, expanded to a scan of **every** vertex label in the graph (the `ag_vertex` inheritance hierarchy); an unlabelled edge scans the whole `ag_edge` hierarchy. But the connectivity recorded in the `ag_graphmeta` catalog (one `(edge, start, end)` triple per connected combination) constrains what can actually match. When gathering is enabled, the **planner** propagates these constraints across the whole MATCH pattern and scans only the labels each element can possibly be:
+**2. Create a graph**
 
 ```sql
-SET auto_gather_graphmeta = on;   -- enables maintenance AND planner pruning
+CREATE GRAPH movies;
+SET graph_path = movies;
+
+CREATE (keanu:person {name: 'Keanu Reeves'}),
+       (carrie:person {name: 'Carrie-Anne Moss'}),
+       (matrix:movie {title: 'The Matrix', year: 1999}),
+       (wick:movie {title: 'John Wick', year: 2014}),
+       (keanu)-[:acted_in {role: 'Neo'}]->(matrix),
+       (carrie)-[:acted_in {role: 'Trinity'}]->(matrix),
+       (keanu)-[:acted_in {role: 'John Wick'}]->(wick);
 ```
 
-- **Any labelled element constrains every reachable unlabelled one, transitively.** A labelled edge prunes its endpoint nodes (`()-[:KNOWS]->(b)` ⇒ `b` only the labels `:KNOWS` ends at); a labelled *node* prunes its adjacent edges *and* the nodes beyond them (`(a:Person)-[r]->(c)` ⇒ `r` only the edge types that start at `:Person`, and `c` only the vertex labels those reach); chains propagate hop by hop (`(a:Person)-[]->()-[]->(d)`). It is solved by arc-consistency over the pattern using `ag_graphmeta` as the legal-combination relation.
-- Pruning is purely a plan-time optimization and **never changes query results**. For an impossible pattern (e.g. `()-[:KNOWS]->(:City)` where no `:KNOWS` edge ends at a `:City`, or a chain whose constraints don't intersect) it proves the result empty and skips the scan.
-- Undirected (`-[:E]-`) and variable-length (`-[:E*1..3]->`) edges are UNION/VLE subqueries, so their *own* scans aren't inheritance-pruned, but they still propagate to (and prune) their neighbouring nodes. `ONLY`-qualified elements aren't pruned but still anchor their neighbours. With no labelled element anywhere in the pattern there is nothing to anchor, so it falls back to a full scan.
-- Plans that prune depend on `ag_graphmeta`: when new connectivity appears (the first edge of a new label/endpoint combination) cached and prepared plans are automatically re-planned, so pruning is safe under prepared statements and connection poolers.
+**3. Match a pattern**
 
-**Keeping the catalog complete.** While `auto_gather_graphmeta` is on, every edge write maintains `ag_graphmeta` — Cypher `CREATE`/`MERGE`/`DELETE`, direct SQL `INSERT`/`UPDATE` (under `enable_graph_dml`), `COPY` into an edge label, and logical-replication apply. Turning the GUC from off to on **regathers a complete baseline** from existing data, so the invariant "gathering on ⇒ ag_graphmeta is complete" holds for pre-existing graphs too. (Enable it with `SET auto_gather_graphmeta = on` inside a session; enabling it from `postgresql.conf` cannot regather at startup — run `SET ... = on` once, or `regather_graphmeta()` after toggling it off, to gather a baseline for an existing graph.)
+```sql
+MATCH (:person {name: 'Carrie-Anne Moss'})-[:acted_in]->(m:movie)<-[:acted_in]-(co:person)
+RETURN co.name AS co_star, m.title AS movie;
+```
 
-Notes:
-- Maintaining `ag_graphmeta` during a bulk load adds only an in-memory counter per edge (aggregated into a few catalog rows at commit), not per-row index work, so it is cheap; you can load with the GUC on. The separate `CREATE ELABEL ... DISABLE INDEX` / `ALTER ELABEL ... ENABLE ALL INDEX` trick remains the way to avoid the *btree* maintenance cost of a bulk edge load.
-- Non-Cypher `DELETE`s and endpoint-rewiring `UPDATE`s are not decremented in `ag_graphmeta`; a removed combination may linger as a stale triple until `regather_graphmeta()` compacts it. This is always safe — a stale triple only causes a harmless extra (empty) scan, never a wrong or missing row.
-- Within a single open transaction that has just written edges, connectivity is not yet flushed to the catalog (it is merged at commit), so a read in that same transaction falls back to a full scan rather than pruning on not-yet-committed connectivity.
+```
+    co_star     |    movie
+----------------+--------------
+ "Keanu Reeves" | "The Matrix"
+(1 row)
+```
 
-## AgensGraph AI Integration
-[AgensGraph-AI Repository](https://github.com/skaiworldwide-oss/agensgraph-ai) provide collection of tools, integrations, and starter templates for building AI-powered applications that work with AgensGraph.
+**4. Follow a path of any length**
 
-## AgensGraph Drivers
-AgensGraph supports various drivers for seamless connection and interaction with the database. Below are the supported drivers:
-| Driver      | Description                                                                                       |
-|-------------|---------------------------------------------------------------------------------------------------|
-| **JDBC**    | [JDBC Driver](https://github.com/skaiworldwide-oss/agensgraph-jdbc) <br> Enables Java applications to interact with AgensGraph. |
-| **Python**  | [Python Driver](https://github.com/skaiworldwide-oss/agensgraph-python) <br> Facilitates interaction between Python applications and AgensGraph. |
-| **Node.js** | [Node.js Driver](https://github.com/skaiworldwide-oss/agensgraph-nodejs) <br> Allows Node.js applications to interface with AgensGraph. |
-| **Go**      | [Go Driver](https://github.com/skaiworldwide-oss/agensgraph-golang) <br> Provides connectivity for Go applications to AgensGraph. |
+```sql
+MATCH (:person {name: 'Carrie-Anne Moss'})-[:acted_in*1..3]-(m:movie)
+RETURN DISTINCT m.title AS reachable ORDER BY reachable;
+```
 
+```
+  reachable
+--------------
+ "John Wick"
+ "The Matrix"
+(2 rows)
+```
+
+**5. Join the graph to a table**
+
+```sql
+CREATE TABLE my_ratings (title text, stars int);
+INSERT INTO my_ratings VALUES ('The Matrix', 5), ('John Wick', 4);
+
+SELECT f.title, r.stars
+FROM (MATCH (:person {name: 'Keanu Reeves'})-[:acted_in]->(m:movie)
+      RETURN m.title AS title) AS f
+JOIN my_ratings r ON r.title = f.title #>> '{}'
+ORDER BY r.stars DESC;
+```
+
+```
+    title     | stars
+--------------+-------
+ "The Matrix" |     5
+ "John Wick"  |     4
+(2 rows)
+```
+
+Next: [the example dataset](https://tech.skaiworldwide.com/docs/en/agensgraph/18/get_started/example-dataset.html) ·
+[combining SQL and Cypher](https://tech.skaiworldwide.com/docs/en/agensgraph/18/querying/combining-sql-and-cypher.html) ·
+[paths](https://tech.skaiworldwide.com/docs/en/agensgraph/18/querying/paths.html)
+
+## Query languages
+
+| Language | Use it for | Docs |
+|---|---|---|
+| SQL | Tables, DDL, administration, and queries over a Cypher subquery | [Combining SQL and Cypher](https://tech.skaiworldwide.com/docs/en/agensgraph/18/querying/combining-sql-and-cypher.html) |
+| openCypher | Patterns, paths, graph writes | [Reading](https://tech.skaiworldwide.com/docs/en/agensgraph/18/querying/reading.html), [Writing](https://tech.skaiworldwide.com/docs/en/agensgraph/18/querying/writing.html) |
+| ISO GQL | `LET`, `FILTER`, `FOR`, `NEXT`, `FINISH`, `INSERT`, `CALL { }`, subquery expressions | [GQL conformance](https://tech.skaiworldwide.com/docs/en/agensgraph/18/appendix/gql-conformance.html) |
+
+GQL and Cypher are one language. No mode switch:
+
+```sql
+MATCH (p:person)-[:acted_in]->(m:movie)
+RETURN p.name AS actor, count(m) AS movies
+NEXT FILTER movies > 1
+RETURN actor;
+```
+
+```
+     actor
+----------------
+ "Keanu Reeves"
+(1 row)
+```
+
+## Features
+
+| Area | What you get |
+|---|---|
+| Graph model | Vertex and edge labels, label inheritance, property indexes, constraints |
+| Paths | Variable-length patterns, `shortestpath()`, `allshortestpaths()`, `dijkstra()` |
+| Subqueries | `CALL { }`, `OPTIONAL CALL`, `EXISTS { }`, `COUNT { }`, `COLLECT { }`, `VALUE { }` |
+| Typed columns | Store chosen properties in typed, indexable columns ([typed columns](https://tech.skaiworldwide.com/docs/en/agensgraph/18/querying/typed-columns.html)) |
+| Search | Vector and full-text search on properties through PostgreSQL extensions ([vector](https://tech.skaiworldwide.com/docs/en/agensgraph/18/guides/search/vector.html), [full text](https://tech.skaiworldwide.com/docs/en/agensgraph/18/guides/search/full-text.html)) |
+| Planner | Row estimates for paths, label pruning, skipped scans for unused endpoints |
+| Security | Grants and row-level security on labels, enforced for Cypher reads and writes |
+| Operations | `pg_dump` / `pg_restore`, `pg_upgrade`, streaming and logical replication |
+
+
+## AI and agents
+
+- Knowledge graph, embeddings (with `pgvector`) and agent memory in one PostgreSQL database.
+- GraphRAG in one statement: vector, full-text or hybrid search, then a graph traversal.
+- MCP servers give AI assistants and agents tool access to the graph.
+
+| Integration | What it provides | Package |
+|---|---|---|
+| MCP: Cypher | Schema introspection and read/write Cypher tools for MCP clients such as Claude Desktop | [`mcp-agensgraph-cypher`](https://pypi.org/project/mcp-agensgraph-cypher/) |
+| MCP: Memory | Knowledge-graph memory for agents: entities, relations, observations | [`mcp-agensgraph-memory`](https://pypi.org/project/mcp-agensgraph-memory/) |
+| MCP: Data modeling | Graph model validation; generated ingest and constraint Cypher | [`mcp-agensgraph-data-modeling`](https://pypi.org/project/mcp-agensgraph-data-modeling/) |
+| LangChain | Graph store, pgvector vector store, chat history, LangGraph checkpointer, LLM graph transformer | [`langchain-agensgraph`](https://pypi.org/project/langchain-agensgraph/) |
+| LlamaIndex | `PropertyGraphIndex` and `VectorStoreIndex` stores, hybrid search, Text2Cypher | [`llama-index-agensgraph`](https://pypi.org/project/llama-index-agensgraph/) |
+| LightRAG | All four LightRAG storage roles in one database, with workspace multi-tenancy | [`lightrag-agensgraph`](https://pypi.org/project/lightrag-agensgraph/) |
+| cognee | Graph and vector adapters for the cognee AI-memory framework | [`cognee-agensgraph`](https://pypi.org/project/cognee-agensgraph/) |
+
+```shell
+pip install "agensgraph-ai[all]"     # or one of: [mcp] [langchain] [llama-index] [lightrag] [cognee]
+```
+
+[AgensGraph AI documentation](https://tech.skaiworldwide.com/docs/en/agensgraph-ai/) ·
+[source and demos](https://github.com/skaiworldwide-oss/agensgraph-ai) ·
+[GraphRAG without a framework](https://tech.skaiworldwide.com/docs/en/agensgraph/18/guides/search/hybrid.html)
+
+## Install
+
+| Route | How |
+|---|---|
+| Docker | `skaiworldwide/agensgraph:v<release>-<base>`. Bases: `bookworm`, `trixie`, `alpine3.23`, `alpine3.24`, `rocky9`, `rocky10` ([Docker Hub](https://hub.docker.com/r/skaiworldwide/agensgraph)) |
+| Source | [Build from source](https://tech.skaiworldwide.com/docs/en/agensgraph/18/get_started/install.html) |
+| Upgrade from 2.17 | [Upgrading to 2.18](https://tech.skaiworldwide.com/docs/en/agensgraph/18/release_notes/upgrade-to-2.18.html) |
+
+## Drivers
+
+Any PostgreSQL driver connects ([drivers and client libraries](https://tech.skaiworldwide.com/docs/en/agensgraph/18/drivers/index.html)). The Python driver adds graph types:
+
+| Language | Package | Docs | Repository |
+|---|---|---|---|
+| Python | [`agensgraph-python`](https://pypi.org/project/agensgraph-python/) | [AgensGraph for Python](https://tech.skaiworldwide.com/docs/en/agensgraph-driver/python/) | [agensgraph-python](https://github.com/skaiworldwide-oss/agensgraph-python) |
 
 ## Documentation
-[AgensGraph Manual](http://tech.skaiworldwide.com/docs/en/agensgraph/latest/) is available to help you get started with AgensGraph and make the most of its features.
 
-## AGViewer
-AGViewer is a web-based user interface that provides visualization of graph data stored in an AgensGraph database. It allows users to easily interact with and visualize their graph data, making it easier to understand and analyze complex relationships within the database.
-- **Web-Based Interface**: Accessible through any web browser.
-- **Graph Visualization**: Provides interactive visualization tools for graph data.
-- **User-Friendly**: Intuitive interface designed for ease of use.
-- **Real-Time Interaction**: Allows for real-time data updates and interaction with graph data.
-<img src="https://github.com/skaiworldwide-oss/agensgraph/blob/main/images/g_result_1.png" alt="AGViewer Screenshot" width="400" />
+- [Manual](https://tech.skaiworldwide.com/docs/en/agensgraph/18/)
+- [Tuning queries](https://tech.skaiworldwide.com/docs/en/agensgraph/18/querying/performance.html)
+- [Configuration](https://tech.skaiworldwide.com/docs/en/agensgraph/18/operations/configuration.html)
+- [Release notes](https://tech.skaiworldwide.com/docs/en/agensgraph/18/release_notes/2.18.html) and [downloads](https://github.com/skaiworldwide-oss/agensgraph/releases)
+- In-tree reference: `doc/src/sgml/agensgraph.sgml` and `doc/src/sgml/ref/cypher_*.sgml`
 
-For more information and to get started with AGViewer, visit the [AGViewer GitHub repository](https://github.com/skaiworldwide-oss/AGViewer).
+
+## Community
+
+- Questions: [Discussions](https://github.com/skaiworldwide-oss/agensgraph/discussions)
+- Bugs and feature requests: [Issues](https://github.com/skaiworldwide-oss/agensgraph/issues)
+- Code: pull requests against `main`
 
 ## License
-- AgensGraph is licensed under the [Apache License 2.0](LICENSE).
-- Portions derived from PostgreSQL are licensed under the PostgreSQL License. See [COPYRIGHT](COPYRIGHT).
 
+- AgensGraph: [Apache License 2.0](LICENSE). See [NOTICE](NOTICE).
+- Portions from PostgreSQL: PostgreSQL License. See [COPYRIGHT](COPYRIGHT).
