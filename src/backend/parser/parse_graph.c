@@ -1321,7 +1321,8 @@ transformCypherProjection(ParseState *pstate, CypherClause *clause)
 
 		if (detail->order != NULL)
 			qry->sortClause = transformCypherOrderBy(pstate, detail->order,
-													 &qry->targetList);
+													 &qry->targetList,
+													 detail->distinct != NULL);
 
 		if (detail->distinct != NULL)
 		{
@@ -3148,7 +3149,7 @@ transformCypherModifier(ParseState *pstate, CypherClause *clause)
 	}
 
 	qry->sortClause = transformCypherOrderBy(pstate, detail->order,
-											 &qry->targetList);
+											 &qry->targetList, false);
 
 	qry->limitOffset = transformCypherLimit(pstate, detail->skip,
 											EXPR_KIND_OFFSET, "SKIP/OFFSET");

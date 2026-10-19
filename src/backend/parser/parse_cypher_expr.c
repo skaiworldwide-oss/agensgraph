@@ -3827,8 +3827,17 @@ elementIdentitySortKey(ParseState *pstate, TargetEntry *te, List **targetlist)
 	return idte;
 }
 
+/*
+ * transformCypherOrderBy
+ *		Transforms the sort items of a projection or a standalone ORDER BY.
+ *
+ *		distinct says the projection is DISTINCT.  Its sort keys must then be
+ *		items it returns (see transformDistinctClause()), so an element is
+ *		sorted as itself rather than by an identity added beside it.
+ */
 List *
-transformCypherOrderBy(ParseState *pstate, List *sortitems, List **targetlist)
+transformCypherOrderBy(ParseState *pstate, List *sortitems, List **targetlist,
+					   bool distinct)
 {
 	const ParseExprKind exprKind = EXPR_KIND_ORDER_BY;
 	List	   *save_order_items = pstate->p_order_items;
@@ -3885,7 +3894,7 @@ transformCypherOrderBy(ParseState *pstate, List *sortitems, List **targetlist)
 			 * projection which carries the element only to reach this sort key
 			 * never has to carry it.  See elementIdentity().
 			 */
-			id = elementIdentity(expr);
+			id = distinct ? NULL : elementIdentity(expr);
 			if (id != NULL)
 				expr = id;
 
@@ -3911,7 +3920,7 @@ transformCypherOrderBy(ParseState *pstate, List *sortitems, List **targetlist)
 				*targetlist = lappend(*targetlist, te);
 			}
 		}
-		else
+		else if (!distinct)
 		{
 			/*
 			 * The sort item named a projected element.  That projection stays
