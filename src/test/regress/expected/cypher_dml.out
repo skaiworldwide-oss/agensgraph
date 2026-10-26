@@ -3956,11 +3956,11 @@ SELECT count(*) FROM agens.ag_edge;
 (1 row)
 
 -- attempt to delete null object
-CREATE ({name: 'agensgraph'})-[:made_by]->({name: 'bitnine'});
-MATCH (a {name: 'agensgraph'}), (g {name: 'bitnine'})
+CREATE ({name: 'agensgraph'})-[:made_by]->({name: 'skai'});
+MATCH (a {name: 'agensgraph'}), (g {name: 'skai'})
 OPTIONAL MATCH (a)-[r:made_by]-(g)
 DELETE r;
-MATCH (a {name: 'agensgraph'}), (g {name: 'bitnine'})
+MATCH (a {name: 'agensgraph'}), (g {name: 'skai'})
 OPTIONAL MATCH (a)-[r:made_by]-(g)
 DELETE r;
 MATCH (a) DETACH DELETE a;
@@ -4841,17 +4841,17 @@ RETURN a.no;
 MATCH (a) DETACH DELETE (a);
 -- += operator
 CREATE ({age: 10});
-MATCH (a) SET a += {name: 'bitnine', age: 3}
+MATCH (a) SET a += {name: 'skai', age: 3}
 RETURN properties(a);
-          properties           
--------------------------------
- {"age": 3, "name": "bitnine"}
+         properties         
+----------------------------
+ {"age": 3, "name": "skai"}
 (1 row)
 
 MATCH (a) RETURN properties(a);
-          properties           
--------------------------------
- {"age": 3, "name": "bitnine"}
+         properties         
+----------------------------
+ {"age": 3, "name": "skai"}
 (1 row)
 
 MATCH (a) SET a += NULL;
@@ -4908,38 +4908,38 @@ LINE 1: MATCH (a) SET a = NULL;
 HINT:  use {} instead of NULL to remove all properties
 MATCH (a) DETACH DELETE (a);
 -- referring to undefined attributes
-CREATE ({name: 'bitnine'});
+CREATE ({name: 'skai'});
 CREATE ({age: 10});
 MATCH (a) SET a.age = a.age + 1
 RETURN properties(a);
-     properties      
----------------------
- {"name": "bitnine"}
+    properties    
+------------------
+ {"name": "skai"}
  {"age": 11}
 (2 rows)
 
 MATCH (a) RETURN properties(a);
-     properties      
----------------------
- {"name": "bitnine"}
+    properties    
+------------------
+ {"name": "skai"}
  {"age": 11}
 (2 rows)
 
 MATCH (a) SET a.age = 2017 - a.undefined_attr;
 MATCH (a) RETURN properties(a);
-     properties      
----------------------
- {"name": "bitnine"}
+    properties    
+------------------
+ {"name": "skai"}
  {}
 (2 rows)
 
 -- working with NULL
 CREATE VLABEL person;
-CREATE (:person {name: 'bitnine', age: NULL});
-MATCH (a:person {name: 'bitnine'}) RETURN properties(a) AS a;
-          a          
----------------------
- {"name": "bitnine"}
+CREATE (:person {name: 'skai', age: NULL});
+MATCH (a:person {name: 'skai'}) RETURN properties(a) AS a;
+        a         
+------------------
+ {"name": "skai"}
 (1 row)
 
 MATCH (a:person {age: NULL}) RETURN properties(a) AS a;
@@ -4948,9 +4948,9 @@ MATCH (a:person {age: NULL}) RETURN properties(a) AS a;
 (0 rows)
 
 MATCH (a:person) WHERE a.age IS NULL RETURN properties(a) AS a;
-          a          
----------------------
- {"name": "bitnine"}
+        a         
+------------------
+ {"name": "skai"}
 (1 row)
 
 CREATE (:person {name: 'agens', key1: 1, key2: 2, key3: 3});
@@ -5162,7 +5162,7 @@ RETURN properties(r);
 
 MATCH (a) DETACH DELETE a;
 -- update clauses
-CREATE (a:v1 {name: 'bitnine'}) MERGE (:v2 {name: a.name});
+CREATE (a:v1 {name: 'skai'}) MERGE (:v2 {name: a.name});
 CREATE (a:v1 {name: 'AgensGraph'})
 MERGE (b:v2 {name: a.name})
 RETURN properties(a), properties(b);
@@ -5171,28 +5171,28 @@ RETURN properties(a), properties(b);
  {"name": "AgensGraph"} | {"name": "AgensGraph"}
 (1 row)
 
-MERGE (a:v1 {name: 'bitnine'})
+MERGE (a:v1 {name: 'skai'})
 MERGE (b:v1 {name: 'AgensGraph'})
 CREATE p=(a)-[r:e1 {name: a.name + b.name}]->(b)
 RETURN properties(a), properties(r), properties(b), count(p);
-     properties      |          properties           |       properties       | count 
----------------------+-------------------------------+------------------------+-------
- {"name": "bitnine"} | {"name": "bitnineAgensGraph"} | {"name": "AgensGraph"} | 1
+    properties    |         properties         |       properties       | count 
+------------------+----------------------------+------------------------+-------
+ {"name": "skai"} | {"name": "skaiAgensGraph"} | {"name": "AgensGraph"} | 1
 (1 row)
 
-MERGE (a {name: 'bitnine'})
+MERGE (a {name: 'skai'})
 CREATE (b:v1 {name: a.name})
-MERGE (c:v1 {name: 'bitnine'})
+MERGE (c:v1 {name: 'skai'})
   ON MATCH SET c.matched = true
   ON CREATE SET c.matched = false;
 MATCH (a) RETURN properties(a);
-              properties              
---------------------------------------
+            properties             
+-----------------------------------
  {"name": "AgensGraph"}
- {"name": "bitnine", "matched": true}
- {"name": "bitnine", "matched": true}
- {"name": "bitnine", "matched": true}
- {"name": "bitnine"}
+ {"name": "skai", "matched": true}
+ {"name": "skai", "matched": true}
+ {"name": "skai", "matched": true}
+ {"name": "skai"}
  {"name": "AgensGraph"}
 (6 rows)
 
