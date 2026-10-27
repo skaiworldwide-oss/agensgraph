@@ -43,11 +43,7 @@ Follow these steps to build AgensGraph from the source code:
     ```
 
 5. **Set Up Environment Variables**
-    - Add the install path to the `PATH` environment variable:
-        ```sh
-        . ag-env.sh
-        ```
-      OR, edit your `/.bashrc` file (`/.bash_profile` on macOS):
+    - Add the install path to the `PATH` environment variable by editing your `/.bashrc` file (`/.bash_profile` on macOS):
         ```sh
         echo "export PATH=/path/to/agensgraph/bin:\$PATH" >> ~/.bashrc
         echo "export LD_LIBRARY_PATH=/path/to/agensgraph/lib:\$LD_LIBRARY_PATH" >> ~/.bashrc
