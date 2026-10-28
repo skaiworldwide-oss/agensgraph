@@ -39,7 +39,7 @@
 **1. Start a server**
 
 ```shell
-docker run --name agensgraph -e POSTGRES_PASSWORD=agensgraph -d skaiworldwide/agensgraph:v2.18.6.1-bookworm
+docker run --name agensgraph -e POSTGRES_PASSWORD=agensgraph -d skaiworldwide/agensgraph:latest
 docker exec -it agensgraph agens -U agens -d postgres
 ```
 
