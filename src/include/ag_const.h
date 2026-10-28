@@ -22,7 +22,7 @@
 #define AG_PATH_EDGES		"edges"
 
 #define AG_PACKAGE_NAME AG_DISPLAY_NAME
-#define AG_PACKAGE_BUGREPORT "agens@bitnine.net"
-#define AG_PACKAGE_URL "https://bitnine.net/"
+#define AG_PACKAGE_BUGREPORT "inquiry@skaiworldwide.com"
+#define AG_PACKAGE_URL "https://skaiworldwide.com/"
 
 #endif							/* AG_CONST_H */
