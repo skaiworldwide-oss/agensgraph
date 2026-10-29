@@ -7,7 +7,8 @@
 
 <p align="center">
   <b>A high-performance graph database built on PostgreSQL.</b><br>
-  Graphs and tables in one database. SQL, openCypher and ISO GQL in one query.
+  Graphs and tables in one database. SQL, openCypher and ISO GQL in one query.<br>
+  AgensGraph is developed by SKAI Worldwide, formerly Bitnine.
 </p>
 
 <p align="center">
